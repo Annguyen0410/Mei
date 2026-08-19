@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Mei Window Tab Bridge",
+  "version": "1.0.0",
+  "description": "Capture all tabs from the current Chrome or Opera GX window and prepare them for Mei import.",
+  "permissions": ["tabs", "storage", "downloads"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none';"
+  },
+  "action": {
+    "default_title": "Mei Bridge",
+    "default_popup": "popup.html"
+  }
+}

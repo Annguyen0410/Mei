@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mei Bridge</title>
+  <style>
+    :root {
+      --bg: #111827;
+      --panel: #1f2937;
+      --border: #374151;
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --accent: #f59e0b;
+      --accent-2: #0ea5e9;
+    }
+    body {
+      margin: 0;
+      padding: 16px;
+      width: 360px;
+      background: linear-gradient(180deg, #0b1220, #111827 30%, #0f172a);
+      color: var(--text);
+      font: 13px/1.45 "Segoe UI", sans-serif;
+    }
+    h1 {
+      font-size: 16px;
+      margin: 0 0 6px;
+    }
+    p {
+      color: var(--muted);
+      margin: 0 0 12px;
+    }
+    .card {
+      background: rgba(31, 41, 55, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    button {
+      flex: 1;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+      color: white;
+      font-weight: 600;
+    }
+    button.primary { background: linear-gradient(135deg, var(--accent), #ef4444); }
+    button.secondary { background: linear-gradient(135deg, var(--accent-2), #2563eb); }
+    button.ghost { background: #374151; }
+    textarea, input {
+      width: 100%;
+      box-sizing: border-box;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: var(--text);
+      padding: 10px;
+    }
+    textarea {
+      min-height: 160px;
+      resize: vertical;
+      margin-top: 10px;
+    }
+    .small { font-size: 12px; color: var(--muted); }
+    .status { min-height: 18px; margin-top: 10px; color: #fde68a; }
+  </style>
+</head>
+<body>
+  <h1>Mei Window Bridge</h1>
+  <p>Capture all tabs from the current browser window, keep each window as its own stored batch, then paste the JSON into Mei Import Center.</p>
+
+  <div class="card">
+    <label for="labelInput">Batch label</label>
+    <input id="labelInput" type="text" placeholder="Example: Work Window">
+    <div class="row">
+      <button id="captureBtn" class="primary">Capture This Window</button>
+      <button id="copyBtn" class="secondary">Copy JSON</button>
+    </div>
+    <div class="row">
+      <button id="downloadBtn" class="ghost">Download JSON</button>
+      <button id="refreshBtn" class="ghost">Refresh Stored Batch</button>
+    </div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="card">
+    <div class="small">Window payload for Mei</div>
+    <textarea id="payloadOutput" placeholder="Capture a window to generate JSON payload..."></textarea>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

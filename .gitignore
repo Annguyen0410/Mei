@@ -1,0 +1,38 @@
+# --- Python / virtualenv ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# --- Build artifacts (PyInstaller) ---
+build/
+dist/
+*.spec.bak
+
+# --- Local data & secrets (never commit) ---
+runtime_data/
+BrowserData/
+profiles/
+SafeVault/
+web_support/
+litebrowser-update/
+_legacy/
+
+# --- Logs ---
+*.log
+*_log.txt
+stdout.log
+stderr.log
+
+# --- Editor / OS ---
+.cursor/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Local overrides ---
+.env
+.env.*
+config.local.json

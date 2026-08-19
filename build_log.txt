@@ -1,0 +1,136 @@
+Building LiteBrowser.exe ...
+182 INFO: PyInstaller: 6.19.0, contrib hooks: 2026.4
+182 INFO: Python: 3.11.9
+208 INFO: Platform: Windows-10-10.0.26200-SP0
+208 INFO: Python environment: D:\Code folder\new browser\new browser\.venv
+209 INFO: wrote D:\Code folder\new browser\new browser\LiteBrowser.spec
+217 INFO: Removing temporary files and cleaning cache in C:\Users\nguye\AppData\Local\pyinstaller
+1230 WARNING: collect_data_files - skipping data collection for module 'PyQt6.QtWebEngineCore' as it is not a package.
+1370 WARNING: collect_dynamic_libs - skipping library collection for module 'PyQt6.QtWebEngineCore' as it is not a package.
+1971 WARNING: collect_data_files - skipping data collection for module 'PyQt6.QtWebEngineWidgets' as it is not a package.
+2124 WARNING: collect_dynamic_libs - skipping library collection for module 'PyQt6.QtWebEngineWidgets' as it is not a package.
+2677 WARNING: collect_data_files - skipping data collection for module 'PyQt6.QtWebChannel' as it is not a package.
+2817 WARNING: collect_dynamic_libs - skipping library collection for module 'PyQt6.QtWebChannel' as it is not a package.
+3201 INFO: Module search paths (PYTHONPATH):
+['D:\\Code folder\\new browser\\new browser',
+ 'C:\\Program '
+ 'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\\python311.zip',
+ 'C:\\Program '
+ 'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\\DLLs',
+ 'C:\\Program '
+ 'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\\Lib',
+ 'C:\\Program '
+ 'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0',
+ 'D:\\Code folder\\new browser\\new browser\\.venv',
+ 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages',
+ 'D:\\Code folder\\new browser\\new browser']
+3672 INFO: Appending 'datas' from .spec
+3696 INFO: checking Analysis
+3696 INFO: Building Analysis because Analysis-00.toc is non existent
+3696 INFO: Looking for Python shared library...
+3696 INFO: Using Python shared library: C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\python311.dll
+3696 INFO: Running Analysis Analysis-00.toc
+3696 INFO: Target bytecode optimization level: 0
+3696 INFO: Initializing module dependency graph...
+3697 INFO: Initializing module graph hook caches...
+3722 INFO: Analyzing modules for base_library.zip ...
+5051 INFO: Processing standard module hook 'hook-heapq.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+5304 INFO: Processing standard module hook 'hook-encodings.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+7223 INFO: Processing standard module hook 'hook-pickle.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+8666 INFO: Caching module dependency graph...
+8709 INFO: Analyzing D:\Code folder\new browser\new browser\browser.py
+8726 INFO: Processing standard module hook 'hook-PyQt6.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+9415 INFO: Processing standard module hook 'hook-PyQt6.QtCore.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+12117 INFO: Processing standard module hook 'hook-PyQt6.QtGui.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+22045 INFO: Processing standard module hook 'hook-PyQt6.QtNetwork.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+23961 INFO: Processing standard module hook 'hook-PyQt6.QtPrintSupport.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+25041 INFO: Processing standard module hook 'hook-PyQt6.QtWidgets.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+27849 INFO: Processing standard module hook 'hook-PyQt6.QtWebEngineCore.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+29229 INFO: Processing standard module hook 'hook-PyQt6.QtWebChannel.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+29710 INFO: Processing standard module hook 'hook-PyQt6.QtWebEngineWidgets.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+30633 INFO: Processing standard module hook 'hook-platform.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+30989 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+31122 INFO: Processing standard module hook 'hook-xml.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+31658 INFO: Processing standard module hook 'hook-_ctypes.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+32173 INFO: Processing standard module hook 'hook-cryptography.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+34107 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+35509 INFO: Analyzing hidden import 'cryptography.hazmat.asn1'
+35553 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+35607 INFO: SetuptoolsInfo: initializing cached setuptools info...
+39775 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.asymmetric.dh'
+39792 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.asymmetric.dsa'
+39818 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.asymmetric.ed25519'
+39831 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.asymmetric.ed448'
+39846 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.asymmetric.types'
+39906 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.ciphers.aead'
+39918 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.cmac'
+39927 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.kdf.argon2'
+39941 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.kdf.concatkdf'
+39956 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.kdf.hkdf'
+39971 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.kdf.kbkdf'
+40004 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.kdf.scrypt'
+40016 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.kdf.x963kdf'
+40033 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.keywrap'
+40061 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.poly1305'
+40074 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.serialization'
+40163 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.serialization.pkcs12'
+40465 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.serialization.pkcs7'
+40503 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.twofactor'
+40512 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.twofactor.hotp'
+40607 INFO: Analyzing hidden import 'cryptography.hazmat.primitives.twofactor.totp'
+40630 INFO: Analyzing hidden import 'cryptography.x509.ocsp'
+40649 INFO: Processing module hooks (post-graph stage)...
+40741 INFO: Processing standard module hook 'hook-PyQt6.QtPositioning.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+42119 INFO: Processing standard module hook 'hook-PyQt6.QtQuick.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+43178 INFO: Processing standard module hook 'hook-PyQt6.QtQml.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+62424 INFO: Processing standard module hook 'hook-PyQt6.QtOpenGL.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+63422 INFO: Processing standard module hook 'hook-PyQt6.QtQuickWidgets.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+64060 INFO: Performing binary vs. data reclassification (2434 entries)
+88540 INFO: Looking for ctypes DLLs
+88565 INFO: Analyzing run-time hooks ...
+88567 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+88593 INFO: Including run-time hook 'pyi_rth_pyqt6.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+88615 INFO: Processing pre-find-module-path hook 'hook-_pyi_rth_utils.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+88687 INFO: Processing standard module hook 'hook-_pyi_rth_utils.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+88761 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+88775 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+88806 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+88893 INFO: Creating base_library.zip...
+88928 INFO: Looking for dynamic libraries
+89669 INFO: Extra DLL search directories (AddDllDirectory): ['D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyQt6\\Qt6\\bin']
+89669 INFO: Extra DLL search directories (PATH): ['D:\\Code folder\\new browser\\new browser\\.venv\\Lib\\site-packages\\PyQt6\\Qt6\\bin']
+97448 INFO: Warnings written to D:\Code folder\new browser\new browser\build\LiteBrowser\warn-LiteBrowser.txt
+97493 INFO: Graph cross-reference written to D:\Code folder\new browser\new browser\build\LiteBrowser\xref-LiteBrowser.html
+97776 INFO: checking PYZ
+97776 INFO: Building PYZ because PYZ-00.toc is non existent
+97776 INFO: Building PYZ (ZlibArchive) D:\Code folder\new browser\new browser\build\LiteBrowser\PYZ-00.pyz
+98051 INFO: Building PYZ (ZlibArchive) D:\Code folder\new browser\new browser\build\LiteBrowser\PYZ-00.pyz completed successfully.
+98147 INFO: checking PKG
+98149 INFO: Building PKG because PKG-00.toc is non existent
+98149 INFO: Building PKG (CArchive) LiteBrowser.pkg
+143547 INFO: Building PKG (CArchive) LiteBrowser.pkg completed successfully.
+143647 INFO: Bootloader D:\Code folder\new browser\new browser\.venv\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+143647 INFO: checking EXE
+143647 INFO: Building EXE because EXE-00.toc is non existent
+143647 INFO: Building EXE from EXE-00.toc
+143694 INFO: Copying bootloader EXE to D:\Code folder\new browser\new browser\dist\LiteBrowser.exe
+144215 INFO: Copying icon to EXE
+144300 INFO: Copying 0 resources to EXE
+144300 INFO: Embedding manifest in EXE
+144766 INFO: Appending PKG archive to EXE
+145039 INFO: Fixing EXE headers
+162225 INFO: Building EXE from EXE-00.toc completed successfully.
+162401 INFO: Build complete! The results are available in: D:\Code folder\new browser\new browser\dist
+
+Creating dist\web_support (large offline sites live here, next to the exe) ...
+
+-----------------------------------------------------
+ Done. Two things you must ship together:
+   -  dist\LiteBrowser.exe
+   -  dist\web_support  (folder, keep beside the .exe)
+ECHO is off.
+ web_support is NOT bundled into the exe on purpose
+ (it is ~600 MB; the app loads it from beside the exe).
+-----------------------------------------------------
+
+Press any key to continue . . . 

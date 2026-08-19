@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mei"
+version = "6.4.0"
+description = "Mei — PyQt5 WebEngine shell with Personal and AI hubs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt5>=5.15",
+    "PyQtWebEngine>=5.15",
+    "cryptography>=41",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["litebrowser*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

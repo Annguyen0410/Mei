@@ -1,0 +1,885 @@
+import os
+import secrets
+import shutil
+import time
+
+from litebrowser.core import app_paths
+from litebrowser.core.profile_lock import profile_locked
+from litebrowser.core.storage_utils import read_json, write_json, write_text_atomic
+from litebrowser.ui import theme as _theme_mod
+
+
+def _prefs_path(base_dir):
+    return os.path.join(base_dir, "prefs.json")
+
+
+def session_path(base_dir):
+    return os.path.join(base_dir, "session.json")
+
+
+def history_path(base_dir):
+    return os.path.join(base_dir, "history.txt")
+
+
+def bookmarks_path(base_dir):
+    return os.path.join(base_dir, "bookmarks.json")
+
+
+def vault_path(base_dir):
+    return os.path.join(base_dir, "SafeVault")
+
+
+def ext_path(base_dir):
+    return os.path.join(base_dir, "Extensions")
+
+
+def proxy_config_path(base_dir):
+    return os.path.join(base_dir, "proxy_config.json")
+
+
+def permissions_path(base_dir):
+    return os.path.join(base_dir, "permissions.json")
+
+
+def downloads_list_path(base_dir):
+    return os.path.join(base_dir, "downloads_list.json")
+
+
+def workspaces_path(base_dir):
+    return os.path.join(base_dir, "workspaces.json")
+
+
+def profile_meta_path(base_dir):
+    return os.path.join(base_dir, "profile_meta.json")
+
+
+def ai_index_path(base_dir):
+    return os.path.join(base_dir, "ai_index.json")
+
+
+def ai_settings_path(base_dir):
+    return os.path.join(base_dir, "ai_settings.json")
+
+
+def favicon_cache_dir(base_dir):
+    if not base_dir:
+        return os.path.join(os.path.expanduser("~"), ".cache", "litebrowser", "favicons")
+    path = os.path.join(base_dir, "favicons")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def ensure_profile_layout(base_dir):
+    os.makedirs(base_dir, exist_ok=True)
+    os.makedirs(vault_path(base_dir), exist_ok=True)
+    os.makedirs(ext_path(base_dir), exist_ok=True)
+    os.makedirs(favicon_cache_dir(base_dir), exist_ok=True)
+    os.makedirs(app_paths.browser_data_path(base_dir), exist_ok=True)
+    os.makedirs(app_paths.downloads_dir(base_dir), exist_ok=True)
+    with profile_locked(base_dir):
+        meta = load_profile_meta(base_dir)
+        if int(meta.get("schema_version", 0) or 0) < app_paths.APP_SCHEMA_VERSION:
+            meta["schema_version"] = app_paths.APP_SCHEMA_VERSION
+            write_json(profile_meta_path(base_dir), meta)
+        prefs_data = load_prefs(base_dir)
+        if int(prefs_data.get("schema_version", 0) or 0) < app_paths.APP_SCHEMA_VERSION:
+            prefs_data["schema_version"] = app_paths.APP_SCHEMA_VERSION
+            write_json(_prefs_path(base_dir), prefs_data)
+    return base_dir
+
+
+def load_profile_meta(base_dir):
+    data = read_json(profile_meta_path(base_dir), {"schema_version": app_paths.APP_SCHEMA_VERSION})
+    if not isinstance(data, dict):
+        return {"schema_version": app_paths.APP_SCHEMA_VERSION}
+    data.setdefault("schema_version", app_paths.APP_SCHEMA_VERSION)
+    return data
+
+
+def load_prefs(base_dir):
+    data = read_json(_prefs_path(base_dir), {})
+    if not isinstance(data, dict):
+        return {}
+    data.setdefault("schema_version", app_paths.APP_SCHEMA_VERSION)
+    return data
+
+
+def save_prefs(base_dir, data):
+    with profile_locked(base_dir):
+        ensure_profile_layout(base_dir)
+        payload = dict(data or {})
+        payload["schema_version"] = int(payload.get("schema_version", app_paths.APP_SCHEMA_VERSION) or app_paths.APP_SCHEMA_VERSION)
+        write_json(_prefs_path(base_dir), payload)
+
+
+def get_https_only(base_dir):
+    # Default ON: HTTPS-only is the modern safe baseline. localhost and explicit
+    # http:// URLs the user types are still allowed via the interceptor; this
+    # only blocks accidental cleartext loads (mixed-content sub-resources, etc.).
+    return bool(load_prefs(base_dir).get("https_only", True))
+
+
+def set_https_only(base_dir, value):
+    data = load_prefs(base_dir)
+    data["https_only"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+# Single registry for every search engine: the one source of truth shared by
+# the address bar, the new-tab page, and prefs validation. Add a new engine
+# here and it appears everywhere automatically.
+SEARCH_ENGINES = {
+    "Google": {"home": "https://www.google.com/", "search": "https://www.google.com/search?q={q}"},
+    "Startpage": {"home": "https://www.startpage.com/", "search": "https://www.startpage.com/search?q={q}"},
+    "DuckDuckGo": {"home": "https://duckduckgo.com/", "search": "https://duckduckgo.com/?q={q}"},
+    "Bing": {"home": "https://www.bing.com/", "search": "https://www.bing.com/search?q={q}"},
+    "Brave Search": {"home": "https://search.brave.com/", "search": "https://search.brave.com/search?q={q}"},
+    "Ecosia": {"home": "https://www.ecosia.org/", "search": "https://www.ecosia.org/search?q={q}"},
+}
+SEARCH_ENGINE_NAMES = tuple(SEARCH_ENGINES.keys())
+DEFAULT_SEARCH_ENGINE = "Google"
+
+
+def search_engine_search_template(name):
+    """Raw query URL template (``...?q={q}``) for the named engine."""
+    engine = SEARCH_ENGINES.get(name, SEARCH_ENGINES[DEFAULT_SEARCH_ENGINE])
+    return engine["search"]
+
+
+def search_engine_home_url(name):
+    engine = SEARCH_ENGINES.get(name, SEARCH_ENGINES[DEFAULT_SEARCH_ENGINE])
+    return engine["home"]
+
+
+def search_engine_query_url(name, query):
+    """Fully-encoded search URL for the named engine and query."""
+    from urllib.parse import quote_plus
+    return search_engine_search_template(name).replace("{q}", quote_plus(str(query or "")))
+
+
+def get_search_engine(base_dir):
+    name = load_prefs(base_dir).get("search_engine", DEFAULT_SEARCH_ENGINE)
+    return name if name in SEARCH_ENGINES else DEFAULT_SEARCH_ENGINE
+
+
+def set_search_engine(base_dir, name):
+    data = load_prefs(base_dir)
+    data["search_engine"] = name if name in SEARCH_ENGINES else DEFAULT_SEARCH_ENGINE
+    save_prefs(base_dir, data)
+
+
+def get_accent(base_dir):
+    name = load_prefs(base_dir).get("accent", "brass")
+    return name if name in _theme_mod.ACCENTS else "brass"
+
+
+def set_accent(base_dir, name):
+    data = load_prefs(base_dir)
+    data["accent"] = name if name in _theme_mod.ACCENTS else "brass"
+    save_prefs(base_dir, data)
+
+
+def get_shell_theme(base_dir):
+    name = load_prefs(base_dir).get("shell_theme", _theme_mod.DEFAULT_THEME)
+    return name if name in _theme_mod.PALETTES else _theme_mod.DEFAULT_THEME
+
+
+def set_shell_theme(base_dir, name):
+    data = load_prefs(base_dir)
+    fallback = _theme_mod.DEFAULT_THEME
+    data["shell_theme"] = name if name in _theme_mod.PALETTES else fallback
+    save_prefs(base_dir, data)
+
+
+# Per-host zoom factors, e.g. {"mp3.com": 1.2, "exmaple.org": 0.9}. Applied when a
+# page for that host loads; the browser keeps the "default" magnification otherwise.
+def get_site_zoom_map(base_dir):
+    raw = load_prefs(base_dir).get("site_zoom", {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def set_site_zoom(base_dir, host, factor):
+    data = load_prefs(base_dir)
+    zooms = data.get("site_zoom", {})
+    if not isinstance(zooms, dict):
+        zooms = {}
+    host_key = (host or "").strip().lower()
+    if not host_key:
+        return
+    if factor is None or factor <= 0:
+        zooms.pop(host_key, None)
+    else:
+        zooms[host_key] = round(float(factor), 2)
+    data["site_zoom"] = zooms
+    save_prefs(base_dir, data)
+
+
+def get_site_zoom(base_dir, host):
+    if not host:
+        return None
+    zooms = get_site_zoom_map(base_dir)
+    return zooms.get(host.lower())
+
+
+def get_password_manager_enabled(base_dir):
+    return bool(load_prefs(base_dir).get("password_manager_enabled", False))
+
+
+def set_password_manager_enabled(base_dir, value):
+    data = load_prefs(base_dir)
+    data["password_manager_enabled"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_autofill_passwords(base_dir):
+    return bool(load_prefs(base_dir).get("autofill_passwords", False))
+
+
+def set_autofill_passwords(base_dir, value):
+    data = load_prefs(base_dir)
+    data["autofill_passwords"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_force_dark_web(base_dir):
+    return bool(load_prefs(base_dir).get("force_dark_web", False))
+
+
+def set_force_dark_web(base_dir, value):
+    data = load_prefs(base_dir)
+    data["force_dark_web"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_text_highlight_enabled(base_dir):
+    """Highlight-selected-text + copy bubble helper (on by default)."""
+    return bool(load_prefs(base_dir).get("text_highlight_enabled", True))
+
+
+def set_text_highlight_enabled(base_dir, value):
+    data = load_prefs(base_dir)
+    data["text_highlight_enabled"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_ui_dynamic_background(base_dir):
+    return bool(load_prefs(base_dir).get("ui_dynamic_background", False))
+
+
+def set_ui_dynamic_background(base_dir, value):
+    data = load_prefs(base_dir)
+    data["ui_dynamic_background"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_adblock_filter_file(base_dir):
+    return load_prefs(base_dir).get("adblock_filter_file", "")
+
+
+def set_adblock_filter_file(base_dir, path):
+    data = load_prefs(base_dir)
+    data["adblock_filter_file"] = path or ""
+    save_prefs(base_dir, data)
+
+
+def get_passcode_record(base_dir):
+    d = load_prefs(base_dir)
+    return d.get("passcode_salt", ""), d.get("passcode_hash", ""), int(d.get("passcode_rounds", 0) or 0)
+
+
+def set_passcode_record(base_dir, salt_b64, hash_b64, rounds):
+    data = load_prefs(base_dir)
+    data["passcode_salt"] = salt_b64 or ""
+    data["passcode_hash"] = hash_b64 or ""
+    data["passcode_rounds"] = int(rounds or 0)
+    save_prefs(base_dir, data)
+
+
+def get_personal_root(base_dir):
+    return load_prefs(base_dir).get("personal_root", "")
+
+
+def set_personal_root(base_dir, path):
+    data = load_prefs(base_dir)
+    data["personal_root"] = path or ""
+    save_prefs(base_dir, data)
+
+
+def get_personal_sites(base_dir):
+    sites = load_prefs(base_dir).get("personal_sites", [])
+    return sites if isinstance(sites, list) else []
+
+
+def save_personal_sites(base_dir, sites):
+    data = load_prefs(base_dir)
+    data["personal_sites"] = sites if isinstance(sites, list) else []
+    save_prefs(base_dir, data)
+
+
+def add_personal_site(base_dir, url, title=""):
+    url = (url or "").strip()
+    if not url:
+        return False
+    sites = get_personal_sites(base_dir)
+    for item in sites:
+        if (item.get("url") or "").strip() == url:
+            if title:
+                item["title"] = title
+                save_personal_sites(base_dir, sites)
+            return True
+    sites.append({"url": url, "title": title or ""})
+    save_personal_sites(base_dir, sites)
+    return True
+
+
+def remove_personal_site(base_dir, url):
+    url = (url or "").strip()
+    if not url:
+        return False
+    save_personal_sites(base_dir, [item for item in get_personal_sites(base_dir) if (item.get("url") or "").strip() != url])
+    return True
+
+
+def load_permissions(base_dir):
+    data = read_json(permissions_path(base_dir), {})
+    return data if isinstance(data, dict) else {}
+
+
+def save_permissions(base_dir, perms):
+    with profile_locked(base_dir):
+        write_json(permissions_path(base_dir), perms)
+
+
+def get_permission(base_dir, origin, feature):
+    return load_permissions(base_dir).get(origin, {}).get(feature)
+
+
+def set_permission(base_dir, origin, feature, policy):
+    perms = load_permissions(base_dir)
+    perms.setdefault(origin, {})
+    perms[origin][feature] = policy
+    save_permissions(base_dir, perms)
+
+
+def get_startup_prefs(base_dir):
+    d = load_prefs(base_dir)
+    return d.get("startup_mode", "restore"), d.get("home_url", "https://google.com") or "https://google.com"
+
+
+def get_hibernate_seconds(base_dir):
+    return int(load_prefs(base_dir).get("hibernate_seconds", 300))
+
+
+def save_hibernate_seconds(base_dir, seconds):
+    data = load_prefs(base_dir)
+    data["hibernate_seconds"] = int(seconds or 0)
+    save_prefs(base_dir, data)
+
+
+def get_max_live_tabs(base_dir):
+    """How many live (non-hibernated) renderers to keep before suspending tabs.
+
+    Lower = lighter on RAM/CPU when hundreds of tabs are open; higher = more
+    tabs stay instantly ready in the background.
+    """
+    try:
+        value = int(load_prefs(base_dir).get("max_live_tabs", 6))
+    except (TypeError, ValueError):
+        value = 6
+    return max(1, min(32, value))
+
+
+def set_max_live_tabs(base_dir, value):
+    data = load_prefs(base_dir)
+    try:
+        data["max_live_tabs"] = max(1, min(32, int(value)))
+    except (TypeError, ValueError):
+        data["max_live_tabs"] = 6
+    save_prefs(base_dir, data)
+
+
+def get_new_tab_steam(base_dir):
+    """Show the animated steam on the new-tab café cup."""
+    return bool(load_prefs(base_dir).get("new_tab_steam", True))
+
+
+def set_new_tab_steam(base_dir, value):
+    data = load_prefs(base_dir)
+    data["new_tab_steam"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_new_tab_greeting(base_dir):
+    """Show the time-of-day café greeting on the new-tab hero."""
+    return bool(load_prefs(base_dir).get("new_tab_greeting", True))
+
+
+def set_new_tab_greeting(base_dir, value):
+    data = load_prefs(base_dir)
+    data["new_tab_greeting"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_show_morning_brief(base_dir):
+    """Show the Morning Brief card on the Home dashboard."""
+    return bool(load_prefs(base_dir).get("show_morning_brief", True))
+
+
+def set_show_morning_brief(base_dir, value):
+    data = load_prefs(base_dir)
+    data["show_morning_brief"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_sync_endpoint(base_dir):
+    return str(load_prefs(base_dir).get("sync_endpoint", "") or "").strip()
+
+
+def set_sync_endpoint(base_dir, value):
+    data = load_prefs(base_dir)
+    data["sync_endpoint"] = str(value or "").strip()
+    save_prefs(base_dir, data)
+
+
+def get_sync_token(base_dir):
+    return str(load_prefs(base_dir).get("sync_token", "") or "").strip()
+
+
+def set_sync_token(base_dir, value):
+    data = load_prefs(base_dir)
+    data["sync_token"] = str(value or "").strip()
+    save_prefs(base_dir, data)
+
+
+def get_sync_enabled(base_dir):
+    return bool(load_prefs(base_dir).get("sync_enabled", False))
+
+
+def set_sync_enabled(base_dir, value):
+    data = load_prefs(base_dir)
+    data["sync_enabled"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_browser_data_saver(base_dir):
+    """Whether new page loads should avoid heavyweight image transfers."""
+    return bool(load_prefs(base_dir).get("browser_data_saver", False))
+
+
+def set_browser_data_saver(base_dir, enabled):
+    data = load_prefs(base_dir)
+    data["browser_data_saver"] = bool(enabled)
+    save_prefs(base_dir, data)
+
+
+def get_disable_webgl(base_dir):
+    """Lite rendering: turn off WebGL so heavy shader/3D sites stop dragging
+    software/weak GPUs. Most sites (incl. LinkLumina) fall back gracefully."""
+    return bool(load_prefs(base_dir).get("disable_webgl", False))
+
+
+def set_disable_webgl(base_dir, enabled):
+    data = load_prefs(base_dir)
+    data["disable_webgl"] = bool(enabled)
+    save_prefs(base_dir, data)
+
+
+def get_block_third_party_cookies(base_dir):
+    # Default ON: matches what major browsers (Brave/Firefox/Safari) ship today.
+    # Compatibility hosts (Google sign-in, Microsoft, etc.) are still allowed
+    # via the interceptor's allowlist so OAuth and embedded login flows work.
+    return bool(load_prefs(base_dir).get("block_third_party_cookies", True))
+
+
+def set_block_third_party_cookies(base_dir, value):
+    data = load_prefs(base_dir)
+    data["block_third_party_cookies"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_strict_referrer(base_dir):
+    """Send only the origin (no path) on cross-site requests."""
+    return bool(load_prefs(base_dir).get("strict_referrer", True))
+
+
+def set_strict_referrer(base_dir, value):
+    data = load_prefs(base_dir)
+    data["strict_referrer"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_strip_client_hints(base_dir):
+    """Strip Sec-CH-UA-Platform-Version and other low-entropy extras outside
+    the compatibility allowlist. Reduces fingerprint entropy for tracking sites
+    while keeping enough hints for Google/Microsoft sign-in to succeed."""
+    return bool(load_prefs(base_dir).get("strip_client_hints", True))
+
+
+def set_strip_client_hints(base_dir, value):
+    data = load_prefs(base_dir)
+    data["strip_client_hints"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_block_webrtc_leak(base_dir):
+    """Block WebRTC mDNS / public IP leaks (off by default — breaks video calls)."""
+    return bool(load_prefs(base_dir).get("block_webrtc_leak", False))
+
+
+def set_block_webrtc_leak(base_dir, value):
+    data = load_prefs(base_dir)
+    data["block_webrtc_leak"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_chrome_compat_shim(base_dir):
+    return bool(load_prefs(base_dir).get("chrome_compat_shim", True))
+
+
+def set_chrome_compat_shim(base_dir, value):
+    data = load_prefs(base_dir)
+    data["chrome_compat_shim"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_adblock_subscriptions(base_dir):
+    data = load_prefs(base_dir).get("adblock_subscriptions", [])
+    return data if isinstance(data, list) else []
+
+
+def set_adblock_subscriptions(base_dir, value):
+    data = load_prefs(base_dir)
+    data["adblock_subscriptions"] = value if isinstance(value, list) else []
+    save_prefs(base_dir, data)
+
+
+def session_load(base_dir):
+    data = read_json(session_path(base_dir), [])
+    if isinstance(data, dict):
+        tabs = data.get("tabs", [])
+        return tabs if isinstance(tabs, list) else []
+    return data if isinstance(data, list) else []
+
+
+def session_save(base_dir, urls):
+    with profile_locked(base_dir):
+        write_json(session_path(base_dir), urls if isinstance(urls, list) else [])
+
+
+def session_state_load(base_dir):
+    data = read_json(session_path(base_dir), {"version": 2, "tabs": [], "recently_closed": []})
+    if isinstance(data, list):
+        return {
+            "version": 2,
+            "tabs": [{"url": url, "title": "", "icon": "", "hibernated": True, "active": False} for url in data if isinstance(url, str)],
+            "recently_closed": [],
+        }
+    if not isinstance(data, dict):
+        return {"version": 2, "tabs": [], "recently_closed": []}
+    data.setdefault("version", 2)
+    data.setdefault("tabs", [])
+    data.setdefault("recently_closed", [])
+    if not isinstance(data["tabs"], list):
+        data["tabs"] = []
+    if not isinstance(data["recently_closed"], list):
+        data["recently_closed"] = []
+    return data
+
+
+def session_state_save(base_dir, state):
+    payload = session_state_load(base_dir)
+    if isinstance(state, dict):
+        payload.update(state)
+    payload["version"] = 2
+    payload["tabs"] = payload.get("tabs", []) if isinstance(payload.get("tabs", []), list) else []
+    payload["recently_closed"] = payload.get("recently_closed", []) if isinstance(payload.get("recently_closed", []), list) else []
+    with profile_locked(base_dir):
+        write_json(session_path(base_dir), payload)
+
+
+def load_history_entries(base_dir):
+    entries = []
+    if os.path.exists(history_path(base_dir)):
+        try:
+            with open(history_path(base_dir), "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if "\t" in line:
+                        ts_str, url = line.split("\t", 1)
+                        try:
+                            ts = int(ts_str)
+                        except ValueError:
+                            ts = int(time.time())
+                    else:
+                        ts, url = 0, line
+                    entries.append((ts, url))
+        except Exception:
+            pass
+    return entries
+
+
+def save_history_entries(base_dir, entries):
+    ensure_profile_layout(base_dir)
+    lines = "".join(f"{int(ts or 0)}\t{url}\n" for ts, url in entries)
+    with profile_locked(base_dir):
+        write_text_atomic(history_path(base_dir), lines)
+
+
+def append_history_entry(base_dir, url):
+    ensure_profile_layout(base_dir)
+    with profile_locked(base_dir):
+        with open(history_path(base_dir), "a", encoding="utf-8") as f:
+            f.write(f"{int(time.time())}\t{url}\n")
+
+
+def load_bookmarks(base_dir):
+    data = read_json(bookmarks_path(base_dir), [])
+    return data if isinstance(data, list) else []
+
+
+def save_bookmarks(base_dir, bookmarks):
+    with profile_locked(base_dir):
+        write_json(bookmarks_path(base_dir), bookmarks if isinstance(bookmarks, list) else [])
+
+
+def bookmark_folders_path(base_dir):
+    return os.path.join(base_dir, "bookmark_folders.json")
+
+
+def load_bookmark_folders(base_dir):
+    data = read_json(bookmark_folders_path(base_dir), [])
+    return data if isinstance(data, list) else []
+
+
+def save_bookmark_folders(base_dir, folders):
+    with profile_locked(base_dir):
+        write_json(bookmark_folders_path(base_dir), folders if isinstance(folders, list) else [])
+
+
+def _default_workspaces_payload():
+    return {
+        "workspaces": [
+            {"id": "ws1", "name": "Workspace 1"},
+            {"id": "ws2", "name": "Workspace 2"},
+        ],
+        "current_id": "ws1",
+    }
+
+
+def load_workspaces(base_dir):
+    data = read_json(workspaces_path(base_dir), _default_workspaces_payload())
+    if not isinstance(data, dict):
+        return _default_workspaces_payload()
+    d = _default_workspaces_payload()
+    data.setdefault("workspaces", d["workspaces"])
+    data.setdefault("current_id", d["current_id"])
+    return data
+
+
+def save_workspaces(base_dir, data):
+    with profile_locked(base_dir):
+        write_json(workspaces_path(base_dir), data)
+
+
+def profiles_dir(app_dir):
+    return app_paths.profiles_root(app_dir)
+
+
+def load_ai_settings(base_dir):
+    data = read_json(
+        ai_settings_path(base_dir),
+        {
+            "provider": "rag",
+            "openrouter_api_key": "",
+            "openrouter_model": "openai/gpt-4o-mini",
+            "openrouter_base_url": "https://openrouter.ai/api/v1/chat/completions",
+            "openrouter_app_name": "Mei Cafe",
+            "openrouter_site_url": "",
+            "ollama_model": "",
+            "llama_cpp_url": "http://127.0.0.1:8080/completion",
+            "show_sources": True,
+        },
+    )
+    return data if isinstance(data, dict) else {}
+
+
+def save_ai_settings(base_dir, settings):
+    with profile_locked(base_dir):
+        current = load_ai_settings(base_dir)
+        current.update(settings or {})
+        write_json(ai_settings_path(base_dir), current)
+
+
+def _last_profile_path(app_dir):
+    return app_paths.last_profile_path(app_dir)
+
+
+def get_last_profile(app_dir):
+    path = _last_profile_path(app_dir)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                name = f.read().strip()
+            if name and os.path.isdir(os.path.join(profiles_dir(app_dir), name)):
+                return name
+        except Exception:
+            pass
+    return None
+
+
+def set_last_profile(app_dir, name):
+    with open(_last_profile_path(app_dir), "w", encoding="utf-8") as f:
+        f.write(name or "")
+
+
+def list_profiles(app_dir):
+    pd = profiles_dir(app_dir)
+    if not os.path.isdir(pd):
+        return []
+    return sorted([name for name in os.listdir(pd) if os.path.isdir(os.path.join(pd, name)) and not name.startswith(".")])
+
+
+def create_profile(app_dir, name):
+    if not name or not name.strip():
+        return False
+    path = os.path.join(profiles_dir(app_dir), name.strip())
+    if os.path.exists(path):
+        return False
+    ensure_profile_layout(path)
+    return True
+
+
+def delete_profile(app_dir, name):
+    if name in ("", ".", ".."):
+        return False
+    path = os.path.join(profiles_dir(app_dir), name)
+    if not os.path.isdir(path):
+        return False
+    shutil.rmtree(path, ignore_errors=True)
+    return True
+
+
+MOBILE_BRIDGE_DEFAULT_PORT = 18444
+MOBILE_BRIDGE_DEFAULT_HOST = "127.0.0.1"
+MOBILE_BRIDGE_LAN_HOST = "0.0.0.0"
+
+
+def get_mobile_bridge_enabled(base_dir):
+    return bool(load_prefs(base_dir).get("mobile_bridge_enabled", False))
+
+
+def set_mobile_bridge_enabled(base_dir, value):
+    data = load_prefs(base_dir)
+    data["mobile_bridge_enabled"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_mobile_bridge_host(base_dir):
+    h = (load_prefs(base_dir).get("mobile_bridge_host") or MOBILE_BRIDGE_DEFAULT_HOST).strip()
+    return h if h else MOBILE_BRIDGE_DEFAULT_HOST
+
+
+def set_mobile_bridge_host(base_dir, host):
+    data = load_prefs(base_dir)
+    data["mobile_bridge_host"] = (host or MOBILE_BRIDGE_DEFAULT_HOST).strip() or MOBILE_BRIDGE_DEFAULT_HOST
+    save_prefs(base_dir, data)
+
+
+def get_mobile_bridge_port(base_dir):
+    try:
+        p = int(load_prefs(base_dir).get("mobile_bridge_port", MOBILE_BRIDGE_DEFAULT_PORT))
+    except (TypeError, ValueError):
+        p = MOBILE_BRIDGE_DEFAULT_PORT
+    return max(1, min(65535, p))
+
+
+def set_mobile_bridge_port(base_dir, port):
+    data = load_prefs(base_dir)
+    try:
+        p = int(port)
+    except (TypeError, ValueError):
+        p = MOBILE_BRIDGE_DEFAULT_PORT
+    data["mobile_bridge_port"] = max(1, min(65535, p))
+    save_prefs(base_dir, data)
+
+
+def get_mobile_bridge_token(base_dir):
+    return (load_prefs(base_dir).get("mobile_bridge_token") or "").strip()
+
+
+def generate_mobile_bridge_token():
+    return secrets.token_urlsafe(32)
+
+
+def set_mobile_bridge_token(base_dir, token):
+    data = load_prefs(base_dir)
+    data["mobile_bridge_token"] = (token or "").strip()
+    save_prefs(base_dir, data)
+
+
+def ensure_mobile_bridge_token(base_dir):
+    token = get_mobile_bridge_token(base_dir)
+    if token:
+        return token
+    token = generate_mobile_bridge_token()
+    set_mobile_bridge_token(base_dir, token)
+    return token
+
+
+def get_mobile_bridge_lan(base_dir):
+    return get_mobile_bridge_host(base_dir) == MOBILE_BRIDGE_LAN_HOST
+
+
+def set_mobile_bridge_lan(base_dir, lan_enabled):
+    set_mobile_bridge_host(base_dir, MOBILE_BRIDGE_LAN_HOST if lan_enabled else MOBILE_BRIDGE_DEFAULT_HOST)
+
+
+def get_show_neural_notes_graph(base_dir):
+    return bool(load_prefs(base_dir).get("show_neural_notes_graph", False))
+
+
+def set_show_neural_notes_graph(base_dir, value):
+    data = load_prefs(base_dir)
+    data["show_neural_notes_graph"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_google_oauth_client_id(base_dir):
+    return (load_prefs(base_dir).get("google_oauth_client_id") or "").strip()
+
+
+def set_google_oauth_client_id(base_dir, client_id):
+    data = load_prefs(base_dir)
+    data["google_oauth_client_id"] = (client_id or "").strip()
+    save_prefs(base_dir, data)
+
+
+def get_google_account(base_dir):
+    value = load_prefs(base_dir).get("google_account")
+    return value if isinstance(value, dict) else {}
+
+
+def set_google_account(base_dir, account):
+    data = load_prefs(base_dir)
+    data["google_account"] = account if isinstance(account, dict) else {}
+    save_prefs(base_dir, data)
+
+
+def clear_google_account(base_dir):
+    data = load_prefs(base_dir)
+    data.pop("google_account", None)
+    data.pop("google_token_cache", None)
+    save_prefs(base_dir, data)
+
+
+def get_google_token_cache(base_dir):
+    value = load_prefs(base_dir).get("google_token_cache")
+    return value if isinstance(value, dict) else {}
+
+
+def set_google_token_cache(base_dir, token_cache):
+    data = load_prefs(base_dir)
+    data["google_token_cache"] = token_cache if isinstance(token_cache, dict) else {}
+    save_prefs(base_dir, data)

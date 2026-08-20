@@ -1,3 +1,4 @@
+import copy
 import os
 import secrets
 import shutil
@@ -96,20 +97,41 @@ def load_profile_meta(base_dir):
     return data
 
 
+# Every get_*/set_* pref helper funnels through load_prefs, which previously
+# re-opened and re-parsed prefs.json from disk on every call (theme, accent,
+# bridge settings, tab prefs, ...). Cache the parsed dict keyed by the file's
+# mtime+size so repeated reads are in-memory; callers get a deep copy so nobody
+# can accidentally mutate the cached value.
+_prefs_cache: dict[str, tuple[int, int, dict]] = {}
+
+
 def load_prefs(base_dir):
-    data = read_json(_prefs_path(base_dir), {})
-    if not isinstance(data, dict):
+    path = _prefs_path(base_dir)
+    try:
+        st = os.stat(path)
+        signature = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        _prefs_cache.pop(base_dir, None)
         return {}
+    cached = _prefs_cache.get(base_dir)
+    if cached is not None and cached[0] == signature[0] and cached[1] == signature[1]:
+        return copy.deepcopy(cached[2])
+    data = read_json(path, {})
+    if not isinstance(data, dict):
+        data = {}
     data.setdefault("schema_version", app_paths.APP_SCHEMA_VERSION)
-    return data
+    _prefs_cache[base_dir] = (signature[0], signature[1], data)
+    return copy.deepcopy(data)
 
 
 def save_prefs(base_dir, data):
+    _prefs_cache.pop(base_dir, None)
     with profile_locked(base_dir):
         ensure_profile_layout(base_dir)
         payload = dict(data or {})
         payload["schema_version"] = int(payload.get("schema_version", app_paths.APP_SCHEMA_VERSION) or app_paths.APP_SCHEMA_VERSION)
         write_json(_prefs_path(base_dir), payload)
+    _prefs_cache.pop(base_dir, None)
 
 
 def get_https_only(base_dir):
@@ -373,6 +395,21 @@ def get_hibernate_seconds(base_dir):
 def save_hibernate_seconds(base_dir, seconds):
     data = load_prefs(base_dir)
     data["hibernate_seconds"] = int(seconds or 0)
+    save_prefs(base_dir, data)
+
+
+def get_defer_background_tabs(base_dir):
+    """Load background tabs lazily (dormant placeholder, no renderer/network)
+
+    until the user actually selects them. On = the active tab keeps full network
+    and CPU priority; off = background tabs warm up a renderer immediately.
+    """
+    return bool(load_prefs(base_dir).get("defer_background_tabs", True))
+
+
+def set_defer_background_tabs(base_dir, value):
+    data = load_prefs(base_dir)
+    data["defer_background_tabs"] = bool(value)
     save_prefs(base_dir, data)
 
 
@@ -843,6 +880,18 @@ def get_show_neural_notes_graph(base_dir):
 def set_show_neural_notes_graph(base_dir, value):
     data = load_prefs(base_dir)
     data["show_neural_notes_graph"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_note_order(base_dir):
+    """Manual ordering of note ids (the user's drag-and-drop arrangement)."""
+    order = load_prefs(base_dir).get("note_order", [])
+    return [str(x) for x in order] if isinstance(order, list) else []
+
+
+def set_note_order(base_dir, order):
+    data = load_prefs(base_dir)
+    data["note_order"] = [str(x) for x in order] if isinstance(order, list) else []
     save_prefs(base_dir, data)
 
 

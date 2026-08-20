@@ -2,6 +2,7 @@ import hashlib
 import math
 import os
 import random
+import re
 import time
 
 from PyQt5.QtCore import (
@@ -21,7 +22,9 @@ from PyQt5.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPixmap,
     QTextCharFormat,
+    QTextCursor,
 )
 from PyQt5.QtWebEngineWidgets import (
     QWebEnginePage as _PersonalWebEnginePage,
@@ -32,6 +35,7 @@ from PyQt5.QtWebEngineWidgets import (
     QWebEngineView,
 )
 from PyQt5.QtWidgets import (
+    QAbstractItemView,
     QButtonGroup,
     QCalendarWidget,
     QCheckBox,
@@ -55,6 +59,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -406,6 +411,53 @@ def _stroke_path(points):
     return path
 
 
+class MeiNotesList(QListWidget):
+    """Notes list with drag-to-reorder. Records the dragged note ids on the
+    owner so the categories panel can move them without decoding Qt's internal
+    drag mime format."""
+
+    def __init__(self, owner, parent=None):
+        super().__init__(parent)
+        self._owner = owner
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+
+    def startDrag(self, supported_actions):
+        self._owner._drag_note_ids = [it.data(Qt.UserRole) for it in self.selectedItems()]
+        try:
+            super().startDrag(supported_actions)
+        finally:
+            self._owner._drag_note_ids = []
+
+    def dropEvent(self, event):
+        super().dropEvent(event)
+        # InternalMove just reordered the rows — persist the new arrangement.
+        self._owner._persist_note_order()
+
+
+class CategoryDropList(QListWidget):
+    """Drop target listing note categories. Dropping a note onto a category
+    moves the note's file into that category folder."""
+
+    def __init__(self, owner, parent=None):
+        super().__init__(parent)
+        self._owner = owner
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DropOnly)
+        self.setDefaultDropAction(Qt.MoveAction)
+
+    def dropEvent(self, event):
+        target_item = self.itemAt(event.pos())
+        category = target_item.data(Qt.UserRole) if target_item else ""
+        note_ids = list(getattr(self._owner, "_drag_note_ids", []) or [])
+        if category and note_ids:
+            self._owner._move_notes_to_category(note_ids, category)
+        event.accept()
+
+
 class PersonalWindow(QMainWindow):
     def __init__(self, base_dir: str, app_dir: str = None, embedded: bool = False):
         super().__init__()
@@ -417,6 +469,9 @@ class PersonalWindow(QMainWindow):
         self.current_board_id = None
         self._site_preview_on = False
         self._nav_collapsed = False
+        self._drag_note_ids = []
+        self._current_note_image_path = ""
+        self._note_find_matches = []
         self.setWindowTitle("Personal Hub - Mei")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
         self.resize(1160, 760)
@@ -694,6 +749,8 @@ class PersonalWindow(QMainWindow):
         top_row = QHBoxLayout()
         self.ed_note_search = QLineEdit()
         self.ed_note_search.setPlaceholderText("Search notes in SafeVault...")
+        self.btn_note_back = QPushButton("← All notes")
+        self.btn_note_back.setToolTip("Return to the full, unfiltered note list")
         self.cmb_note_category = QComboBox()
         self.cmb_note_category.setEditable(True)
         self.cmb_note_category.setMinimumWidth(130)
@@ -707,6 +764,7 @@ class PersonalWindow(QMainWindow):
         self.chk_neural_graph.setChecked(prefs.get_show_neural_notes_graph(self.base_dir))
         self.chk_neural_graph.toggled.connect(self._on_neural_graph_toggled)
         top_row.addWidget(self.ed_note_search, 1)
+        top_row.addWidget(self.btn_note_back)
         top_row.addWidget(QLabel("Category"))
         top_row.addWidget(self.cmb_note_category)
         top_row.addWidget(QLabel("Font"))
@@ -718,11 +776,41 @@ class PersonalWindow(QMainWindow):
         top_row.addWidget(self.btn_note_ai)
         l.addLayout(top_row)
 
+        # Find-within-note toolbar.
+        find_row = QHBoxLayout()
+        find_row.addWidget(QLabel("Tìm"))
+        self.ed_note_find = QLineEdit()
+        self.ed_note_find.setPlaceholderText("Tìm và tô sáng trong note...")
+        self.btn_find_prev = QPushButton("‹")
+        self.btn_find_prev.setToolTip("Kết quả trước")
+        self.btn_find_next = QPushButton("›")
+        self.btn_find_next.setToolTip("Kết quả tiếp theo")
+        self.lbl_find_count = QLabel("")
+        self.lbl_find_count.setObjectName("MutedLabel")
+        find_row.addWidget(self.ed_note_find, 1)
+        find_row.addWidget(self.btn_find_prev)
+        find_row.addWidget(self.btn_find_next)
+        find_row.addWidget(self.lbl_find_count)
+        l.addLayout(find_row)
+
         split = QSplitter(Qt.Horizontal)
-        self.notes_list = QListWidget()
+        left_pane = QWidget()
+        left_layout = QVBoxLayout(left_pane)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)
+        self.notes_list = MeiNotesList(self)
         self.notes_list.setObjectName("CafeList")
         self.notes_list.currentItemChanged.connect(self._load_selected_note)
-        split.addWidget(self.notes_list)
+        left_layout.addWidget(self.notes_list, 1)
+        categories_hint = QLabel("Kéo note vào category để di chuyển")
+        categories_hint.setObjectName("MutedLabel")
+        categories_hint.setWordWrap(True)
+        left_layout.addWidget(categories_hint)
+        self.categories_list = CategoryDropList(self)
+        self.categories_list.setObjectName("CafeList")
+        self.categories_list.setMaximumHeight(150)
+        left_layout.addWidget(self.categories_list)
+        split.addWidget(left_pane)
         editor_wrap = QWidget()
         editor_layout = QVBoxLayout(editor_wrap)
         editor_layout.setContentsMargins(0, 0, 0, 0)
@@ -731,6 +819,14 @@ class PersonalWindow(QMainWindow):
         self.lbl_note_title = QLabel("No note selected")
         self.lbl_note_title.setObjectName("MutedLabel")
         editor_layout.addWidget(self.lbl_note_title)
+        self.lbl_note_image = QLabel()
+        self.lbl_note_image.setAlignment(Qt.AlignCenter)
+        self.lbl_note_image.hide()
+        editor_layout.addWidget(self.lbl_note_image)
+        self.btn_open_note_image = QPushButton("Mở ảnh")
+        self.btn_open_note_image.setToolTip("Open the attached image at full size")
+        self.btn_open_note_image.hide()
+        editor_layout.addWidget(self.btn_open_note_image)
         self.note_editor = QPlainTextEdit()
         self.note_editor.setPlaceholderText("Longform notes, clipped notes, study notes...")
         editor_layout.addWidget(self.note_editor, 1)
@@ -745,6 +841,11 @@ class PersonalWindow(QMainWindow):
         l.addWidget(split, 1)
 
         self.ed_note_search.textChanged.connect(self._refresh_notes)
+        self.btn_note_back.clicked.connect(self._back_to_all_notes)
+        self.btn_open_note_image.clicked.connect(self._open_note_image)
+        self.ed_note_find.textChanged.connect(self._find_in_note)
+        self.btn_find_prev.clicked.connect(self._find_prev)
+        self.btn_find_next.clicked.connect(self._find_next)
         self.cmb_note_category.currentTextChanged.connect(lambda _value: self._refresh_notes())
         self.cmb_note_font.currentTextChanged.connect(self._apply_note_font_size)
         self.btn_new_note.clicked.connect(self._create_note)
@@ -794,9 +895,18 @@ class PersonalWindow(QMainWindow):
         selected_category = self.cmb_note_category.currentText().strip() if hasattr(self, "cmb_note_category") else ""
         self._refresh_note_categories(keep_value=selected_category)
         self.notes_list.clear()
+        notes = []
         for note in personal_service.list_notes(self.base_dir, query):
             if selected_category and selected_category.lower() != "all" and note.get("category", "").lower() != selected_category.lower():
                 continue
+            notes.append(note)
+        # Honour the user's drag-and-drop arrangement; unknown ids keep their
+        # natural (most-recent-first) order at the end.
+        order = prefs.get_note_order(self.base_dir)
+        if order:
+            rank = {nid: idx for idx, nid in enumerate(order)}
+            notes.sort(key=lambda n: rank.get(n["id"], len(order)))
+        for note in notes:
             item = QListWidgetItem(f"[{note.get('category', 'General')}] {note['title']}")
             item.setToolTip(note["snippet"])
             item.setData(Qt.UserRole, note["id"])
@@ -825,6 +935,15 @@ class PersonalWindow(QMainWindow):
         else:
             self.cmb_note_category.setEditText(current)
         self.cmb_note_category.blockSignals(False)
+        # Refresh the drag-and-drop category target list.
+        if hasattr(self, "categories_list"):
+            self.categories_list.blockSignals(True)
+            self.categories_list.clear()
+            for category in personal_service.list_note_categories(self.base_dir):
+                drop_item = QListWidgetItem(category)
+                drop_item.setData(Qt.UserRole, category)
+                self.categories_list.addItem(drop_item)
+            self.categories_list.blockSignals(False)
 
     def _create_note(self):
         title, ok = QInputDialog.getText(self, "Create note", "Note title:")
@@ -834,6 +953,9 @@ class PersonalWindow(QMainWindow):
         if category.lower() == "all":
             category = "General"
         note = personal_service.create_note(self.base_dir, title.strip(), "# " + title.strip() + "\n\n", category=category)
+        # New notes appear at the top of the manual order.
+        order = [nid for nid in prefs.get_note_order(self.base_dir) if nid != note["id"]]
+        prefs.set_note_order(self.base_dir, [note["id"]] + order)
         self._refresh_notes()
         self.select_note(note["id"])
 
@@ -851,23 +973,188 @@ class PersonalWindow(QMainWindow):
             self.current_note_category = "General"
             self.lbl_note_title.setText("No note selected")
             self.note_editor.setPlainText("")
+            self._clear_note_attachments()
+            self._find_in_note()
             return
         note = personal_service.read_note(self.base_dir, current.data(Qt.UserRole))
         if not note:
             return
         self.current_note_id = note["id"]
         self.current_note_category = note.get("category") or "General"
-        self.cmb_note_category.setEditText(self.current_note_category)
+        # The category combo is a *filter* only. Do not change it here, or the
+        # note's own category would leak into the filter and hide every other note.
         self.lbl_note_title.setText(f"{note['title']}  |  {self.current_note_category}")
         self.note_editor.setPlainText(note["content"])
+        self._render_note_attachments(note["content"])
+        self._find_in_note()
+
+    def _back_to_all_notes(self):
+        """Return to the full note list: clear any category filter + selection."""
+        self.cmb_note_category.blockSignals(True)
+        self.cmb_note_category.setCurrentIndex(0)  # "All"
+        self.cmb_note_category.blockSignals(False)
+        self.notes_list.clearSelection()
+        self.notes_list.setCurrentItem(None)  # resets the editor via currentItemChanged
+        self._refresh_notes()
+
+    def _first_note_image_path(self, content: str) -> str:
+        """Find the first image referenced by a note (Attachment: or ![..](..))."""
+        candidates: list[str] = []
+        for line in (content or "").splitlines():
+            stripped = line.strip()
+            if stripped.lower().startswith("attachment:"):
+                candidates.append(stripped.split(":", 1)[1].strip())
+            for match in re.finditer(r"!\[[^\]]*\]\(([^)]+)\)", stripped):
+                candidates.append(match.group(1).strip())
+        vault = prefs.vault_path(self.base_dir)
+        image_exts = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
+        for raw in candidates:
+            raw = (raw or "").strip().strip("\"'<>")
+            if not raw:
+                continue
+            resolved = raw if os.path.isabs(raw) else os.path.join(vault, raw.replace("/", os.sep))
+            if os.path.isfile(resolved) and resolved.lower().endswith(image_exts):
+                return resolved
+        return ""
+
+    def _render_note_attachments(self, content: str):
+        self._clear_note_attachments()
+        path = self._first_note_image_path(content or "")
+        if not path:
+            return
+        try:
+            pixmap = QPixmap(path)
+            if pixmap.isNull():
+                return
+            max_w, max_h = 460, 260
+            if pixmap.width() > max_w or pixmap.height() > max_h:
+                pixmap = pixmap.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.lbl_note_image.setPixmap(pixmap)
+            self.lbl_note_image.show()
+            self._current_note_image_path = path
+            self.btn_open_note_image.show()
+        except Exception:
+            self._clear_note_attachments()
+
+    def _clear_note_attachments(self):
+        self._current_note_image_path = ""
+        if hasattr(self, "lbl_note_image"):
+            self.lbl_note_image.clear()
+            self.lbl_note_image.hide()
+        if hasattr(self, "btn_open_note_image"):
+            self.btn_open_note_image.hide()
+
+    def _open_note_image(self):
+        path = getattr(self, "_current_note_image_path", "")
+        if path and os.path.isfile(path):
+            try:
+                os.startfile(path)
+            except Exception:
+                QMessageBox.information(self, "Notes", "Cannot open:\n" + str(path))
+
+    def _find_in_note(self):
+        """Highlight every match of the find query in the current note."""
+        self._note_find_matches = []
+        if not hasattr(self, "ed_note_find"):
+            return
+        query = self.ed_note_find.text().strip()
+        selections = []
+        if query and self.current_note_id:
+            text = self.note_editor.toPlainText()
+            lowered = text.lower()
+            needle = query.lower()
+            doc = self.note_editor.document()
+            pos = 0
+            while True:
+                idx = lowered.find(needle, pos)
+                if idx < 0:
+                    break
+                extra = QTextEdit.ExtraSelection()
+                cursor = QTextCursor(doc)
+                cursor.setPosition(idx)
+                cursor.setPosition(idx + len(query), QTextCursor.KeepAnchor)
+                extra.cursor = cursor
+                extra.format.setBackground(QColor("#f2d16b"))
+                extra.format.setForeground(QColor("#1b140f"))
+                selections.append(extra)
+                self._note_find_matches.append(idx)
+                pos = idx + len(query)
+        self.note_editor.setExtraSelections(selections)
+        if not hasattr(self, "lbl_find_count"):
+            return
+        if not query:
+            self.lbl_find_count.setText("")
+        elif self._note_find_matches:
+            self.lbl_find_count.setText(f"{len(self._note_find_matches)} kết quả")
+        else:
+            self.lbl_find_count.setText("Không tìm thấy")
+
+    def _find_note_step(self, direction):
+        matches = getattr(self, "_note_find_matches", [])
+        if not matches:
+            return
+        query = self.ed_note_find.text()
+        if not query:
+            return
+        doc = self.note_editor.document()
+        current = self.note_editor.textCursor().selectionStart()
+        target = -1
+        if direction > 0:
+            for match in matches:
+                if match > current:
+                    target = match
+                    break
+            if target < 0:
+                target = matches[0]
+        else:
+            for match in reversed(matches):
+                if match < current:
+                    target = match
+                    break
+            if target < 0:
+                target = matches[-1]
+        cursor = QTextCursor(doc)
+        cursor.setPosition(target)
+        cursor.setPosition(target + len(query), QTextCursor.KeepAnchor)
+        self.note_editor.setTextCursor(cursor)
+        self.note_editor.centerCursor()
+
+    def _find_next(self):
+        self._find_note_step(1)
+
+    def _find_prev(self):
+        self._find_note_step(-1)
+
+    def _persist_note_order(self):
+        order = []
+        for index in range(self.notes_list.count()):
+            item = self.notes_list.item(index)
+            if item is not None:
+                order.append(item.data(Qt.UserRole))
+        prefs.set_note_order(self.base_dir, order)
+
+    def _move_notes_to_category(self, note_ids, category):
+        moved = 0
+        for note_id in note_ids:
+            note = personal_service.read_note(self.base_dir, note_id)
+            if not note:
+                continue
+            result = personal_service.update_note(self.base_dir, note_id, note["content"], category=category)
+            if result:
+                moved += 1
+        self._refresh_notes()
+        self._refresh_overview()
+        if moved:
+            self.lbl_note_title.setText(f"Đã chuyển {moved} note vào {category}")
+        else:
+            self.lbl_note_title.setText("Không chuyển được note")
 
     def _save_note(self):
         if not self.current_note_id:
             QMessageBox.information(self, "Notes", "Select a note first.")
             return
-        category = self.cmb_note_category.currentText().strip() or self.current_note_category or "General"
-        if category.lower() == "all":
-            category = self.current_note_category or "General"
+        # Preserve the note's own category on save; the combo is only a filter.
+        category = self.current_note_category or "General"
         note = personal_service.update_note(self.base_dir, self.current_note_id, self.note_editor.toPlainText(), category=category)
         if not note:
             QMessageBox.warning(self, "Notes", "Could not save this note.")
@@ -896,10 +1183,14 @@ class PersonalWindow(QMainWindow):
     def _delete_note(self):
         if not self.current_note_id:
             return
-        personal_service.delete_note(self.base_dir, self.current_note_id)
+        deleted_id = self.current_note_id
+        personal_service.delete_note(self.base_dir, deleted_id)
+        prefs.set_note_order(self.base_dir, [nid for nid in prefs.get_note_order(self.base_dir) if nid != deleted_id])
         self.current_note_id = None
         self.note_editor.setPlainText("")
         self.lbl_note_title.setText("No note selected")
+        self._clear_note_attachments()
+        self._find_in_note()
         self._refresh_notes()
         self._refresh_overview()
 

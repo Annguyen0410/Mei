@@ -119,7 +119,7 @@ class AppShell(QMainWindow):
         self._omnibar_completer = QCompleter([
             "/home", "/browser", "/history", "/ai", "/personal",
             "/library", "/settings", "/cql", "/guide", "/help",
-            "/hub", "/linklumina", "/mas", "/leaderboard",
+            "/hub", "/linklumina", "/mas", "/leaderboard", "/bimat", "/boitoan",
             "/task ", "/note ", "/board ", "/save-page", "/ask ",
             "/read", "/reading-list",
             "/focus ", "/status", "/cafe",

@@ -393,6 +393,90 @@ def ensure_forced_dark_script(profile, enabled: bool, base_dir=None) -> None:
     scripts.insert(script)
 
 
+_WEBGL_DISABLE_SCRIPT_NAME = "litebrowser_webgl_disable"
+
+
+def build_webgl_disable_js(enabled: bool = True) -> str:
+    """Return JS that neuters WebGL so heavy 3D/shader pages fall back.
+
+    ``QWebEngineSettings.WebGLEnabled`` is only read when a renderer is created,
+    so toggling it at runtime has no visible effect on live pages. This
+    profile-level script kills the WebGL entry points from the page's point of
+    view, which takes effect immediately on reload (and on every new page).
+    """
+    if not enabled:
+        return "window.__mei_webgl_disabled = false;"
+    return r"""
+    (function() {
+        'use strict';
+        try {
+            if (window.__mei_webgl_disabled) return;
+            window.__mei_webgl_disabled = true;
+            function undef(name) {
+                try {
+                    Object.defineProperty(window, name, {
+                        value: undefined, configurable: true, writable: true
+                    });
+                } catch (e) {
+                    try { window[name] = undefined; } catch (e2) {}
+                }
+            }
+            undef('WebGLRenderingContext');
+            undef('WebGL2RenderingContext');
+            var proto = HTMLCanvasElement && HTMLCanvasElement.prototype;
+            if (proto && proto.getContext) {
+                var orig = proto.getContext;
+                proto.getContext = function(type) {
+                    var t = String(type || '').toLowerCase();
+                    if (t === 'webgl' || t === 'webgl2' || t === 'experimental-webgl') {
+                        return null;
+                    }
+                    return orig.apply(this, arguments);
+                };
+            }
+        } catch (e) {}
+    })();
+    """
+
+
+def ensure_webgl_disable_script(profile, enabled: bool) -> None:
+    """Install or remove the per-profile WebGL-disable script."""
+    try:
+        scripts = profile.scripts()
+    except Exception:
+        return
+    existing = None
+    if hasattr(scripts, "findScript"):
+        try:
+            existing = scripts.findScript(_WEBGL_DISABLE_SCRIPT_NAME)
+        except Exception:
+            existing = None
+    if existing is None or (hasattr(existing, "isNull") and existing.isNull()):
+        try:
+            for s in scripts.toList():
+                if s.name() == _WEBGL_DISABLE_SCRIPT_NAME:
+                    existing = s
+                    break
+        except Exception:
+            pass
+    if not enabled:
+        if existing is not None and not (hasattr(existing, "isNull") and existing.isNull()):
+            try:
+                scripts.remove(existing)
+            except Exception:
+                pass
+        return
+    if existing is not None and not (hasattr(existing, "isNull") and existing.isNull()):
+        return
+    script = QWebEngineScript()
+    script.setName(_WEBGL_DISABLE_SCRIPT_NAME)
+    script.setSourceCode(build_webgl_disable_js(True))
+    script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+    script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+    script.setRunsOnSubFrames(False)
+    scripts.insert(script)
+
+
 def build_text_highlight_js(enabled: bool = True) -> str:
     """Return JS that installs (or removes) the "highlight text to copy" helper.
 
@@ -666,6 +750,7 @@ class BrowserPage(QWebEnginePage):
             try:
                 from litebrowser.core import prefs as _prefs
                 ensure_forced_dark_script(profile, _prefs.get_force_dark_web(self._base_dir), self._base_dir)
+                ensure_webgl_disable_script(profile, _prefs.get_disable_webgl(self._base_dir))
             except Exception:
                 pass
         self.featurePermissionRequested.connect(self._on_permission_requested)

@@ -26,7 +26,7 @@ LEGACY_BUNDLED_FOLDER_MARKERS = (
     "Cuc Quan Ly - Ban Day Du 1",
 )
 
-# The "project chain": four sibling web apps linked into the browser. Each entry
+# The "project chain": six sibling web apps linked into the browser. Each entry
 # maps a stable ASCII key to (a) a human title and (b) the folder names the app
 # may live under — first the bundled web_support alias, then the live source folder.
 BUNDLED_SITES = (
@@ -60,6 +60,20 @@ BUNDLED_SITES = (
         "subtitle": "Global rank calculator",
         "glyph": "🏆",
         "folders": ("worldleaderboard", "World Leaderboard"),
+    },
+    {
+        "key": "bimat",
+        "display": "Bí Mật — PersonalFrequency",
+        "subtitle": "Personal frequency & mysteries",
+        "glyph": "🔮",
+        "folders": ("bimat", "bí mật"),
+    },
+    {
+        "key": "boitoan",
+        "display": "Bói Toán Web",
+        "subtitle": "Fortune telling & divination",
+        "glyph": "🎴",
+        "folders": ("boitoan", "Bói Toán Web"),
     },
 )
 
@@ -250,7 +264,7 @@ def chain_manifest_path(app_dir: str | None = None) -> str:
 
 
 def chain_manifest(app_dir: str | None = None) -> dict:
-    """Parsed chain.json — the single source of truth linking all five apps."""
+    """Parsed chain.json — the single source of truth linking all seven apps."""
     path = chain_manifest_path(app_dir)
     if path:
         try:
@@ -273,7 +287,7 @@ def _chain_remote_by_id(app_dir: str | None = None) -> dict[str, str]:
 
 
 def bundled_sites(app_dir: str | None = None) -> list[dict]:
-    """The four chained sites with resolved file:// URLs plus remote (deployed)
+    """The six chained sites with resolved file:// URLs plus remote (deployed)
     URLs from chain.json. ``url`` == '' when the local copy is missing."""
     remote_by_id = _chain_remote_by_id(app_dir)
     result: list[dict] = []
@@ -286,7 +300,7 @@ def bundled_sites(app_dir: str | None = None) -> list[dict]:
 
 
 def chain_remote_sites(app_dir: str | None = None) -> list[dict]:
-    """Deployed (cloud) versions of the four apps plus the hub, from chain.json.
+    """Deployed (cloud) versions of the six apps plus the hub, from chain.json.
     Each item has url = remote URL so it can be registered as a Personal site."""
     remote_by_id = _chain_remote_by_id(app_dir)
     result: list[dict] = []

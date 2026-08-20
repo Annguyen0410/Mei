@@ -74,20 +74,33 @@ def _trusted_challenge_domains():
 
 def _default_blocked_domains():
     return [
-        "google-analytics.com", "googletagmanager.com", "googleadservices.com",
-        "googleads.com", "googlesyndication.com",
-        "doubleclick.net", "adsense.com",
+        # Analytics / tag managers / trackers
+        "google-analytics.com", "googletagmanager.com", "googletagservices.com",
+        "googleadservices.com", "googleads.com", "googlesyndication.com",
+        "doubleclick.net", "adsense.com", "2mdn.net", "adservice.google.com",
         "facebook.net", "connect.facebook.net", "pixel.facebook.com",
         "analytics.tiktok.com", "analytics.twitter.com",
         "hotjar.com", "clarity.ms", "scorecardresearch.com", "quantserve.com",
         "criteo.com", "criteo.net", "outbrain.com", "taboola.com", "adsystem.com",
         "adroll.com", "adnxs.com", "rubiconproject.com", "amazon-adsystem.com",
+        "aaxads.com", "aax.amazon-adsystem.com", "advertising.amazon.com",
         "adskeeper.com", "mgid.com", "popads.net", "popcash.net", "exo-click.com",
         "propellerads.com", "bidvertiser.com", "media.net",
         "smartadserver.com", "adform.net", "adsrvr.org", "demdex.net", "everesttech.net",
         "bluekai.com", "krxd.net", "segment.io", "segment.com", "mixpanel.com",
         "amplitude.com", "fullstory.com", "mouseflow.com", "luckyorange.com",
         "crazyegg.com", "inspectlet.com",
+        # Ad exchanges / SSP / networks
+        "pubmatic.com", "openx.net", "indexww.com", "casalemedia.com",
+        "yieldmo.com", "sonobi.com", "sharethrough.com", "districtm.io",
+        "districtm.ca", "triplelift.com", "gumgum.com", "33across.com",
+        "teads.tv", "sovrn.com", "zedo.com", "revcontent.com", "content.ad",
+        "infolinks.com", "mediavine.com", "adthrive.com", "ezoic.net", "ezoic.com",
+        "moatads.com", "serving-sys.com", "advertising.com", "adzerk.net",
+        "skimresources.com", "skimlinks.com", "viglink.com", "awin1.com",
+        "linksynergy.com", "shopstyle.com", "rakutenadvertising.com",
+        # Mobile attribution / tracking SDKs
+        "branch.io", "appsflyer.com", "adjust.com", "kochava.com",
     ]
 
 

@@ -17,12 +17,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
 
-from litebrowser.core import app_version, prefs
+from litebrowser.core import app_paths, app_version, prefs
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.services import (
     extension_bridge,
     history_service,
     life_service,
+    open_request,
     personal_service,
 )
 
@@ -34,7 +35,12 @@ SUPPORTED_ACTIONS = (
     "upload_file_reference",
     "save_page",
     "create_drawing",
+    "open_app",
 )
+
+# Chain app ids resolvable over the bridge: MeiRemote can say "open MAS" and
+# the desktop resolves the deployed URL from chain.json (single source of truth).
+_CHAIN_APP_IDS = ("linklumina", "cucquanly", "mas", "worldleaderboard", "bimat", "boitoan", "hub")
 MAX_BODY_BYTES = 10 * 1024 * 1024
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_FIELD_CHARS = 200_000
@@ -469,6 +475,42 @@ def dispatch_ingest(profile_dir: str, envelope: dict[str, Any]) -> dict[str, Any
                 "action": action,
                 "received_at": received,
                 "result": {"saved_page_id": page.get("id")},
+                "error": None,
+            }
+
+        if action == "open_app":
+            app_id = (p.get("id") or "").strip()
+            url = (p.get("url") or "").strip()
+            label = (p.get("label") or "").strip()
+            if not url and app_id:
+                # Resolve: deployed URL từ chain.json → nếu chưa deploy, dùng bản
+                # local (file://) của app trên máy desktop. Không hardcode URL nào.
+                if app_id in _CHAIN_APP_IDS:
+                    manifest = app_paths.chain_manifest()
+                    for app in manifest.get("apps", []):
+                        if isinstance(app, dict) and app.get("id") == app_id and app.get("remote"):
+                            url = str(app["remote"]).strip()
+                            break
+                    if not url:
+                        url = app_paths.bundled_site_url(app_id)
+            if not url:
+                raise ValueError("open_app requires url, or a chain app id in " + ",".join(_CHAIN_APP_IDS))
+            if not url.startswith(("http://", "https://", "file://")):
+                raise ValueError("open_app url must be http(s) or file://")
+            open_request.push_open_request(
+                profile_dir,
+                {
+                    "source": "android.mei_remote",
+                    "url": url,
+                    "label": label or app_id or url,
+                    "kind": app_id or "url",
+                },
+            )
+            return {
+                "ok": True,
+                "action": action,
+                "received_at": received,
+                "result": {"url": url, "kind": app_id or "url", "note": "desktop sẽ mở trong vài giây"},
                 "error": None,
             }
 

@@ -57,6 +57,7 @@ from litebrowser.browser import adblock, extension_patterns, new_tab_page, tab_m
 from litebrowser.browser.browser_page import (
     build_text_highlight_js,
     ensure_text_highlight_script,
+    ensure_webgl_disable_script,
 )
 from litebrowser.browser.tab_manager import TAB_META_ROLE, TAB_PINNED_ROLE
 from litebrowser.core import app_paths, app_version, prefs
@@ -79,6 +80,41 @@ COMPATIBILITY_HOSTS = (
     "gemini.google.com",
     "perplexity.ai",
 )
+
+# Chrome-style memory saver: when the process working set grows past this many
+# MB, background tabs are frozen automatically until RAM settles down again.
+MEMORY_SAVER_RSS_THRESHOLD_MB = 800
+
+
+def _process_rss_mb():
+    """Current process working-set size in MB (Windows), or None if unknown."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        counters = PROCESS_MEMORY_COUNTERS()
+        counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+        handle = ctypes.WinDLL("kernel32").GetCurrentProcess()
+        ok = ctypes.WinDLL("psapi").GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
+        if ok:
+            return int(counters.WorkingSetSize // (1024 * 1024))
+    except Exception:
+        pass
+    return None
 
 
 class SearchWindow(QMainWindow):
@@ -510,6 +546,9 @@ class SearchWindow(QMainWindow):
         self.interceptor.https_only = prefs.get_https_only(self.base_dir)
         self.interceptor.reload_filter_file()
         self.profile.setUrlRequestInterceptor(self.interceptor)
+        # Auto-refresh subscribed filter lists in the background so the
+        # blocklist keeps itself fresh without blocking startup.
+        self._refresh_adblock_subscriptions_async()
 
         self.tab_manager = tab_manager.TabManager(self)
         self._apply_workspace_filter()
@@ -518,6 +557,7 @@ class SearchWindow(QMainWindow):
         self._load_dark_web_pref()
         self._load_data_saver_pref()
         self._load_disable_webgl_pref()
+        self._load_defer_background_pref()
         self._dynamic_bg_phase = 0
         self._dynamic_bg_timer = QTimer(self)
         self._dynamic_bg_timer.timeout.connect(self._tick_dynamic_background)
@@ -527,6 +567,16 @@ class SearchWindow(QMainWindow):
         self._audio_indicator_timer = QTimer(self)
         self._audio_indicator_timer.timeout.connect(self._update_audio_indicators)
         self._audio_indicator_timer.start(5000)
+        # Chrome-style auto memory saver: every 30s, freeze background tabs when
+        # the process working set is above the threshold.
+        self._memory_saver_timer = QTimer(self)
+        self._memory_saver_timer.timeout.connect(self._auto_memory_saver_tick)
+        self._memory_saver_timer.start(30_000)
+        # Android bridge → real tabs: MeiRemote can ask the desktop to open a web
+        # app (or any URL). The bridge thread writes a request file; drain it here.
+        self._open_request_timer = QTimer(self)
+        self._open_request_timer.timeout.connect(self._drain_open_requests)
+        self._open_request_timer.start(2500)
         if start_tabs:
             # Start from saved tab set (listtab)
             self.tab_manager.begin_batch()
@@ -701,9 +751,13 @@ class SearchWindow(QMainWindow):
         privacy_menu.addAction("VPN / Proxy (Quick)...").triggered.connect(lambda: dialogs.show_vpn_hub(self))
         privacy_menu.addAction("VPN / Proxy (Detailed)...").triggered.connect(lambda: dialogs.show_vpn_dialog(self))
         privacy_menu.addAction("Tab Hibernation Timeout...").triggered.connect(lambda: dialogs.show_hibernate_pref_dialog(self))
+        self.act_defer_background = privacy_menu.addAction("Background loading priority (lazy-load background tabs)")
+        self.act_defer_background.setCheckable(True)
+        self.act_defer_background.triggered.connect(self.toggle_defer_background)
         privacy_menu.addAction("Freeze All Background Tabs").triggered.connect(
             lambda: self.tab_manager.optimize_memory()
         )
+        privacy_menu.addAction("Performance dashboard").triggered.connect(self.show_performance_dashboard)
         self.act_dark_mode = privacy_menu.addAction("Force Dark Mode on Web")
         self.act_dark_mode.setCheckable(True)
         self.act_dark_mode.triggered.connect(self.toggle_dark_web)
@@ -719,6 +773,7 @@ class SearchWindow(QMainWindow):
         self.act_block_3p_cookies = privacy_menu.addAction("Block Third-Party Cookies")
         self.act_block_3p_cookies.setCheckable(True)
         self.act_block_3p_cookies.triggered.connect(self.toggle_block_third_party_cookies)
+        privacy_menu.addAction("Refresh adblock filters").triggered.connect(self._refresh_adblock_now)
         privacy_menu.addAction("Save Password for This Page").triggered.connect(lambda: dialogs.show_save_password_dialog(self))
 
         data_menu = menu.addMenu("Data & Tools")
@@ -1428,6 +1483,10 @@ class SearchWindow(QMainWindow):
             seen.add(id(profile))
             try:
                 profile.settings().setAttribute(QWebEngineSettings.WebGLEnabled, not enabled)
+                # Runtime toggling also needs the page-level shim: WebGLEnabled is
+                # only read at renderer creation, but this script kills the WebGL
+                # entry points on every page and works immediately after reload.
+                ensure_webgl_disable_script(profile, enabled)
             except Exception:
                 pass
         # Apply to every open tab too (profile defaults don't affect live views),
@@ -1445,6 +1504,157 @@ class SearchWindow(QMainWindow):
                 current.reload()
             except Exception:
                 pass
+
+    def _load_defer_background_pref(self):
+        if not hasattr(self, "act_defer_background"):
+            return
+        self.act_defer_background.blockSignals(True)
+        self.act_defer_background.setChecked(prefs.get_defer_background_tabs(self.base_dir))
+        self.act_defer_background.blockSignals(False)
+
+    def toggle_defer_background(self):
+        enabled = bool(self.act_defer_background.isChecked())
+        prefs.set_defer_background_tabs(self.base_dir, enabled)
+        # Existing open tabs are unaffected; the setting governs tabs opened from
+        # now on. Freeze the current background tabs immediately if turned on so
+        # the choice has an instant effect.
+        if enabled:
+            self.tab_manager.optimize_memory(notify=False)
+
+    def _refresh_adblock_subscriptions_async(self):
+        if not prefs.get_adblock_subscriptions(self.base_dir):
+            return
+
+        def _run():
+            try:
+                adblock.fetch_and_update_subscriptions(self.base_dir)
+                return True
+            except Exception:
+                return False
+
+        def _done(future):
+            try:
+                if future.result() and getattr(self, "interceptor", None) is not None:
+                    self.interceptor.reload_filter_file()
+            except Exception:
+                pass
+
+        future = self._executor.submit(_run)
+        future.add_done_callback(lambda f: QTimer.singleShot(0, lambda: _done(f)))
+
+    def _refresh_adblock_now(self):
+        def _run():
+            try:
+                adblock.fetch_and_update_subscriptions(self.base_dir)
+                return True
+            except Exception:
+                return False
+
+        def _done(future):
+            try:
+                ok = bool(future.result())
+            except Exception:
+                ok = False
+            if getattr(self, "interceptor", None) is not None:
+                self.interceptor.reload_filter_file()
+            QMessageBox.information(
+                self,
+                "Adblock",
+                "Đã cập nhật bộ lọc quảng cáo." if ok else "Chưa có danh sách đăng ký hoặc cập nhật thất bại.",
+            )
+
+        future = self._executor.submit(_run)
+        future.add_done_callback(lambda f: QTimer.singleShot(0, lambda: _done(f)))
+
+    def _auto_memory_saver_tick(self):
+        """Chrome-style memory saver: freeze background tabs when RAM runs hot."""
+        rss = _process_rss_mb()
+        if rss is None or rss < MEMORY_SAVER_RSS_THRESHOLD_MB:
+            return
+        self.tab_manager.optimize_memory(notify=False)
+
+    def _drain_open_requests(self):
+        """Open URLs requested by the Android bridge (MeiRemote "open app")."""
+        try:
+            from litebrowser.services import open_request
+
+            requests = open_request.drain_open_requests(self.base_dir)
+        except Exception:
+            return
+        for req in requests:
+            url = str(req.get("url") or "").strip()
+            if not url.startswith(("http://", "https://", "file://")):
+                continue
+            label = str(req.get("label") or "").strip() or url
+            try:
+                self.add_new_tab(QUrl(url), label, is_active=True)
+            except Exception:
+                pass
+
+    def _live_sleeping_counts(self):
+        live = 0
+        sleeping = 0
+        for browser in self.browsers:
+            if browser is None:
+                sleeping += 1
+            elif browser.property("hibernated"):
+                sleeping += 1
+            else:
+                live += 1
+        return live, sleeping
+
+    def show_performance_dashboard(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Bảng đo hiệu năng — Mei")
+        dlg.resize(440, 260)
+        layout = QVBoxLayout(dlg)
+        title = QLabel("Bảng đo hiệu năng")
+        title.setObjectName("SectionTitle")
+        layout.addWidget(title)
+        lbl_ram = QLabel("")
+        lbl_tabs = QLabel("")
+        lbl_heap = QLabel("JS heap tab hiện tại: đang đo…")
+        layout.addWidget(lbl_ram)
+        layout.addWidget(lbl_tabs)
+        layout.addWidget(lbl_heap)
+
+        def _on_heap(value):
+            try:
+                val = float(value)
+                if val >= 0:
+                    lbl_heap.setText(f"JS heap tab hiện tại: {val:.1f} MB")
+                else:
+                    lbl_heap.setText("JS heap tab hiện tại: không khả dụng")
+            except Exception:
+                lbl_heap.setText("JS heap tab hiện tại: không khả dụng")
+
+        def refresh():
+            rss = _process_rss_mb()
+            live, sleeping = self._live_sleeping_counts()
+            lbl_ram.setText(
+                f"RAM tiến trình: {rss} MB (Memory Saver kích hoạt > {MEMORY_SAVER_RSS_THRESHOLD_MB} MB)"
+                if rss is not None
+                else "RAM tiến trình: không đọc được trên hệ điều hành này"
+            )
+            lbl_tabs.setText(f"Tab: {live} live · {sleeping} sleeping")
+            lbl_heap.setText("JS heap tab hiện tại: đang đo…")
+            current = self.current_browser()
+            if current is not None:
+                current.page().runJavaScript(
+                    "(function(){try{return (performance&&performance.memory)?(performance.memory.usedJSHeapSize/1048576):-1;}catch(e){return -1;}})();",
+                    _on_heap,
+                )
+
+        refresh()
+        row = QHBoxLayout()
+        btn_refresh = QPushButton("Đo lại")
+        btn_refresh.clicked.connect(refresh)
+        btn_freeze = QPushButton("Freeze toàn bộ tab nền")
+        btn_freeze.clicked.connect(lambda: (self.tab_manager.optimize_memory(notify=False), refresh()))
+        row.addWidget(btn_refresh)
+        row.addWidget(btn_freeze)
+        layout.addLayout(row)
+        dlg.exec_()
 
     def _tick_dynamic_background(self):
         self._dynamic_bg_phase += 1
@@ -2096,6 +2306,68 @@ class SearchWindow(QMainWindow):
             self._apply_workspace_filter()
         return imported
 
+    def _import_extension_batches_as_workspaces(self, batches):
+        """Import a multi-screen extension export, one workspace per monitor.
+
+        Screen 0 maps to Workspace 1, screen 1 to Workspace 2, and any further
+        screens get a new workspace named after the batch label. Returns the
+        total number of tabs imported.
+        """
+        ordered = sorted(
+            batches,
+            key=lambda b: (
+                int(b.get("screen_index", -1)) if isinstance(b.get("screen_index"), int) else -1,
+                b.get("window_id") or "",
+            ),
+        )
+        # Fall back to import order for payloads without screen_index (old
+        # single-window JSON or hand-written batches) so behavior is stable.
+        if ordered and all(b.get("screen_index", -1) < 0 for b in ordered):
+            ordered = list(batches)
+
+        workspaces = workspace_manager.get_workspaces_list(self.base_dir)
+        ws_ids = [w.get("id") for w in workspaces if isinstance(w, dict) and w.get("id")]
+        used_ws = set()
+        total = 0
+
+        for idx, batch in enumerate(ordered):
+            tabs = batch.get("tabs") or []
+            if not tabs:
+                continue
+            if idx < len(ws_ids):
+                ws_id = ws_ids[idx]
+            else:
+                label = (batch.get("source_label") or f"Window {batch.get('window_id', idx)}").strip()
+                ws_id = workspace_manager.add_workspace(self.base_dir, label)
+            used_ws.add(ws_id)
+            active_index = next((i for i, tab in enumerate(tabs) if tab.get("active")), 0)
+            imported = 0
+            for tab_idx, tab in enumerate(tabs):
+                url = tab.get("url") or ""
+                if not url:
+                    continue
+                self.tab_manager.add_tab(
+                    QUrl(url),
+                    tab.get("title") or "Imported tab",
+                    is_active=False,
+                    session_data={
+                        "url": url,
+                        "title": tab.get("title") or url,
+                        "pinned": bool(tab.get("pinned")),
+                        "active": tab_idx == active_index,
+                        "workspace_id": ws_id,
+                    },
+                )
+                imported += 1
+            if imported:
+                extension_bridge.mark_batch_imported(self.base_dir, batch.get("id", ""))
+            total += imported
+
+        if used_ws:
+            self._refresh_workspace_combo()
+            self._apply_workspace_filter()
+        return total
+
     def show_extension_import_center(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Extension Import Center")
@@ -2104,7 +2376,9 @@ class SearchWindow(QMainWindow):
         layout = QVBoxLayout(dialog)
 
         help_label = QLabel(
-            "Paste a JSON payload from a Chrome/Opera GX extension, or choose a saved batch, to import all tabs into the current workspace."
+            "Paste a JSON payload from a Chrome/Opera GX extension (or open a .json/.zip export), "
+            "then import all tabs into the current workspace — or use Import All as Workspaces "
+            "to split a multi-screen export back into one Mei workspace per monitor."
         )
         help_label.setWordWrap(True)
         layout.addWidget(help_label)
@@ -2130,11 +2404,13 @@ class SearchWindow(QMainWindow):
         btn_import_file = QPushButton("Import File")
         btn_save_payload = QPushButton("Store Payload")
         btn_import_selected = QPushButton("Import Selected Batch")
+        btn_import_all_ws = QPushButton("Import All as Workspaces")
         btn_close = QPushButton("Close")
         button_row.addWidget(btn_refresh)
         button_row.addWidget(btn_import_file)
         button_row.addWidget(btn_save_payload)
         button_row.addWidget(btn_import_selected)
+        button_row.addWidget(btn_import_all_ws)
         button_row.addStretch(1)
         button_row.addWidget(btn_close)
         layout.addLayout(button_row)
@@ -2165,7 +2441,7 @@ class SearchWindow(QMainWindow):
                 dialog,
                 "Import extension payload",
                 "",
-                "JSON Files (*.json);;All Files (*.*)",
+                "JSON & ZIP (*.json *.zip);;JSON Files (*.json);;ZIP Archives (*.zip);;All Files (*.*)",
             )
             if not path:
                 return
@@ -2192,10 +2468,26 @@ class SearchWindow(QMainWindow):
             if count:
                 QMessageBox.information(dialog, "Extension import", f"Imported {count} tabs into the browser.")
 
+        def import_all_as_workspaces():
+            batches = extension_bridge.load_batches(self.base_dir)
+            pending = [b for b in batches if not b.get("imported_at")]
+            if not pending:
+                QMessageBox.information(dialog, "Extension import", "No un-imported batches. Use Import Selected Batch to re-import one.")
+                return
+            count = self._import_extension_batches_as_workspaces(pending)
+            refresh()
+            if count:
+                QMessageBox.information(
+                    dialog,
+                    "Extension import",
+                    f"Imported {count} tabs across {len(pending)} window(s), one Mei workspace per screen.",
+                )
+
         btn_refresh.clicked.connect(refresh)
         btn_import_file.clicked.connect(import_file)
         btn_save_payload.clicked.connect(save_payload)
         btn_import_selected.clicked.connect(import_selected)
+        btn_import_all_ws.clicked.connect(import_all_as_workspaces)
         batch_list.itemDoubleClicked.connect(lambda _item: import_selected())
         btn_close.clicked.connect(dialog.accept)
 

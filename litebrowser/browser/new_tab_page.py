@@ -445,7 +445,7 @@ def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None
       <h2>Project Hub — Your App Chain <span class="rule"></span></h2>
       <p style="font-size:14px;margin:0 0 14px;">Jump straight into any of the bundled apps (all run locally on your machine). Online versions (if deployed) live in Project Hub.</p>
       <div class="tiles">%s</div>
-      <p style="font-size:12px;margin:14px 0 0;">Omnibar: <code class="code">/hub</code> · <code class="code">/cql</code> · <code class="code">/mas</code> · <code class="code">/leaderboard</code> · <code class="code">/linklumina</code></p>
+      <p style="font-size:12px;margin:14px 0 0;">Omnibar: <code class="code">/hub</code> · <code class="code">/cql</code> · <code class="code">/mas</code> · <code class="code">/leaderboard</code> · <code class="code">/linklumina</code> · <code class="code">/bimat</code> · <code class="code">/boitoan</code></p>
     </div>
     """ % hub_tiles
 

@@ -17,7 +17,7 @@ profiles/
 SafeVault/
 web_support/
 litebrowser-update/
-_legacy/
+legacy/
 
 # --- Logs ---
 *.log

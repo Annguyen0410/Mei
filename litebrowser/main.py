@@ -13,7 +13,10 @@ def _force_software_rendering() -> bool:
 if _force_software_rendering():
     os.environ.setdefault("QT_OPENGL", "software")
     os.environ.setdefault("QT_ANGLE_PLATFORM", "software")
-os.environ.setdefault("QT_QUICK_BACKEND", "software")
+    # Software fallback (opt-in only) also forces the Qt Quick scene-graph to
+    # rasterize on the CPU. Keep the GPU path enabled by default so web content
+    # is composited by the GPU like Chrome/Opera instead of the CPU.
+    os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 from PyQt5.QtCore import QCoreApplication, Qt
 from PyQt5.QtGui import QFont, QIcon

@@ -394,9 +394,16 @@ class TabManager:
         )
         is_pinned = bool(session_data.get("pinned"))
         # Restored tabs never need a renderer until selected. For ordinary
-        # background tabs, start deferring once the desk has several live pages.
+        # background tabs, start deferring once the desk has several live pages
+        # — or always, when "background loading priority" is enabled so the
+        # active tab keeps full network/CPU while background tabs stay dormant.
+        try:
+            defer_background = prefs.get_defer_background_tabs(self.base_dir)
+        except Exception:
+            defer_background = True
         should_defer = not is_active and (
-            bool(session_data)
+            defer_background
+            or bool(session_data)
             or bool(session_data.get("hibernated"))
             or self._live_browser_count() >= self.auto_hibernate_threshold
         )
@@ -703,7 +710,7 @@ class TabManager:
         metadata["workspace_id"] = item.data(Qt.UserRole + workspace_manager.WORKSPACE_ROLE)
         self.add_tab(QUrl(url), metadata.get("title") or "Tab", is_active=True, session_data=metadata)
 
-    def optimize_memory(self):
+    def optimize_memory(self, notify=True):
         current_i = self.tab_list.currentRow()
         count = 0
         for i in range(self.tab_list.count()):
@@ -714,7 +721,9 @@ class TabManager:
                     count += 1
         if count > 0:
             self.update_tab_count()
-            QMessageBox.information(self.window, "Memory Saver", f"Suspended {count} background tabs.")
+            if notify:
+                QMessageBox.information(self.window, "Memory Saver", f"Suspended {count} background tabs.")
+        return count
 
     def _memory_tip(self):
         if self._mem_tip is None:

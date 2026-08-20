@@ -16,7 +16,7 @@
     body {
       margin: 0;
       padding: 16px;
-      width: 360px;
+      width: 380px;
       background: linear-gradient(180deg, #0b1220, #111827 30%, #0f172a);
       color: var(--text);
       font: 13px/1.45 "Segoe UI", sans-serif;
@@ -53,6 +53,7 @@
     button.primary { background: linear-gradient(135deg, var(--accent), #ef4444); }
     button.secondary { background: linear-gradient(135deg, var(--accent-2), #2563eb); }
     button.ghost { background: #374151; }
+    button.wide { flex-basis: 100%; }
     textarea, input {
       width: 100%;
       box-sizing: border-box;
@@ -73,27 +74,38 @@
 </head>
 <body>
   <h1>Mei Window Bridge</h1>
-  <p>Capture all tabs from the current browser window, keep each window as its own stored batch, then paste the JSON into Mei Import Center.</p>
+  <p>Bê nguyên workspace browser khác (Chrome / Opera GX) sang Mei. Mỗi cửa sổ = một màn hình, giữ riêng từng screen rồi chia lại trong Mei.</p>
 
   <div class="card">
+    <div class="small">Một cửa sổ hiện tại</div>
     <label for="labelInput">Batch label</label>
     <input id="labelInput" type="text" placeholder="Example: Work Window">
     <div class="row">
-      <button id="captureBtn" class="primary">Capture This Window</button>
+      <button id="captureBtn" class="primary">Chụp cửa sổ này</button>
       <button id="copyBtn" class="secondary">Copy JSON</button>
     </div>
     <div class="row">
-      <button id="downloadBtn" class="ghost">Download JSON</button>
-      <button id="refreshBtn" class="ghost">Refresh Stored Batch</button>
+      <button id="downloadBtn" class="ghost">Tải JSON cửa sổ</button>
+      <button id="refreshBtn" class="ghost">Nạp lại</button>
     </div>
     <div id="status" class="status"></div>
   </div>
 
   <div class="card">
-    <div class="small">Window payload for Mei</div>
-    <textarea id="payloadOutput" placeholder="Capture a window to generate JSON payload..."></textarea>
+    <div class="small">Tất cả màn hình (đa cửa sổ)</div>
+    <button id="captureAllBtn" class="primary wide">Chụp TẤT CẢ cửa sổ</button>
+    <div class="row">
+      <button id="downloadAllJsonBtn" class="secondary">Tải JSON tất cả</button>
+      <button id="downloadAllZipBtn" class="ghost">Tải ZIP tất cả</button>
+    </div>
   </div>
 
+  <div class="card">
+    <div class="small">Payload cho Mei</div>
+    <textarea id="payloadOutput" placeholder="Chụp cửa sổ để sinh JSON payload..."></textarea>
+  </div>
+
+  <script src="zip.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

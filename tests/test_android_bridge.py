@@ -162,6 +162,63 @@ class TestDispatchIngest(unittest.TestCase):
         self.assertEqual(len(batches), 1)
         self.assertEqual(batches[0]["tab_count"], 1)
 
+    def test_import_tabs_batch_from_zip(self):
+        import zipfile
+
+        # Multi-screen export shape the Mei bridge extension writes.
+        workspace = {
+            "format": "mei-multi-window",
+            "version": 1,
+            "source_browser": "chrome",
+            "created_at": 1700000000000,
+            "window_count": 2,
+            "batches": [
+                {
+                    "batch_id": "chrome_window_11",
+                    "window_id": "11",
+                    "screen_index": 0,
+                    "source_browser": "chrome",
+                    "source_label": "Screen 1",
+                    "tabs": [{"url": "https://a.example", "title": "A", "active": True, "pinned": False}],
+                },
+                {
+                    "batch_id": "chrome_window_22",
+                    "window_id": "22",
+                    "screen_index": 1,
+                    "source_browser": "chrome",
+                    "source_label": "Screen 2",
+                    "tabs": [
+                        {"url": "https://b.example", "title": "B", "active": True, "pinned": False},
+                        {"url": "https://c.example", "title": "C tiếng Việt", "active": False, "pinned": True},
+                    ],
+                },
+            ],
+        }
+        zip_path = os.path.join(self._tmp.name, "mei-workspace.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("workspace.json", json.dumps(workspace, ensure_ascii=False))
+            zf.writestr("screen-1.json", json.dumps(workspace["batches"][0], ensure_ascii=False))
+            zf.writestr("screen-2.json", json.dumps(workspace["batches"][1], ensure_ascii=False))
+
+        last = extension_bridge.import_from_zip(self.base, zip_path)
+        batches = extension_bridge.load_batches(self.base)
+        self.assertEqual(last["source_label"], "Screen 2")
+        self.assertEqual(len(batches), 2)
+        self.assertEqual(batches[0]["screen_index"], 1)
+        self.assertEqual(batches[1]["screen_index"], 0)
+        self.assertEqual(batches[1]["tab_count"], 1)
+        self.assertEqual(batches[0]["tab_count"], 2)
+        self.assertEqual(batches[0]["tabs"][1]["title"], "C tiếng Việt")
+
+    def test_import_tabs_batch_zip_rejects_no_json(self):
+        import zipfile
+
+        zip_path = os.path.join(self._tmp.name, "empty.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("readme.txt", "no tabs here")
+        with self.assertRaises(ValueError):
+            extension_bridge.import_from_zip(self.base, zip_path)
+
     def test_create_task_iso_due(self):
         from litebrowser.services import life_service
 
@@ -389,8 +446,51 @@ class TestAndroidBridgeHTTP(unittest.TestCase):
         j = json.loads(res.read().decode("utf-8"))
         self.assertTrue(j["ok"])
         self.assertIn("create_drawing", j["actions"])
+        self.assertIn("open_app", j["actions"])
         self.assertTrue(j["upload"]["multipart"])
         self.assertEqual(j["upload"]["endpoint"], "/api/mobile/upload")
+
+    def test_open_app_writes_request_file(self):
+        out = android_bridge_service.dispatch_ingest(
+            self.base,
+            {
+                "action": "open_app",
+                "source": "android.mei_remote",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "payload": {"id": "mas", "label": "MAS"},
+            },
+        )
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["action"], "open_app")
+        self.assertTrue(out["result"]["url"])  # https remote hoặc file:// local
+        from litebrowser.services import open_request
+        reqs = open_request.drain_open_requests(self.base)
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0]["kind"], "mas")
+        self.assertTrue(reqs[0]["url"])
+
+    def test_open_app_rejects_bad_url(self):
+        out = android_bridge_service.dispatch_ingest(
+            self.base,
+            {
+                "action": "open_app",
+                "source": "android.mei_remote",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "payload": {"url": "javascript:alert(1)"},
+            },
+        )
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["error"]["code"], "invalid_payload")
+
+    def test_open_request_queue_is_isolated_per_profile(self):
+        from litebrowser.services import open_request
+        other = prefs.ensure_profile_layout(os.path.join(self._tmp.name, "other_profile"))
+        android_bridge_service.dispatch_ingest(
+            self.base,
+            {"action": "open_app", "source": "t", "timestamp": "2026-01-01T00:00:00Z", "payload": {"url": "https://example.com"}},
+        )
+        self.assertEqual(len(open_request.drain_open_requests(self.base)), 1)
+        self.assertEqual(len(open_request.drain_open_requests(other)), 0)
 
 
 if __name__ == "__main__":

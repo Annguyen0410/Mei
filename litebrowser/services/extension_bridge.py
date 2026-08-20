@@ -3,6 +3,7 @@ import json
 import os
 import time
 import urllib.parse
+import zipfile
 from typing import Any
 
 from litebrowser.core import storage_utils
@@ -54,12 +55,19 @@ def _normalize_batch(payload: dict[str, Any]) -> dict[str, Any]:
     window_id = str(payload.get("window_id") or payload.get("source_window_id") or "unknown")
     source_browser = str(payload.get("source_browser") or payload.get("browser") or "chrome-family").strip() or "chrome-family"
     source_label = str(payload.get("source_label") or f"Window {window_id}").strip() or f"Window {window_id}"
+    # Which monitor/screen this window was on (0-based). Mei uses it to split a
+    # multi-screen export back into separate workspaces.
+    try:
+        screen_index = int(payload.get("screen_index", payload.get("window_index", -1)))
+    except (TypeError, ValueError):
+        screen_index = -1
 
     return {
         "id": batch_id,
         "window_id": window_id,
         "source_browser": source_browser,
         "source_label": source_label,
+        "screen_index": screen_index,
         "created_at": created_at,
         "imported_at": imported_at,
         "tab_count": len(tabs),
@@ -103,12 +111,79 @@ def import_from_json_text(base_dir: str, text: str) -> dict[str, Any]:
 def import_from_file(base_dir: str, path: str) -> dict[str, Any]:
     if not path or not os.path.isfile(path):
         raise ValueError("Import file was not found.")
+    if path.lower().endswith(".zip"):
+        return import_from_zip(base_dir, path)
     try:
         with open(path, "r", encoding="utf-8") as handle:
             text = handle.read()
     except OSError as exc:
         raise ValueError(f"Could not read import file: {exc}") from exc
     return import_from_json_text(base_dir, text)
+
+
+def import_from_zip(base_dir: str, path: str) -> dict[str, Any]:
+    """Import a .zip exported by the Mei bridge extension.
+
+    Two layouts are accepted:
+
+    1. The extension's own layout — a ``workspace.json`` manifest with a
+       ``batches`` array (one entry per monitor/screen), plus optional
+       ``screen-N.json`` files. The manifest is authoritative.
+    2. A plain folder of ``*.json`` batch files (any names), each imported as
+       its own window batch.
+
+    Returns the last batch imported (mirrors ``import_from_json_text``), or
+    raises ValueError when the archive has no importable tabs.
+    """
+    if not path or not os.path.isfile(path):
+        raise ValueError("Import file was not found.")
+    try:
+        archive = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"Not a valid ZIP archive: {exc}") from exc
+
+    try:
+        names = [n for n in archive.namelist() if n.lower().endswith(".json")]
+        if not names:
+            raise ValueError("ZIP archive contains no .json files.")
+
+        last = None
+        # Extension manifest takes priority when present.
+        manifest_names = [n for n in names if os.path.basename(n).lower() == "workspace.json"]
+        if manifest_names:
+            try:
+                text = archive.read(manifest_names[0]).decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"workspace.json is not valid UTF-8: {exc}") from exc
+            payload = json.loads(text)
+            batches = payload.get("batches") if isinstance(payload, dict) else None
+            if not isinstance(batches, list) or not batches:
+                raise ValueError("workspace.json has no batches array.")
+            for batch_payload in batches:
+                last = upsert_batch(base_dir, batch_payload)
+            return last
+
+        # Fall back to every JSON file in the archive, in name order (so
+        # screen-1.json < screen-2.json keeps the monitor ordering).
+        for name in sorted(names):
+            try:
+                text = archive.read(name).decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and isinstance(payload.get("batches"), list):
+                for batch_payload in payload["batches"]:
+                    last = upsert_batch(base_dir, batch_payload)
+            elif isinstance(payload, dict):
+                last = upsert_batch(base_dir, payload)
+        if last is None:
+            raise ValueError("ZIP archive contains no importable tab batches.")
+        return last
+    finally:
+        archive.close()
 
 
 def import_from_encoded_query(base_dir: str, encoded: str) -> dict[str, Any]:

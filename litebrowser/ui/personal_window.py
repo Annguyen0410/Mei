@@ -688,6 +688,10 @@ class PersonalWindow(QMainWindow):
         # stops consuming CPU / network in the background; reload the cached
         # URL when returning so the user sees the same site instantly.
         self._update_site_preview_activity(key == "sites")
+        # The neural graph repaints at 20 FPS; stop the timer when the Notes
+        # page is hidden (v6.4 kept animating behind every other page).
+        if hasattr(self, "neural_graph") and hasattr(self, "chk_neural_graph"):
+            self.neural_graph.set_animation_running(key == "notes" and self.chk_neural_graph.isChecked())
         if previous != self.stack.currentIndex() and key != "sites":  # #[c] keep WebEngine preview out of QWidget compositing.
             theme.animate_entrance(self.stack.currentWidget())
 

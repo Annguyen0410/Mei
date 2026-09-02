@@ -1961,8 +1961,11 @@ class PersonalWindow(QMainWindow):
         placeholder_layout.addWidget(self.lbl_site_placeholder_detail)
         placeholder_layout.addStretch(1)
         self.site_preview_stack.addWidget(placeholder)
-        self.site_view = self._build_site_view()
-        self.site_preview_stack.addWidget(self.site_view)
+        # The WebEngine view is built lazily on first use: constructing it at
+        # window startup spawned a Chromium renderer even for users who never
+        # open the Sites page (v6.4 memory/startup cost).
+        self.site_view = None
+        self._placeholder_index = self.site_preview_stack.indexOf(placeholder)
         right_layout.addWidget(self.site_preview_stack, 1)
         self._site_loaded_url = ""
         split.addWidget(right_card)
@@ -1982,6 +1985,13 @@ class PersonalWindow(QMainWindow):
         if not self.embedded:
             self.btn_site_ai.hide()
         return w
+
+    def _ensure_site_view(self):
+        """Build the WebEngine preview on first use (lazy)."""
+        if getattr(self, "site_view", None) is None:
+            self.site_view = self._build_site_view()
+            self.site_preview_stack.addWidget(self.site_view)
+        return self.site_view
 
     def _refresh_sites(self):
         sites = prefs.get_personal_sites(self.base_dir)
@@ -2118,8 +2128,10 @@ class PersonalWindow(QMainWindow):
     def _update_site_preview_activity(self, active: bool) -> None:
         """Stop the embedded preview when the Sites page is hidden so it does
         not keep timers/animations/network running in the background."""
-        if not hasattr(self, "site_view") or not hasattr(self, "site_preview_stack"):
+        if not hasattr(self, "site_preview_stack"):
             return
+        if getattr(self, "site_view", None) is None:
+            return  # lazy view not built yet — nothing to pause
         page = self.site_view.page()
         if active:
             if not getattr(self, "_site_preview_on", False):
@@ -2160,13 +2172,14 @@ class PersonalWindow(QMainWindow):
                 "Tick 'Live preview' to render the site here, or click 'Open in Browser' to open it as a full tab.",
             )
             return
-        self.site_preview_stack.setCurrentWidget(self.site_view)
+        site_view = self._ensure_site_view()
+        self.site_preview_stack.setCurrentWidget(site_view)
         if url == self._site_loaded_url:
-            page = self.site_view.page()
+            page = site_view.page()
             if page and page.url().toString() == url:
                 return
         self._site_loaded_url = url
-        self.site_view.setUrl(QUrl(url))
+        site_view.setUrl(QUrl(url))
 
     def _set_site_placeholder(self, title: str, detail: str):
         self.lbl_site_title.setText("Site preview")
@@ -2258,7 +2271,7 @@ class PersonalWindow(QMainWindow):
         self._site_preview_was_on_before_ai = bool(self._site_preview_on)
         already_loaded = ""
         try:
-            already_loaded = self.site_view.page().url().toString()
+            already_loaded = self._ensure_site_view().page().url().toString()
         except Exception:
             pass
         if already_loaded == url:
@@ -2269,18 +2282,19 @@ class PersonalWindow(QMainWindow):
         # and read its real content so the assistant answers from the page,
         # not just from the saved URL.
         self._site_preview_on = True
-        self.site_preview_stack.setCurrentWidget(self.site_view)
+        site_view = self._ensure_site_view()
+        self.site_preview_stack.setCurrentWidget(site_view)
         self._site_loaded_url = url
         try:
-            self.site_view.loadFinished.disconnect(self._on_site_ai_load_finished)
+            site_view.loadFinished.disconnect(self._on_site_ai_load_finished)
         except Exception:
             pass
-        self.site_view.loadFinished.connect(self._on_site_ai_load_finished)
-        self.site_view.setUrl(QUrl(url))
+        site_view.loadFinished.connect(self._on_site_ai_load_finished)
+        site_view.setUrl(QUrl(url))
 
     def _on_site_ai_load_finished(self, _ok: bool):
         try:
-            self.site_view.loadFinished.disconnect(self._on_site_ai_load_finished)
+            self._ensure_site_view().loadFinished.disconnect(self._on_site_ai_load_finished)
         except Exception:
             pass
         shell = getattr(self, "_site_ai_shell", None)
@@ -2303,7 +2317,7 @@ class PersonalWindow(QMainWindow):
             self._site_preview_on = was_on
 
         try:
-            self.site_view.page().toPlainText(_grab)
+            self._ensure_site_view().page().toPlainText(_grab)
         except Exception:
             _grab("")
 
@@ -2316,8 +2330,9 @@ class PersonalWindow(QMainWindow):
             shell.browser_page.url_bar.setText(url)
             shell.browser_page.navigate()
             return
-        self.site_preview_stack.setCurrentWidget(self.site_view)
-        self.site_view.setUrl(QUrl(url))
+        site_view = self._ensure_site_view()
+        self.site_preview_stack.setCurrentWidget(site_view)
+        site_view.setUrl(QUrl(url))
 
     def _host_shell(self):
         current = self.parent()

@@ -3361,8 +3361,12 @@ class SearchWindow(QMainWindow):
             return
         if not file_path.endswith(".pdf"):
             file_path += ".pdf"
-        browser.page().printToPdf(file_path)
-        QMessageBox.information(self, "PDF", "Generating PDF. The file will be saved to:\n" + file_path)
+        page = browser.page()
+        page.pdfPrintingFinished.connect(
+            lambda path, ok: self._flash_status("PDF saved: " + os.path.basename(path or file_path)) if ok else self._flash_status("PDF export failed")
+        )
+        page.printToPdf(file_path)
+        self._flash_status("Generating PDF...")
 
     def save_current_page_to_library(self):
         browser = self.current_browser()

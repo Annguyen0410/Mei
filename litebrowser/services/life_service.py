@@ -33,7 +33,10 @@ def _due_at_to_unix(due_at) -> int:
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            # Naive timestamps are wall-clock local time (an Android client or
+            # quick-add sending "2026-09-01T09:00:00" means 9 AM *here*).
+            # v6.4 pinned them to UTC, shifting due times by the UTC offset.
+            dt = dt.astimezone()
         return int(dt.timestamp())
     except ValueError:
         return 0

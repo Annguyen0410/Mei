@@ -591,6 +591,14 @@ class TabManager:
             browser = self._materialize_tab(i)
             if browser is None:
                 return
+        # Reset the find bar: highlights belong to the previous tab (v6.5
+        # find bar carried stale matches across tab switches).
+        close_find = getattr(self.window, "_close_find_bar", None)
+        if close_find is not None:
+            try:
+                close_find()
+            except Exception:
+                pass
         self.stack.setCurrentWidget(browser)
         pending = browser.property("pending_url")
         if pending:

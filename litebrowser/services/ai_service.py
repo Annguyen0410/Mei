@@ -50,18 +50,29 @@ def _chunks(text: str, size: int = 1100):
 
 
 _index_signature_cache: dict[str, tuple[float, str]] = {}
+# Bumped by rebuild/reindex entry points so an immediate recheck after a data
+# mutation never returns the stale cached signature (a plain TTL made the
+# auto-refresh test flaky and could serve stale results to the user).
+_index_signature_epoch = 0
+
+
+def reset_index_signature_cache():
+    global _index_signature_epoch
+    _index_signature_epoch += 1
+    _index_signature_cache.clear()
 
 
 def _index_signature(base_dir: str) -> str:
     """Cheap, content-relevant invalidation; never scans the bundled web archive.
 
-    Result is cached for 3 s per profile: the library search path invokes this
-    on every keystroke-adjacent refresh, and it stats 7 files + walks the
-    whole notes tree each time (v6.5 audit)."""
+    Result is cached briefly per profile *within one epoch*: the library search
+    path stats 7 files + walks the notes tree on every refresh. Any mutation
+    entry point (rebuild_index, note/task/event/board writes) resets the
+    epoch, so callers immediately after a change always recompute."""
     now = time.time()
     cached = _index_signature_cache.get(base_dir)
-    if cached and now - cached[0] < 3.0:
-        return cached[1]
+    if cached and cached[0] == _index_signature_epoch and now - cached[1] < 3.0:
+        return cached[2]
     paths = (
         prefs.bookmarks_path(base_dir), prefs.history_path(base_dir), prefs.downloads_list_path(base_dir),
         life_service.tasks_path(base_dir), life_service.calendar_path(base_dir), life_service.boards_path(base_dir),
@@ -86,7 +97,7 @@ def _index_signature(base_dir: str) -> str:
             except OSError:
                 pass
     signature = hashlib.blake2s("\0".join(rows).encode("utf-8", "surrogatepass"), digest_size=16).hexdigest()
-    _index_signature_cache[base_dir] = (now, signature)
+    _index_signature_cache[base_dir] = (_index_signature_epoch, now, signature)
     return signature
 
 
@@ -191,6 +202,7 @@ def collect_docs(base_dir: str) -> list[AIDoc]:
 
 
 def rebuild_index(base_dir: str) -> dict:
+    reset_index_signature_cache()
     with profile_locked(base_dir):
         payload = {
             "version": INDEX_VERSION,

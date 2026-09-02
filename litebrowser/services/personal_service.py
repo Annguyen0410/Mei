@@ -15,6 +15,14 @@ _cache = {"notes": None, "base_dir": "", "notes_time": 0, "notes_ttl": 2.0}
 def _invalidate_cache():
     _cache["notes"] = None
     _cache["notes_time"] = 0
+    # Note files are part of the AI index signature; any note mutation must
+    # drop the cached signature so the next index check sees the change.
+    from litebrowser.services import ai_service as _ai
+
+    try:
+        _ai.reset_index_signature_cache()
+    except Exception:
+        pass
 
 
 def _get_cached_notes(base_dir: str) -> list[dict[str, str]]:

@@ -4,7 +4,7 @@ import socket
 import time
 
 from PyQt5.QtCore import QSize, Qt, QTimer, QUrl
-from PyQt5.QtGui import QDesktopServices, QGuiApplication, QImage, QPixmap
+from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QImage, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -88,6 +88,74 @@ def _activity_item(kind: str, title: str, detail: str = "", meta: str = "") -> Q
 
 
 
+
+
+class _WeekActivityChart(QWidget):
+    """A quiet 7-day bar chart of browsing counts, painted with the theme.
+
+    Pure QWidget painting: no chart dependency, follows the accent, and the
+    today bar highlights so 'how much did I browse today' answers itself."""
+
+    def __init__(self, page):
+        super().__init__()
+        self._page = page
+        self._counts = [0] * 7
+        self._day_labels = [""] * 7
+        self.setMinimumHeight(96)
+
+    def refresh(self):
+        import time as _time
+
+        from litebrowser.core import prefs as _prefs
+        from litebrowser.ui import theme as _theme
+
+        base_dir = self._page.shell.profile_dir
+        entries = _prefs.load_history_entries(base_dir)
+        today = _time.localtime()
+        midnight_today = _time.mktime((today.tm_year, today.tm_mon, today.tm_mday, 0, 0, 0, 0, 0, -1))
+        counts = [0] * 7
+        for ts, _url in entries:
+            age_days = int((midnight_today - int(ts or 0)) // 86400)
+            if 0 <= age_days < 7:
+                counts[6 - age_days] += 1
+        self._counts = counts
+        try:
+            from datetime import datetime as _dt
+
+            self._day_labels = [
+                (_dt.now() - __import__("datetime").timedelta(days=6 - i)).strftime("%a") for i in range(7)
+            ]
+        except Exception:
+            self._day_labels = [""] * 7
+        self.update()
+
+    def paintEvent(self, _event):
+        from litebrowser.ui import theme as _theme
+
+        painter = QPainter(self)
+        w, h = self.width(), self.height()
+        p = _theme.palette()
+        painter.fillRect(self.rect(), QColor(p["MAIN_BG_ALT"]))
+        top, bottom = 10, h - 22
+        max_count = max(self._counts or [0]) or 1
+        bar_w = max(14, min(46, (w - 20) // 7 - 10))
+        gap = (w - 20 - bar_w * 7) / 6.0 if w > 20 + bar_w * 7 else 4
+        for i, count in enumerate(self._counts):
+            bar_h = int((count / max_count) * max(4, bottom - top))
+            x = int(10 + i * (bar_w + gap))
+            y = bottom - bar_h
+            is_today = i == 6
+            color = QColor(p["ACCENT"] if is_today else p["ACCENT_SOFT"])
+            painter.setPen(QPen(QColor(p["INPUT_BORDER"]), 1))
+            painter.setBrush(color)
+            painter.drawRoundedRect(x, y, bar_w, max(4, bar_h), 4, 4)
+            painter.setPen(QColor(p["TEXT_MUTED"]))
+            label = self._day_labels[i] if i < len(self._day_labels) else ""
+            painter.drawText(x, bottom + 14, bar_w, 14, Qt.AlignCenter, label[:3])
+            if count:
+                painter.setPen(QColor(p["TEXT"]))
+                painter.drawText(x, y - 13, bar_w, 13, Qt.AlignCenter, str(count))
+        painter.end()
 
 
 class HomeDashboardPage(QWidget):
@@ -205,6 +273,20 @@ class HomeDashboardPage(QWidget):
         stats_row.addWidget(components.stat_row(tiles), 1)
         layout.addLayout(stats_row)
 
+        # Dashboard 2.0: 7-day browsing activity mini bar chart (pure paint,
+        # no chart lib) driven straight from history timestamps.
+        self.week_chart = _WeekActivityChart(self)
+        chart_card = QFrame()
+        chart_card.setObjectName("SectionCard")
+        chart_layout = QVBoxLayout(chart_card)
+        chart_layout.setContentsMargins(14, 12, 14, 12)
+        chart_layout.setSpacing(6)
+        chart_layout.addWidget(
+            components.section_header("Your Week", "Pages visited per day (last 7 days)")
+        )
+        chart_layout.addWidget(self.week_chart, 1)
+        layout.addWidget(chart_card, 1)
+
         self.btn_brief_refresh = QPushButton("↻ Refresh")
         self.btn_brief_refresh.clicked.connect(self._refresh_brief)
         self.brief_card = QFrame()
@@ -286,6 +368,8 @@ class HomeDashboardPage(QWidget):
         self._stat_labels["pages"].setText(str(snapshot["saved_pages_total"]))
         self._stat_labels["boards"].setText(str(snapshot["boards_total"]))
         self._stat_labels["focus"].setText(f"{focus_service.today_focus_seconds(self.shell.profile_dir) // 60}")
+        if getattr(self, "week_chart", None) is not None:
+            self.week_chart.refresh()
 
         self.recent_notes.clear()
         for note in personal_service.list_notes(self.shell.profile_dir)[:8]:

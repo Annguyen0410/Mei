@@ -8,6 +8,7 @@ import time
 import unicodedata
 import urllib.request
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 from litebrowser.core import prefs
 from litebrowser.services import ai_service
@@ -164,18 +165,32 @@ def search_hybrid(base_dir: str, query: str, top_k: int = 8, force_rebuild: bool
     model = _embedding_model_name(base_dir)
     if not model:
         return bm25[:final_k]
-    query_vec = _ollama_embedding(model, query)
+    # The query probe doubles as a reachability check with a short timeout:
+    # v6.4 then made up to 12 further sequential calls at 1.5 s each, so a
+    # configured-but-hung Ollama added ~19 s to every search before falling
+    # back. One fast probe; on failure skip the semantic pass entirely.
+    query_vec = _ollama_embedding(model, query, timeout=1.0)
     if not query_vec:
         return bm25[:final_k]
-    scored = []
-    for rank, (score, doc) in enumerate(bm25):
-        cosine = 0.0
-        if rank < 12:  # semantic pass only for the strongest lexical candidates
-            doc_vec = _ollama_embedding(model, _doc_text(doc))
+    candidates = bm25[:12]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {
+            rank: pool.submit(_ollama_embedding, model, _doc_text(doc), 2.0)
+            for rank, (_score, doc) in enumerate(candidates)
+        }
+        scored = []
+        for rank, (score, doc) in enumerate(candidates):
+            cosine = 0.0
+            try:
+                doc_vec = futures[rank].result(timeout=3.0)
+            except Exception:
+                doc_vec = []
             if doc_vec:
                 cosine = _cosine(query_vec, doc_vec)
-        blended = score + 3.0 * cosine
-        scored.append((blended, score, doc))
+            blended = score + 3.0 * cosine
+            scored.append((blended, score, doc))
+    tail = bm25[12:]
+    scored.extend((score, score, doc) for score, doc in tail)
     scored.sort(key=lambda item: -item[0])
     return [(round(score, 3), doc) for _blended, score, doc in scored[:final_k]]
 

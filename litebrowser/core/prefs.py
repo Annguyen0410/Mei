@@ -71,7 +71,15 @@ def favicon_cache_dir(base_dir):
     return path
 
 
+_ensure_layout_done: set[str] = set()
+
+
 def ensure_profile_layout(base_dir):
+    # Fast path: a profile already laid out in this process skips the 5
+    # makedirs syscalls + profile-meta parse that every save_prefs used to
+    # repeat (v6.5 audit: save_prefs → ensure_profile_layout on every toggle).
+    if base_dir in _ensure_layout_done:
+        return base_dir
     os.makedirs(base_dir, exist_ok=True)
     os.makedirs(vault_path(base_dir), exist_ok=True)
     os.makedirs(ext_path(base_dir), exist_ok=True)
@@ -87,6 +95,7 @@ def ensure_profile_layout(base_dir):
         if int(prefs_data.get("schema_version", 0) or 0) < app_paths.APP_SCHEMA_VERSION:
             prefs_data["schema_version"] = app_paths.APP_SCHEMA_VERSION
             write_json(_prefs_path(base_dir), prefs_data)
+    _ensure_layout_done.add(base_dir)
     return base_dir
 
 
@@ -104,6 +113,20 @@ def load_profile_meta(base_dir):
 # mtime+size so repeated reads are in-memory; callers get a deep copy so nobody
 # can accidentally mutate the cached value.
 _prefs_cache: dict[str, tuple[int, int, dict]] = {}
+# The deep copy is itself expensive for the many small scalar getters (every
+# tab hover palette lookup deep-copied the whole prefs tree). Keep one copy
+# per signature: it is regenerated only when the file changes, and every
+# getter still receives its own mutable copy.
+_prefs_copy_cache: dict[str, tuple[int, int, dict]] = {}
+
+
+def _deep_copy_prefs(base_dir, signature, data):
+    cached = _prefs_copy_cache.get(base_dir)
+    if cached is not None and cached[0] == signature[0] and cached[1] == signature[1]:
+        return copy.deepcopy(cached[2])
+    copy_result = copy.deepcopy(data)
+    _prefs_copy_cache[base_dir] = (signature[0], signature[1], copy_result)
+    return copy.deepcopy(copy_result)
 
 
 def load_prefs(base_dir):
@@ -113,26 +136,29 @@ def load_prefs(base_dir):
         signature = (st.st_mtime_ns, st.st_size)
     except OSError:
         _prefs_cache.pop(base_dir, None)
+        _prefs_copy_cache.pop(base_dir, None)
         return {}
     cached = _prefs_cache.get(base_dir)
     if cached is not None and cached[0] == signature[0] and cached[1] == signature[1]:
-        return copy.deepcopy(cached[2])
+        return _deep_copy_prefs(base_dir, signature, cached[2])
     data = read_json(path, {})
     if not isinstance(data, dict):
         data = {}
     data.setdefault("schema_version", app_paths.APP_SCHEMA_VERSION)
     _prefs_cache[base_dir] = (signature[0], signature[1], data)
-    return copy.deepcopy(data)
+    return _deep_copy_prefs(base_dir, signature, data)
 
 
 def save_prefs(base_dir, data):
     _prefs_cache.pop(base_dir, None)
+    _prefs_copy_cache.pop(base_dir, None)
     with profile_locked(base_dir):
         ensure_profile_layout(base_dir)
         payload = dict(data or {})
         payload["schema_version"] = int(payload.get("schema_version", app_paths.APP_SCHEMA_VERSION) or app_paths.APP_SCHEMA_VERSION)
         write_json(_prefs_path(base_dir), payload)
     _prefs_cache.pop(base_dir, None)
+    _prefs_copy_cache.pop(base_dir, None)
 
 
 def get_https_only(base_dir):

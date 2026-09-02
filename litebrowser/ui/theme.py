@@ -1193,6 +1193,17 @@ QToolTip {
     font-size: 12px;
     font-weight: 600;
 }
+/* Chrome-style thin page-load bar under the toolbar. */
+#LoadProgress {
+    background: transparent;
+    border: none;
+    max-height: 3px;
+    margin: 0;
+}
+#LoadProgress::chunk {
+    background-color: %(ACCENT)s;
+    border-radius: 1px;
+}
 """ % p
 
 

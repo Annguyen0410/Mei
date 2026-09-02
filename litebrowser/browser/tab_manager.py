@@ -382,6 +382,11 @@ class TabManager:
         browser.titleChanged.connect(lambda title, b=browser: self.on_title_changed(title, b))
         browser.iconChanged.connect(lambda icon, b=browser: self.on_icon_changed(icon, b))
         browser.loadFinished.connect(lambda ok, b=browser: self._on_load_finished_wire(ok, b))
+        # Load progress → the thin accent bar under the toolbar (v6.5: the app
+        # had zero loadProgress feedback between navigation start and finish).
+        browser.loadProgress.connect(
+            lambda progress, b=browser: self.window.on_load_progress(progress, b)
+        )
         # Renderer crash recovery: a dead renderer used to leave a white tab
         # with no way back (v6.4 had no renderProcessTerminated handler).
         browser.renderProcessTerminated.connect(

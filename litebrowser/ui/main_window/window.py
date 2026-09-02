@@ -42,6 +42,7 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QShortcut,
     QSizePolicy,
@@ -552,6 +553,15 @@ class SearchWindow(QMainWindow):
         self.topbar_layout.addWidget(self.btn_toggle_topbar)
         self.topbar_layout.setStretchFactor(self.url_bar, 1)
         self.content_layout.addWidget(self.topbar, 0)
+        # Chrome-style load progress: a 3px accent bar directly under the
+        # toolbar (v6.5 audit: zero loadProgress feedback anywhere in the app).
+        self.load_progress = QProgressBar(self.content_widget)
+        self.load_progress.setObjectName("LoadProgress")
+        self.load_progress.setRange(0, 100)
+        self.load_progress.setTextVisible(False)
+        self.load_progress.setFixedHeight(3)
+        self.load_progress.hide()
+        self.content_layout.addWidget(self.load_progress, 0)
         self.inline_ai_panel = QFrame()
         self.inline_ai_panel.setObjectName("SectionCard")
         inline_ai_layout = QVBoxLayout(self.inline_ai_panel)
@@ -1926,6 +1936,21 @@ class SearchWindow(QMainWindow):
             self.showNormal()
         else:
             self.showFullScreen()
+
+    def on_load_progress(self, progress, browser=None):
+        """Drive the thin load bar from the *current* tab only."""
+        if browser is not None and browser is not self.current_browser():
+            return
+        try:
+            value = int(progress or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value >= 100 or value <= 0:
+            self.load_progress.hide()
+            return
+        self.load_progress.setValue(value)
+        self.load_progress.show()
+        self.load_progress.raise_()
 
     def _flash_status(self, message: str):
         """Non-modal toast: transient feedback without dialog spam (v6.4 used

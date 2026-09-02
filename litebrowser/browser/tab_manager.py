@@ -183,6 +183,17 @@ class TabListItemWidget(QWidget):
     def set_title_style(self, style):
         self.lbl_title.setStyleSheet(style)
 
+    def mouseReleaseEvent(self, event):
+        # Chrome/Firefox standard: middle-click anywhere on the row closes the
+        # tab (v6.5 audit: not implemented anywhere).
+        from PyQt5.QtCore import Qt as _Qt
+
+        if event.button() == _Qt.MiddleButton and self.item is not None:
+            self.manager.close_tab_item(self.item)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
     def enterEvent(self, event):
         self.manager._hovered_item = self.item
         if self._memory_timer is None:

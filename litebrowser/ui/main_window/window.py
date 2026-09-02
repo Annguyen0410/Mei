@@ -3269,18 +3269,18 @@ class SearchWindow(QMainWindow):
                 download.accept()
                 try:
                     from litebrowser.services import download_mgr
-                    download_index = download_mgr.add_download(self.base_dir, download.url().toString(), path, download.suggestedFileName(), "downloading")
+                    download_id = download_mgr.add_download(self.base_dir, download.url().toString(), path, download.suggestedFileName(), "downloading")
                     # Qt6 and Qt5 both expose stateChanged; use it as the primary signal so
                     # status always lands even when .finished / .isFinishedChanged are absent.
                     if hasattr(download, "stateChanged"):
                         download.stateChanged.connect(
-                            lambda _state=None, idx=download_index, item=download: self._finalize_download(idx, item)
+                            lambda _state=None, did=download_id, item=download: self._finalize_download(did, item)
                         )
                     if hasattr(download, "finished"):
-                        download.finished.connect(lambda idx=download_index, item=download: self._finalize_download(idx, item))
+                        download.finished.connect(lambda did=download_id, item=download: self._finalize_download(did, item))
                     elif hasattr(download, "isFinishedChanged"):
                         download.isFinishedChanged.connect(
-                            lambda done, idx=download_index, item=download: self._finalize_download(idx, item) if done else None
+                            lambda done, did=download_id, item=download: self._finalize_download(did, item) if done else None
                         )
                 except Exception:
                     pass
@@ -3289,12 +3289,12 @@ class SearchWindow(QMainWindow):
         else:
             download.cancel()
 
-    def _finalize_download(self, index, download):
+    def _finalize_download(self, download_id, download):
         # stateChanged and finished both fire per download; only the first
         # terminal event may be recorded or statuses get overwritten.
         if not hasattr(self, "_finalized_downloads"):
             self._finalized_downloads = set()
-        if index in self._finalized_downloads:
+        if download_id in self._finalized_downloads:
             return
         try:
             from litebrowser.services import download_mgr
@@ -3314,8 +3314,8 @@ class SearchWindow(QMainWindow):
                 status = "cancelled"
             elif interrupted is not None and state == interrupted:
                 status = "interrupted"
-            download_mgr.update_status(self.base_dir, index, status)
-            self._finalized_downloads.add(index)
+            download_mgr.update_status(self.base_dir, download_id, status)
+            self._finalized_downloads.add(download_id)
             self._load_downloads_panel()
         except Exception:
             pass

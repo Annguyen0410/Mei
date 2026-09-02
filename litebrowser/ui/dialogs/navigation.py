@@ -166,49 +166,53 @@ def show_downloads_dialog(parent):
     list_widget = QListWidget()
     layout.addWidget(list_widget)
 
-    def open_file():
+    def _selected_download():
         row = list_widget.currentRow()
         if row < 0:
+            return None
+        download_id = list_widget.item(row).data(Qt.UserRole)
+        for item in download_mgr.load_list(base_dir):
+            if isinstance(item, dict) and item.get("id") == download_id:
+                return item
+        return None
+
+    def open_file():
+        entry = _selected_download()
+        if entry is None:
             return
-        idx = list_widget.item(row).data(Qt.UserRole)
-        items = download_mgr.load_list(base_dir)
-        if 0 <= idx < len(items):
-            path = items[idx].get("path")
-            if path and os.path.exists(path):
-                try:
-                    os.startfile(path)
-                except Exception:
-                    QMessageBox.warning(dialog, "Error", "Could not open the file.")
-            else:
-                QMessageBox.information(dialog, "Downloads", "The file does not exist or the path is invalid.")
+        path = entry.get("path")
+        if path and os.path.exists(path):
+            try:
+                os.startfile(path)
+            except Exception:
+                QMessageBox.warning(dialog, "Error", "Could not open the file.")
+        else:
+            QMessageBox.information(dialog, "Downloads", "The file does not exist or the path is invalid.")
 
     def open_folder():
-        row = list_widget.currentRow()
-        if row < 0:
+        entry = _selected_download()
+        if entry is None:
             return
-        idx = list_widget.item(row).data(Qt.UserRole)
-        items = download_mgr.load_list(base_dir)
-        if 0 <= idx < len(items):
-            path = items[idx].get("path")
-            if path:
-                folder = os.path.dirname(path)
-                if os.path.isdir(folder):
-                    try:
-                        os.startfile(folder)
-                    except Exception:
-                        QMessageBox.warning(dialog, "Error", "Could not open the folder.")
-                else:
-                    try:
-                        os.startfile(download_mgr.get_download_dir(base_dir))
-                    except Exception:
-                        pass
+        path = entry.get("path")
+        if path:
+            folder = os.path.dirname(path)
+            if os.path.isdir(folder):
+                try:
+                    os.startfile(folder)
+                except Exception:
+                    QMessageBox.warning(dialog, "Error", "Could not open the folder.")
+            else:
+                try:
+                    os.startfile(download_mgr.get_download_dir(base_dir))
+                except Exception:
+                    pass
 
     def remove_item():
         row = list_widget.currentRow()
         if row < 0:
             return
-        idx = list_widget.item(row).data(Qt.UserRole)
-        download_mgr.remove_download(base_dir, idx)
+        download_id = list_widget.item(row).data(Qt.UserRole)
+        download_mgr.remove_download(base_dir, download_id)
         refresh()
 
     def refresh():
@@ -219,11 +223,11 @@ def show_downloads_dialog(parent):
             list_widget.setEnabled(False)
             return
         list_widget.setEnabled(True)
-        for i, d in enumerate(items):
+        for d in items:
             fname = d.get("filename", d.get("path", ""))
             status = (d.get("status") or "?").lower()
             list_widget.addItem("%s — %s" % (status.title(), fname))
-            list_widget.item(list_widget.count() - 1).setData(Qt.UserRole, i)
+            list_widget.item(list_widget.count() - 1).setData(Qt.UserRole, d.get("id"))
 
     def open_selected():
         open_file()

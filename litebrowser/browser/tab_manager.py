@@ -23,6 +23,21 @@ from litebrowser.services import workspace_manager
 TAB_WIDGET_ROLE = Qt.UserRole
 TAB_PINNED_ROLE = Qt.UserRole + 1
 TAB_META_ROLE = Qt.UserRole + 10
+TAB_GROUP_ROLE = Qt.UserRole + 11  # group name ("" = no group)
+TAB_GROUP_COLOR_ROLE = Qt.UserRole + 12  # hex color or ""
+
+# Chrome-style tab group palette: saturated but theme-agnostic accent chips.
+TAB_GROUP_COLORS = (
+    ("Blue", "#4c8bf5"),
+    ("Red", "#ea6a5e"),
+    ("Yellow", "#f2c14e"),
+    ("Green", "#5fae7b"),
+    ("Purple", "#a06ee1"),
+    ("Orange", "#f0964f"),
+    ("Pink", "#e2719e"),
+    ("Cyan", "#48b8c9"),
+    ("Gray", "#8d8578"),
+)
 
 _FAVICON_CACHE = {}
 
@@ -517,6 +532,12 @@ class TabManager:
             )
         if session_data.get("icon"):
             widget.set_icon(session_data.get("icon"))
+        # Restore the colored group across sessions (stored in metadata).
+        group_name = session_data.get("group") or ""
+        group_color = session_data.get("group_color") or ""
+        if group_name:
+            item.setData(TAB_GROUP_ROLE, group_name)
+            item.setData(TAB_GROUP_COLOR_ROLE, group_color)
 
         browser = None
         if should_defer:
@@ -749,6 +770,48 @@ class TabManager:
                 self.set_tab_pinned(row, False)
                 return
             self.close_tab(row)
+
+    def set_tab_group(self, i, name: str = "", color: str = ""):
+        """Assign/remove a Chrome-style colored group for row ``i``.
+
+        The group shows as a colored left bar + name prefix on the tab row.
+        Members of the same group sort together via refresh via caller."""
+        item = self.tab_list.item(i)
+        if item is None:
+            return
+        item.setData(TAB_GROUP_ROLE, str(name or ""))
+        item.setData(TAB_GROUP_COLOR_ROLE, str(color or ""))
+        widget = item.data(TAB_WIDGET_ROLE)
+        if widget is None:
+            return
+        lbl = getattr(widget, "lbl_title", None)
+        if lbl is None:
+            return
+        base_text = lbl.text()
+        # Strip any existing "Group · " prefix before re-applying.
+        for _existing_name, _existing_color in TAB_GROUP_COLORS:
+            prefix = _existing_name + " · "
+            if base_text.startswith(prefix):
+                base_text = base_text[len(prefix):]
+        if name:
+            lbl.setText(f"{name} · {base_text}")
+            lbl.set_title_style(
+                f"color: {color or self._pal.get('TEXT', '')}; font-weight: 800; background: transparent;"
+            )
+        else:
+            lbl.setText(base_text)
+            lbl.set_title_style(
+                f"color: {self._pal.get('TEXT', '')}; font-size: 11px; font-weight: 600; background: transparent;"
+            )
+
+    def _apply_group_visual(self, i):
+        item = self.tab_list.item(i)
+        if item is None:
+            return
+        name = item.data(TAB_GROUP_ROLE) or ""
+        color = item.data(TAB_GROUP_COLOR_ROLE) or ""
+        if name:
+            self.set_tab_group(i, name, color)
 
     def set_tab_pinned(self, i, pinned):
         """Toggle pin state for row ``i``; keeps visuals in sync.

@@ -63,7 +63,13 @@ from litebrowser.browser.browser_page import (
     ensure_text_highlight_script,
     ensure_webgl_disable_script,
 )
-from litebrowser.browser.tab_manager import TAB_META_ROLE, TAB_PINNED_ROLE
+from litebrowser.browser.tab_manager import (
+    TAB_GROUP_COLORS,
+    TAB_GROUP_COLOR_ROLE,
+    TAB_GROUP_ROLE,
+    TAB_META_ROLE,
+    TAB_PINNED_ROLE,
+)
 from litebrowser.core import app_paths, app_version, prefs
 from litebrowser.services import (
     extension_bridge,
@@ -1902,6 +1908,16 @@ class SearchWindow(QMainWindow):
         reload_action.setEnabled(browser is not None)
         pin_action = menu.addAction("Pin / Unpin")
         dup_action = menu.addAction("Duplicate Tab")
+        # Chrome-style colored tab groups: assign or strip via submenu.
+        group_menu = menu.addMenu("Add to group")
+        current_group = item.data(TAB_GROUP_ROLE) or ""
+        group_actions = {}
+        for g_name, g_color in TAB_GROUP_COLORS:
+            g_act = group_menu.addAction(f"●  {g_name}")
+            g_act.setData(g_color)
+            group_actions[g_act] = (g_name, g_color)
+        remove_group_action = group_menu.addAction("Remove group")
+        remove_group_action.setEnabled(bool(current_group))
         move_menu = menu.addMenu("Move to workspace")
         workspace_actions = {}
         for workspace in workspace_manager.get_workspaces_list(self.base_dir):
@@ -1965,6 +1981,13 @@ class SearchWindow(QMainWindow):
         elif action == pin_action:
             is_pinned = bool(item.data(TAB_PINNED_ROLE))
             self.tab_manager.set_tab_pinned(row, not is_pinned)
+        elif action in group_actions:
+            g_name, g_color = group_actions[action]
+            self.tab_manager.set_tab_group(row, g_name, g_color)
+            self._flash_status(f"Group '{g_name}' applied")
+        elif action == remove_group_action:
+            self.tab_manager.set_tab_group(row, "", "")
+            self._flash_status("Group removed")
         elif action == dup_action:
             self.tab_manager.duplicate_tab_at_row(row)
         elif action == close_action:
@@ -3721,6 +3744,8 @@ class SearchWindow(QMainWindow):
             "active": (browser is active_browser),
             "pinned": bool(item.data(TAB_PINNED_ROLE)) if item else False,
             "workspace_id": workspace_id or self.current_workspace_id,
+            "group": (item.data(TAB_GROUP_ROLE) or "") if item else "",
+            "group_color": (item.data(TAB_GROUP_COLOR_ROLE) or "") if item else "",
         }
 
     def closeEvent(self, event):

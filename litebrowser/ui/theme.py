@@ -1221,6 +1221,11 @@ QToolTip {
     background-color: %(ACCENT_SOFT)s;
     border-top: 1px solid %(ACCENT)s;
 }
+/* Edge-Copilot-style AI sidebar dock. */
+#AISideDock {
+    background-color: %(CARD_BG)s;
+    border-left: 1px solid %(BORDER_SOFT)s;
+}
 """ % p
 
 

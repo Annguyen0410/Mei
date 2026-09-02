@@ -598,8 +598,8 @@ class SearchWindow(QMainWindow):
         inline_ai_layout.setSpacing(8)
         ai_row = QHBoxLayout()
         self.inline_ai_input = QLineEdit()
-        self.inline_ai_input.setPlaceholderText("Ask AI about the page you are viewing...")
-        self.inline_ai_ask = QPushButton("Ask page")
+        self.inline_ai_input.setPlaceholderText("Ask about this page...")
+        self.inline_ai_ask = QPushButton("Ask")
         self.inline_ai_close = QPushButton("Hide")
         ai_row.addWidget(self.inline_ai_input, 1)
         ai_row.addWidget(self.inline_ai_ask)
@@ -607,14 +607,14 @@ class SearchWindow(QMainWindow):
         inline_ai_layout.addLayout(ai_row)
         self.inline_ai_answer = QTextEdit()
         self.inline_ai_answer.setReadOnly(True)
-        self.inline_ai_answer.setMaximumHeight(120)
         self.inline_ai_answer.setPlaceholderText("The page-aware assistant will answer here.")
         inline_ai_layout.addWidget(self.inline_ai_answer)
         self.inline_ai_panel.hide()
         self.inline_ai_input.returnPressed.connect(self._run_inline_ai)
         self.inline_ai_ask.clicked.connect(self._run_inline_ai)
         self.inline_ai_close.clicked.connect(self.inline_ai_panel.hide)
-        self.content_layout.addWidget(self.inline_ai_panel, 0)
+        # Kept out of the layout: the widgets move into the AI side dock below
+        # (v6.5 replaced the cramped top strip with a Copilot-style sidebar).
         self.ai_actions_available = embedded
         if not self.ai_actions_available:
             self.btn_ai.hide()
@@ -641,6 +641,54 @@ class SearchWindow(QMainWindow):
         self.panel_split.setStretchFactor(0, 1)
         self.panel_split.setStretchFactor(1, 0)
         self.panel_dock.hide()
+        # Edge-Copilot-style AI sidebar: chat with the visible page without
+        # leaving the browser workspace. Reuses the inline AI widgets, but as
+        # a docked pane with room for a real answer.
+        self.ai_dock = QFrame()
+        self.ai_dock.setObjectName("AISideDock")
+        ai_dock_layout = QVBoxLayout(self.ai_dock)
+        ai_dock_layout.setContentsMargins(0, 0, 0, 0)
+        ai_dock_layout.setSpacing(0)
+        ai_header = QFrame()
+        ai_header.setObjectName("WebPanelHeader")
+        ai_header_layout = QHBoxLayout(ai_header)
+        ai_header_layout.setContentsMargins(8, 3, 6, 3)
+        ai_lbl = QLabel("✦ AI — this page")
+        ai_lbl.setObjectName("PageTitle")
+        ai_font = ai_lbl.font()
+        ai_font.setPointSize(9)
+        ai_font.setBold(True)
+        ai_lbl.setFont(ai_font)
+        ai_header_layout.addWidget(ai_lbl, 1)
+        self.btn_ai_dock_close = QToolButton()
+        self.btn_ai_dock_close.setObjectName("TopIconButton")
+        self.btn_ai_dock_close.setText("✕")
+        self.btn_ai_dock_close.setToolTip("Close AI sidebar")
+        self.btn_ai_dock_close.clicked.connect(self.close_ai_sidebar)
+        ai_header_layout.addWidget(self.btn_ai_dock_close)
+        ai_dock_layout.addWidget(ai_header, 0)
+        ai_body = QWidget()
+        ai_body_layout = QVBoxLayout(ai_body)
+        ai_body_layout.setContentsMargins(8, 8, 8, 8)
+        ai_body_layout.setSpacing(6)
+        self.inline_ai_input.setParent(None)
+        self.inline_ai_answer.setParent(None)
+        self.inline_ai_input.setMinimumHeight(30)
+        self.inline_ai_answer.setMaximumHeight(16777215)
+        ai_body_layout.addWidget(self.inline_ai_answer, 1)
+        ai_body_layout.addWidget(self.inline_ai_input, 0)
+        ask_row = QHBoxLayout()
+        ask_row.addStretch(1)
+        self.inline_ai_ask.setParent(None)
+        self.inline_ai_close.setParent(None)
+        self.inline_ai_close.hide()
+        ask_row.addWidget(self.inline_ai_ask)
+        ai_body_layout.addLayout(ask_row)
+        ai_dock_layout.addWidget(ai_body, 1)
+        self.ai_dock.setMinimumWidth(320)
+        self.ai_dock.setMaximumWidth(560)
+        self.panel_split.addWidget(self.ai_dock)
+        self.ai_dock.hide()
         self.content_layout.addWidget(self.panel_split, 1)
         self.main_splitter.addWidget(self.content_widget)
         initial_sidebar = self._sidebar_expanded_nominal_width()
@@ -2334,6 +2382,24 @@ class SearchWindow(QMainWindow):
         self.panel_dock.hide()
         prefs.set_web_panel_visible(self.base_dir, False)
 
+    def toggle_ai_sidebar(self):
+        """Edge-Copilot-style: dock the page-aware assistant beside the web."""
+        if self.ai_dock.isVisible():
+            self.ai_dock.hide()
+            return
+        self.ai_dock.show()
+        total = max(600, self.panel_split.width())
+        self.panel_split.setSizes([max(420, total - 360), 360])
+        self.inline_ai_input.setFocus()
+        if not self.inline_ai_answer.toPlainText().strip():
+            self.inline_ai_answer.setPlainText(
+                "Ask anything about the page you are viewing.\n\n"
+                "The assistant reads the visible page text and answers with full context."
+            )
+
+    def close_ai_sidebar(self):
+        self.ai_dock.hide()
+
     def _open_panel_in_tab(self):
         url = self._panel_last_url or ""
         if url:
@@ -3812,7 +3878,7 @@ class SearchWindow(QMainWindow):
         browser = self.current_browser()
         if not browser:
             return
-        self.inline_ai_panel.show()
+        self.toggle_ai_sidebar()
         if not self.inline_ai_input.text().strip():
             self.inline_ai_input.setText("What can you see on this page?")
         self._run_inline_ai()
@@ -3825,6 +3891,7 @@ class SearchWindow(QMainWindow):
         if not shell or not hasattr(shell, "ask_ai_from_shell"):
             return
         question = (self.inline_ai_input.text() or "").strip() or "What can you see on this page?"
+        self._inline_last_question = question
         self.inline_ai_answer.setPlainText("Reading the visible page and asking AI...")
         # Wire the answer back through the AIWorkspace signal so the inline panel
         # does not depend on a stale, synchronously-read ``_last_answer``.
@@ -3847,7 +3914,10 @@ class SearchWindow(QMainWindow):
             self.inline_ai_answer.setPlainText("AI request failed: %s" % (exc,))
             return
         answer = (result or {}).get("answer") or "No answer returned."
-        self.inline_ai_answer.setPlainText(answer)
+        question = getattr(self, "_inline_last_question", "")
+        self.inline_ai_answer.setPlainText(
+            (f"Q: {question}\n\n" if question else "") + answer
+        )
 
     def _handle_inline_ai_context(self, shell, browser, question: str, page_text: str):
         if self._closing:

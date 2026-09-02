@@ -432,18 +432,24 @@ class AppShell(QMainWindow):
 
     def refresh_shell(self, force_deep: bool = False):
         theme_name = prefs.get_shell_theme(self.profile_dir)
-        qss = theme.main_qss(theme_name, prefs.get_accent(self.profile_dir))
-        self.setStyleSheet(qss)
-        for widget in (
-            self.home_page,
-            self.browser_page,
-            self.history_page,
-            self.ai_page,
-            self.personal_page,
-            self.library_page,
-            self.settings_page,
-        ):
-            widget.setStyleSheet(qss)
+        # Re-polishing 8 top-level widgets reparses a ~790-line QSS sheet and
+        # repaints every child. Only do it when the theme/accent actually
+        # changed (v6.4 did it for every omnibar command — visible lag).
+        qss_key = (theme_name, prefs.get_accent(self.profile_dir))
+        if force_deep or qss_key != getattr(self, "_qss_key", None):
+            self._qss_key = qss_key
+            qss = theme.main_qss(theme_name, prefs.get_accent(self.profile_dir))
+            self.setStyleSheet(qss)
+            for widget in (
+                self.home_page,
+                self.browser_page,
+                self.history_page,
+                self.ai_page,
+                self.personal_page,
+                self.library_page,
+                self.settings_page,
+            ):
+                widget.setStyleSheet(qss)
         self.home_page.refresh()
         self.history_page.refresh()
         self.library_page.refresh(self.library_page.ed_search.text().strip())
@@ -452,7 +458,7 @@ class AppShell(QMainWindow):
         sync_state = life_service.load_sync_state(self.profile_dir)
         status = account.get("display_name") or "Offline-ready"
         self.lbl_sync_state.setText(f"{status}\npending {int(sync_state.get('pending_changes', 0) or 0)}")
-        self.lbl_status.setText(f"▲ Theme: {theme_name}")
+        self.lbl_status.setText(f"▲ Theme: {theme_name}")
         self.lbl_status_context.setText(f"Last sync: {_format_ts(int(sync_state.get('last_sync_at', 0) or 0))}")
         self.lbl_theme_pill.setText(f"{theme_name} · {prefs.get_accent(self.profile_dir)}")
         self._refresh_insights()

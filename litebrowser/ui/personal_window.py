@@ -2233,10 +2233,11 @@ class PersonalWindow(QMainWindow):
         """Unload the embedded renderer so a heavy local app stops using CPU/GPU."""
         self._site_loaded_url = ""
         try:
-            page = self.site_view.page()
-            if page is not None:
-                page.triggerAction(_PersonalWebEnginePage.Stop)
-                self.site_view.setUrl(QUrl("about:blank"))
+            if getattr(self, "site_view", None) is not None:
+                page = self.site_view.page()
+                if page is not None:
+                    page.triggerAction(_PersonalWebEnginePage.Stop)
+                    self.site_view.setUrl(QUrl("about:blank"))
         except Exception:
             pass
         self._show_site_placeholder(

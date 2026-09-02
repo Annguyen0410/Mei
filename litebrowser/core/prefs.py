@@ -1,5 +1,6 @@
 import copy
 import os
+import re
 import secrets
 import shutil
 import time
@@ -779,8 +780,8 @@ def get_last_profile(app_dir):
 
 
 def set_last_profile(app_dir, name):
-    with open(_last_profile_path(app_dir), "w", encoding="utf-8") as f:
-        f.write(name or "")
+    # Atomic write: a crash mid-write left an empty file (fell back to None).
+    write_text_atomic(_last_profile_path(app_dir), (name or "").strip() + "\n")
 
 
 def list_profiles(app_dir):
@@ -790,10 +791,21 @@ def list_profiles(app_dir):
     return sorted([name for name in os.listdir(pd) if os.path.isdir(os.path.join(pd, name)) and not name.startswith(".")])
 
 
+_PROFILE_NAME_SAFE_RE = re.compile(r'[\\/:*?"<>|]')
+
+
+def _safe_profile_name(name: str) -> str:
+    """Strip path separators and Windows-forbidden characters: a crafted name
+    like '..\\..\\x' must not escape the profiles dir (v6.4 only guarded
+    ''/'.'/'..' on delete)."""
+    return _PROFILE_NAME_SAFE_RE.sub("-", (name or "").strip())
+
+
 def create_profile(app_dir, name):
-    if not name or not name.strip():
+    name = _safe_profile_name(name)
+    if not name or name in (".", ".."):
         return False
-    path = os.path.join(profiles_dir(app_dir), name.strip())
+    path = os.path.join(profiles_dir(app_dir), name)
     if os.path.exists(path):
         return False
     ensure_profile_layout(path)
@@ -801,9 +813,13 @@ def create_profile(app_dir, name):
 
 
 def delete_profile(app_dir, name):
-    if name in ("", ".", ".."):
+    name = _safe_profile_name(name)
+    if not name or name in (".", ".."):
         return False
     path = os.path.join(profiles_dir(app_dir), name)
+    root = os.path.abspath(profiles_dir(app_dir)) + os.sep
+    if not os.path.abspath(path).startswith(root):
+        return False
     if not os.path.isdir(path):
         return False
     shutil.rmtree(path, ignore_errors=True)

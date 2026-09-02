@@ -633,13 +633,16 @@ def session_state_load(base_dir):
 
 
 def session_state_save(base_dir, state):
-    payload = session_state_load(base_dir)
-    if isinstance(state, dict):
-        payload.update(state)
-    payload["version"] = 2
-    payload["tabs"] = payload.get("tabs", []) if isinstance(payload.get("tabs", []), list) else []
-    payload["recently_closed"] = payload.get("recently_closed", []) if isinstance(payload.get("recently_closed", []), list) else []
+    # The read-modify-write must sit inside the lock: v6.4 read the file
+    # BEFORE acquiring it, so two windows (or the bridge thread) saving
+    # concurrently could silently drop each other's recently_closed/tabs.
     with profile_locked(base_dir):
+        payload = session_state_load(base_dir)
+        if isinstance(state, dict):
+            payload.update(state)
+        payload["version"] = 2
+        payload["tabs"] = payload.get("tabs", []) if isinstance(payload.get("tabs", []), list) else []
+        payload["recently_closed"] = payload.get("recently_closed", []) if isinstance(payload.get("recently_closed", []), list) else []
         write_json(session_path(base_dir), payload)
 
 

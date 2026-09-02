@@ -245,6 +245,7 @@ class SearchWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+="), self).activated.connect(self.zoom_in)
         QShortcut(QKeySequence("Ctrl+-"), self).activated.connect(self.zoom_out)
         QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self.print_page)
+        QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(self.save_page_pdf)
         QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(
             lambda: getattr(self, "tab_manager", None) and self.tab_manager.optimize_memory()
         )
@@ -3327,11 +3328,10 @@ class SearchWindow(QMainWindow):
         printer = QPrinter(QPrinter.HighResolution)
         dlg = QPrintDialog(printer, self)
         if dlg.exec_() == QDialog.Accepted:
-            def on_print_finished(path, ok):
-                if ok:
-                    QMessageBox.information(self, "Print", "Sent to the printer.")
-                else:
-                    QMessageBox.warning(self, "Print", "Print failed.")
+            def on_print_finished(ok):
+                # Qt5's QWebEnginePage.printFinished(bool) — the old handler
+                # declared (path, ok) and would TypeError if it ever fired.
+                self._flash_status("Sent to the printer" if ok else "Print failed")
 
             page = browser.page()
             if hasattr(page, "print"):
@@ -3344,18 +3344,11 @@ class SearchWindow(QMainWindow):
             # so the feature never breaks under the PyQt6 shim.
             if hasattr(page, "printToPdf"):
                 tmp_path = os.path.join(prefs.favicon_cache_dir(self.base_dir), "_print_preview.pdf")
-                try:
-                    page.printToPdf(tmp_path)
-                    QMessageBox.information(
-                        self,
-                        "In",
-                        "Newer Qt no longer prints directly. I saved a PDF to:\n%s\n\nOpen it with your default printer for an equivalent result." % tmp_path,
-                    )
-                    return
-                except Exception:
-                    pass
-            if hasattr(page, "printFinished"):
-                page.printFinished.connect(on_print_finished)
+                page.pdfPrintingFinished.connect(lambda _path, ok: self._flash_status("PDF saved — open it to print") if ok else None)
+                page.printToPdf(tmp_path)
+                self._flash_status("Printing to PDF fallback...")
+                return
+            self._flash_status("Printing is not available for this page")
 
     def save_page_pdf(self):
         browser = self.current_browser()

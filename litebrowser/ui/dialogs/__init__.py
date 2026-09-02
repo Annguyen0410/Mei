@@ -7,6 +7,7 @@ from litebrowser.ui.dialogs.navigation import (
 )
 from litebrowser.ui.dialogs.profiles_privacy import (
     ask_master_password,
+    show_permissions_manager,
     show_privacy_dialog,
     show_profiles_dialog,
     show_save_password_dialog,
@@ -30,6 +31,7 @@ __all__ = [
     "show_extensions_dialog",
     "show_hibernate_pref_dialog",
     "show_history_dialog",
+    "show_permissions_manager",
     "show_privacy_dialog",
     "show_profiles_dialog",
     "show_quick_switcher",

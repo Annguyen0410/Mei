@@ -295,3 +295,116 @@ def show_save_password_dialog(parent):
     btn.clicked.connect(do_save)
     layout.addWidget(btn)
     dialog.exec_()
+
+
+FEATURE_LABELS = {
+    "geolocation": "Location",
+    "microphone": "Microphone",
+    "camera": "Camera",
+    "microphone_camera": "Microphone + Camera",
+    "desktop_capture": "Screen capture",
+    "notifications": "Notifications",
+}
+
+
+def show_permissions_manager(parent):
+    """Chrome-style site permissions manager: every origin × feature decision
+    with allow/deny toggles, add new rule, and reset-all."""
+    from PyQt5.QtCore import Qt
+
+    base_dir = parent.base_dir
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Site Permissions")
+    dialog.resize(620, 480)
+    dialog.setStyleSheet(_stylesheet(parent))
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(QLabel("Decisions you made for site features. Allow = grant, Deny = block permanently."))
+    list_widget = QListWidget()
+    layout.addWidget(list_widget, 1)
+    btn_row = QHBoxLayout()
+
+    def refresh():
+        list_widget.clear()
+        perms = prefs.load_permissions(base_dir)
+        rows = []
+        for origin, features in sorted(perms.items()):
+            if not isinstance(features, dict):
+                continue
+            for feature, policy in sorted(features.items()):
+                if policy not in ("allow", "deny"):
+                    continue
+                rows.append((origin, feature, policy))
+        if not rows:
+            list_widget.addItem("No saved site decisions yet. Mei asks the first time a site requests something.")
+            list_widget.setEnabled(False)
+            return
+        list_widget.setEnabled(True)
+        for origin, feature, policy in rows:
+            label = FEATURE_LABELS.get(feature, feature)
+            mark = "✅" if policy == "allow" else "⛔"
+            item_text = f"{mark} {origin} — {label} ({policy})"
+            list_widget.addItem(item_text)
+            list_widget.item(list_widget.count() - 1).setData(Qt.UserRole, (origin, feature, policy))
+
+    def flip():
+        current = list_widget.currentItem()
+        if not current:
+            return
+        payload = current.data(Qt.UserRole)
+        if not payload:
+            return
+        origin, feature, policy = payload
+        prefs.set_permission(base_dir, origin, feature, "deny" if policy == "allow" else "allow")
+        refresh()
+
+    def remove_rule():
+        current = list_widget.currentItem()
+        if not current:
+            return
+        payload = current.data(Qt.UserRole)
+        if not payload:
+            return
+        origin, feature, _policy = payload
+        perms = prefs.load_permissions(base_dir)
+        if origin in perms:
+            perms[origin].pop(feature, None)
+            if not perms[origin]:
+                perms.pop(origin, None)
+            prefs.save_permissions(base_dir, perms)
+        refresh()
+
+    def add_rule():
+        origin, ok = QInputDialog.getText(dialog, "Add rule", "Site origin (e.g. example.com):")
+        if not ok or not origin.strip():
+            return
+        feature_names = list(FEATURE_LABELS.items())
+        feature, ok = QInputDialog.getItem(dialog, "Feature", "Feature:", [label for _k, label in feature_names], 0, False)
+        if not ok:
+            return
+        feature_key = next((k for k, label in feature_names if label == feature), "geolocation")
+        policy, ok = QInputDialog.getItem(dialog, "Policy", "Policy:", ["allow", "deny"], 0, False)
+        if not ok:
+            return
+        prefs.set_permission(base_dir, origin.strip(), feature_key, policy)
+        refresh()
+
+    btn_add = QPushButton("Add rule")
+    btn_add.clicked.connect(add_rule)
+    btn_flip = QPushButton("Allow ⇄ Deny")
+    btn_flip.clicked.connect(flip)
+    btn_remove = QPushButton("Remove rule")
+    btn_remove.clicked.connect(remove_rule)
+    btn_reset = QPushButton("Reset all")
+    btn_reset.clicked.connect(lambda: (prefs.save_permissions(base_dir, {}), refresh()))
+    for b in (btn_add, btn_flip, btn_remove, btn_reset):
+        btn_row.addWidget(b)
+    btn_row.addStretch()
+    layout.addLayout(btn_row)
+    close_row = QHBoxLayout()
+    close_row.addStretch()
+    btn_close = QPushButton("Close")
+    btn_close.clicked.connect(dialog.accept)
+    close_row.addWidget(btn_close)
+    layout.addLayout(close_row)
+    refresh()
+    dialog.exec_()

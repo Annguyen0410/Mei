@@ -1073,6 +1073,7 @@ class SearchWindow(QMainWindow):
         self.act_text_highlight.triggered.connect(self.toggle_text_highlight)
         menu.addSeparator()
         menu.addAction("Open externally").triggered.connect(self.open_current_in_external_browser)
+        menu.addAction("Site permissions...").triggered.connect(dialogs.show_permissions_manager)
         menu.addAction("Open accounts.google.com in Chrome / Edge").triggered.connect(
             lambda: self.open_url_in_external_browser("https://accounts.google.com/")
         )

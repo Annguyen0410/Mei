@@ -369,6 +369,21 @@ class SearchWindow(QMainWindow):
         self.tab_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tab_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.tab_list.setUniformItemSizes(True)
+        # Double-click the empty desk below the tabs → new tab (standard UX).
+        class _TabDeskClickFilter(QObject):
+            def eventFilter(_self, obj, ev):
+                from PyQt5.QtCore import QEvent
+
+                if ev.type() == QEvent.MouseButtonDblClick:
+                    # Only when the click lands on empty space, not a tab row.
+                    if self.tab_list.itemAt(ev.pos()) is None:
+                        self.add_new_tab()
+                        ev.accept()
+                        return True
+                return False
+
+        self._tab_desk_filter = _TabDeskClickFilter(self)
+        self.tab_list.installEventFilter(self._tab_desk_filter)
         tab_page_layout.addWidget(self.tab_list, 1)
         self.sidebar_stack.addWidget(tab_page)
         bookmarks_page = QWidget()

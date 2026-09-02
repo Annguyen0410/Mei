@@ -1272,10 +1272,26 @@ def dialog_qss(mode: str = "cafe-night", accent: str | None = None):
     QDialog { background-color: %(MAIN_BG)s; }
     QDialog QWidget { font-family: %(FONT_FAMILY)s; }
     QPushButton { min-height: 25px; border-radius: 9px; padding: 5px 11px; }
+    /* The dialog's default action (QMessageBox Yes/OK) pops with the accent. */
+    QPushButton:default {
+        background-color: %(ACCENT)s;
+        color: %(MAIN_BG)s;
+        border-color: %(ACCENT)s;
+        font-weight: 800;
+    }
+    QPushButton:default:hover { background-color: %(ACCENT_HOVER)s; border-color: %(ACCENT_HOVER)s; }
     QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox { min-height: 24px; border-radius: 9px; }
+    QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus { border-color: %(ACCENT)s; }
     QListWidget, QTreeWidget { background-color: %(CARD_BG)s; border: 1px solid %(BORDER_SOFT)s; border-radius: 12px; padding: 3px; }
     QListWidget::item, QTreeWidget::item { border-radius: 8px; padding: 7px; }
+    QListWidget::item:selected, QTreeWidget::item:selected {
+        background-color: %(ITEM_SELECTED)s; color: %(TEXT)s; border-left: 3px solid %(ACCENT)s;
+    }
     QGroupBox { background-color: %(CARD_BG)s; border-radius: 12px; padding: 11px 9px 9px 9px; }
+    QToolTip {
+        background-color: %(MENU_BG)s; color: %(TEXT)s;
+        border: 1px solid %(INPUT_BORDER)s; border-radius: 8px; padding: 6px 10px;
+    }
     """ % p
 
 

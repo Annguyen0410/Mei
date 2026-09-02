@@ -40,8 +40,32 @@ class DormantTabView(QWidget):
         self.setObjectName("DormantTabView")
         self.setProperty("tab_title", title)
         self.setProperty("tab_url", url)
-        # Intentionally no child widgets. Hundreds of dormant tabs should use
-        # only a few bytes of Qt bookkeeping each.
+        # One small label (not a renderer): hundreds of dormant tabs still use
+        # only a few KB each, but the page no longer looks like a dead void.
+        try:
+            from PyQt5.QtWidgets import QLabel, QVBoxLayout
+
+            lay = QVBoxLayout(self)
+            lay.setContentsMargins(24, 24, 24, 24)
+            lay.setAlignment(Qt.AlignCenter)
+            glyph = QLabel("💤")
+            glyph.setAlignment(Qt.AlignCenter)
+            glyph.setStyleSheet("font-size: 42px; background: transparent;")
+            lay.addWidget(glyph)
+            t = QLabel(title or "Suspended tab")
+            t.setAlignment(Qt.AlignCenter)
+            t.setStyleSheet("font-size: 15px; font-weight: 700; background: transparent;")
+            lay.addWidget(t)
+            u = QLabel((url or "")[:70])
+            u.setAlignment(Qt.AlignCenter)
+            u.setStyleSheet("font-size: 11px; background: transparent;")
+            lay.addWidget(u)
+            hint = QLabel("Select this tab to wake it up instantly.")
+            hint.setAlignment(Qt.AlignCenter)
+            hint.setStyleSheet("font-size: 11px; background: transparent;")
+            lay.addWidget(hint)
+        except Exception:
+            pass
 
 
 class TabMemoryTip(QLabel):

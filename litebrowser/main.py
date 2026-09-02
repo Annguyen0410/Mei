@@ -124,39 +124,34 @@ def _cleanup_webengine_cache(profile_dir, force=False):
 
 
 def _register_bundled_personal_sites(profile_dir, app_dir):
-    """Register the four chained web apps as Personal Hub → Sites quick links.
+    """Seed Personal Hub → Sites with the six public project links.
 
-    Only the local (file://) copies are registered — the deployed/cloud versions
-    are surfaced on the Project Hub page (each card has a “☁ online version”
-    link) instead, so the Sites list stays one entry per app and never shows
-    raw deployed URLs.
+    The local copies remain available through the dedicated bundled-site
+    commands, while Personal → Sites points at the deployed versions users can
+    open directly and keep updated independently of the browser build.
     """
-    # Prune the cloud duplicates older builds auto-registered. Only URLs that
-    # match the chain's remote entries are removed; user-added http(s) sites
-    # are left untouched.
-    remote_urls = {
+    remote_sites = [site for site in app_paths.chain_remote_sites(app_dir) if site.get("url")]
+    remote_urls = {site["url"].strip() for site in remote_sites}
+    bundled_urls = {
         site.get("url", "").strip()
-        for site in app_paths.chain_remote_sites(app_dir)
+        for site in app_paths.bundled_sites(app_dir)
         if site.get("url")
     }
-    remote_urls.discard("")
     legacy_markers = tuple(app_paths.LEGACY_BUNDLED_FOLDER_MARKERS or ())
     for site in list(prefs.get_personal_sites(profile_dir)):
         url = (site.get("url") or "").strip()
         if not url:
             continue
-        if url in remote_urls:
+        # Migrate entries created by older builds to the six public defaults,
+        # without touching unrelated sites the user added themselves.
+        if url in remote_urls or url in bundled_urls:
             prefs.remove_personal_site(profile_dir, url)
             continue
-        # Drop stale duplicates that point at legacy bundled folders (e.g. the
-        # old "Cục Quản Lý - Bản Đầy Đủ 1" hub) so the Sites list keeps exactly
-        # one entry per bundled app — the canonical folder resolved below.
         unquoted_url = unquote(url)
         if any(marker in unquoted_url for marker in legacy_markers):
             prefs.remove_personal_site(profile_dir, url)
-    for site in app_paths.bundled_sites(app_dir):
-        if site.get("url"):
-            prefs.add_personal_site(profile_dir, site["url"], site["display"])
+    for site in remote_sites:
+        prefs.add_personal_site(profile_dir, site["url"], site["display"])
 
 
 def main(app_dir=None):

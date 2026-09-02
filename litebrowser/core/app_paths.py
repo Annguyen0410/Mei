@@ -73,15 +73,21 @@ BUNDLED_SITES = (
         "display": "Bói Toán Web",
         "subtitle": "Fortune telling & divination",
         "glyph": "🎴",
-        "folders": ("boitoan", "Bói Toán Web"),
+        "folders": ("boitoan", "Bói Toán Web", "Bói toán 2"),
     },
 )
 
-# Deployed (remote) URLs come ONLY from chain.json — there are deliberately no
-# hardcoded fallbacks here. Before anything is deployed, remote values are empty
-# ("") and the chain runs fully local; after deploying, fill the real URLs in
-# chain.json and they light up everywhere (hub “☁ online version” links, etc.).
-REMOTE_SITE_FALLBACKS: dict[str, str] = {}
+# Deployed Personal Hub links. ``chain.json`` remains the primary source when
+# it contains a remote URL; these fallbacks keep the six public apps available
+# in fresh profiles and packaged builds even when the bundled manifest is blank.
+REMOTE_SITE_FALLBACKS: dict[str, str] = {
+    "linklumina": "https://graceful-kangaroo-4ebbee.netlify.app",
+    "cucquanly": "https://starlit-lily-f90e23.netlify.app",
+    "mas": "https://mahoraga-adapt-system-mas-v9-0.onrender.com",
+    "boitoan": "https://boitoanzaigame.netlify.app",
+    "worldleaderboard": "https://worldleaderboard.netlify.app",
+    "bimat": "https://personalfrequencys.netlify.app",
+}
 PROJECT_HUB_REMOTE = ""
 CHAIN_JSON_NAME = "chain.json"
 

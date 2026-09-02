@@ -52,6 +52,25 @@ class TestWorkspace(unittest.TestCase):
         self.assertTrue(p, "cuc_quan_ly_support_index_path should resolve")
         self.assertTrue(os.path.isfile(p), p)
 
+    def test_boi_toan_local_launcher_is_shipped(self):
+        url = app_paths.bundled_site_url("boitoan", None)
+        self.assertTrue(url.startswith("file://"), url)
+        self.assertTrue(url.endswith("index.html"), url)
+
+    def test_personal_site_defaults_use_deployed_project_links(self):
+        sites = {item["key"]: item["url"] for item in app_paths.chain_remote_sites(None)}
+        self.assertEqual(
+            sites,
+            {
+                "linklumina": "https://graceful-kangaroo-4ebbee.netlify.app",
+                "cucquanly": "https://starlit-lily-f90e23.netlify.app",
+                "mas": "https://mahoraga-adapt-system-mas-v9-0.onrender.com",
+                "boitoan": "https://boitoanzaigame.netlify.app",
+                "worldleaderboard": "https://worldleaderboard.netlify.app",
+                "bimat": "https://personalfrequencys.netlify.app",
+            },
+        )
+
     def test_browser_data_saver_preference_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = prefs.ensure_profile_layout(os.path.join(tmp, "profile"))

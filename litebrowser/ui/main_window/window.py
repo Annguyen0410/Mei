@@ -708,7 +708,7 @@ class SearchWindow(QMainWindow):
         menu = QMenu(self)
         hub_menu = menu.addMenu("Project Hub \u2014 App Chain")
         for site in app_paths.bundled_sites(getattr(self, "app_dir", None)):
-            if not site.get("url"):
+            if not site.get("url") and not site.get("remote"):
                 continue
             hub_menu.addAction(site["display"]).triggered.connect(
                 lambda checked, site_key=site["key"]: self.open_bundled_site(site_key)
@@ -2165,18 +2165,21 @@ class SearchWindow(QMainWindow):
         self.open_bundled_site("cucquanly")
 
     def open_bundled_site(self, key: str):
-        """Open one of the four chained apps (LinkLumina, Cục Quản Lý, MAS,
-        World Leaderboard) by its stable key, resolving the live/bundled path."""
+        """Open one of the six chained apps by stable key.
+
+        Prefer the local bundled copy for offline apps, but use the deployed
+        URL when a packaged build does not contain that app locally.
+        """
         site = next((item for item in app_paths.bundled_sites(getattr(self, "app_dir", None)) if item["key"] == key), None)
-        if not site or not site.get("url"):
+        url = (site or {}).get("url") or (site or {}).get("remote")
+        if not url:
             QMessageBox.warning(
                 self,
                 "Project Hub",
-                "App '%s' not found (missing index.html in web_support).\n"
-                "Place the app folders next to the exe or inside web_support, then try again." % key,
+                "App '%s' not found locally or online.\n"
+                "Place the app folder next to the exe or check its deployed URL." % key,
             )
             return
-        url = site["url"]
         self.url_bar.setText(url)
         browser = self.current_browser()
         if browser:
@@ -2217,6 +2220,12 @@ class SearchWindow(QMainWindow):
             return
         if low in ("about:leaderboard", "about:world-leaderboard", "leaderboard", "world-leaderboard", "worldleaderboard"):
             self.open_bundled_site("worldleaderboard")
+            return
+        if low in ("about:bimat", "bimat", "personalfrequency", "personal-frequency"):
+            self.open_bundled_site("bimat")
+            return
+        if low in ("about:boitoan", "boitoan", "boi-toan", "fortune"):
+            self.open_bundled_site("boitoan")
             return
         engine = self.search_engine.currentText()
         url = raw

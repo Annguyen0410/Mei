@@ -13,6 +13,7 @@ echo Building Mei.exe ...
   --icon=icon.ico ^
   --name="Mei" ^
   --add-data "icon.png;." ^
+  --add-data "web_support\boitoan;web_support\boitoan" ^
   --collect-all cryptography ^
   --collect-all PyQt6.QtWebEngineCore ^
   --collect-all PyQt6.QtWebEngineWidgets ^

@@ -486,13 +486,19 @@ def dispatch_ingest(profile_dir: str, envelope: dict[str, Any]) -> dict[str, Any
                 # Resolve: deployed URL từ chain.json → nếu chưa deploy, dùng bản
                 # local (file://) của app trên máy desktop. Không hardcode URL nào.
                 if app_id in _CHAIN_APP_IDS:
-                    manifest = app_paths.chain_manifest()
-                    for app in manifest.get("apps", []):
-                        if isinstance(app, dict) and app.get("id") == app_id and app.get("remote"):
-                            url = str(app["remote"]).strip()
+                    # Prefer the deployed chain URL, including the packaged
+                    # fallback map when the beside-the-EXE manifest has blank
+                    # remote fields. Fall back to the local bundled copy only
+                    # when no deployed URL is available.
+                    for app in app_paths.chain_remote_sites():
+                        if app.get("key") == app_id and app.get("url"):
+                            url = str(app["url"]).strip()
                             break
                     if not url:
-                        url = app_paths.bundled_site_url(app_id)
+                        if app_id == "hub":
+                            url = app_paths.project_hub_url()
+                        else:
+                            url = app_paths.bundled_site_url(app_id)
             if not url:
                 raise ValueError("open_app requires url, or a chain app id in " + ",".join(_CHAIN_APP_IDS))
             if not url.startswith(("http://", "https://", "file://")):

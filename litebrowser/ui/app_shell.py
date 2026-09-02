@@ -797,6 +797,14 @@ class AppShell(QMainWindow):
             self.switch_workspace("browser")
             self.browser_page.open_bundled_site("worldleaderboard")
             return
+        if lowered in ("/bimat", "/personalfrequency", "/personal-frequency"):
+            self.switch_workspace("browser")
+            self.browser_page.open_bundled_site("bimat")
+            return
+        if lowered in ("/boitoan", "/boi-toan", "/fortune"):
+            self.switch_workspace("browser")
+            self.browser_page.open_bundled_site("boitoan")
+            return
         if lowered in ("/hub", "/chain", "/projects"):
             self.switch_workspace("browser")
             self.browser_page.open_project_hub()

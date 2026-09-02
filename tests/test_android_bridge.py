@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from litebrowser.core import prefs
+from litebrowser.core import app_paths, prefs
 from litebrowser.services import android_bridge_service, extension_bridge, personal_service
 
 
@@ -462,12 +462,51 @@ class TestAndroidBridgeHTTP(unittest.TestCase):
         )
         self.assertTrue(out["ok"])
         self.assertEqual(out["action"], "open_app")
-        self.assertTrue(out["result"]["url"])  # https remote hoặc file:// local
+        self.assertEqual(out["result"]["url"], app_paths.REMOTE_SITE_FALLBACKS["mas"])
         from litebrowser.services import open_request
         reqs = open_request.drain_open_requests(self.base)
         self.assertEqual(len(reqs), 1)
         self.assertEqual(reqs[0]["kind"], "mas")
         self.assertTrue(reqs[0]["url"])
+
+    def test_open_all_six_chain_apps_resolves_deployed_urls(self):
+        expected = {
+            "linklumina": "https://graceful-kangaroo-4ebbee.netlify.app",
+            "cucquanly": "https://starlit-lily-f90e23.netlify.app",
+            "mas": "https://mahoraga-adapt-system-mas-v9-0.onrender.com",
+            "worldleaderboard": "https://worldleaderboard.netlify.app",
+            "bimat": "https://personalfrequencys.netlify.app",
+            "boitoan": "https://boitoanzaigame.netlify.app",
+        }
+        for app_id, expected_url in expected.items():
+            out = android_bridge_service.dispatch_ingest(
+                self.base,
+                {
+                    "action": "open_app",
+                    "source": "android.mei_remote",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "payload": {"id": app_id, "label": app_id},
+                },
+            )
+            self.assertTrue(out["ok"], app_id)
+            self.assertEqual(out["result"]["url"], expected_url)
+        from litebrowser.services import open_request
+
+        self.assertEqual(len(open_request.drain_open_requests(self.base)), len(expected))
+
+    def test_open_hub_resolves_local_project_hub_url(self):
+        out = android_bridge_service.dispatch_ingest(
+            self.base,
+            {
+                "action": "open_app",
+                "source": "android.mei_remote",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "payload": {"id": "hub", "label": "Project Hub"},
+            },
+        )
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["result"]["url"], app_paths.project_hub_url())
+        self.assertTrue(out["result"]["url"].startswith("file://"))
 
     def test_open_app_rejects_bad_url(self):
         out = android_bridge_service.dispatch_ingest(

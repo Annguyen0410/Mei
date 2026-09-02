@@ -426,12 +426,15 @@ def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None
 
     hub_tiles = ""
     for site in app_paths.bundled_sites(app_dir):
-        if not site.get("url"):
+        # Use the local copy when shipped; the deployed fallback keeps all six
+        # project apps reachable in a lean/package build too.
+        tile_url = site.get("url") or site.get("remote")
+        if not tile_url:
             continue
         hub_tiles += (
             '<a href="%s" class="tile" title="%s — %s"><span class="tile-mark">%s</span><span class="tile-label">%s</span></a>'
             % (
-                escape_html(site["url"]),
+                escape_html(tile_url),
                 escape_html(site["display"]),
                 escape_html(site.get("subtitle", "")),
                 escape_html(site.get("glyph", "▦")),

@@ -35,7 +35,6 @@ from PyQt5.QtWebEngineWidgets import (
     QWebEngineView,
 )
 from PyQt5.QtWidgets import (
-    QAbstractItemView,
     QButtonGroup,
     QCalendarWidget,
     QCheckBox,
@@ -421,9 +420,9 @@ class MeiNotesList(QListWidget):
         self._owner = owner
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDragDropMode(self.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.MoveAction)
-        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.setSelectionMode(self.SelectionMode.SingleSelection)
 
     def startDrag(self, supported_actions):
         self._owner._drag_note_ids = [it.data(Qt.UserRole) for it in self.selectedItems()]
@@ -446,7 +445,7 @@ class CategoryDropList(QListWidget):
         super().__init__(parent)
         self._owner = owner
         self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.DropOnly)
+        self.setDragDropMode(self.DragDropMode.DropOnly)
         self.setDefaultDropAction(Qt.MoveAction)
 
     def dropEvent(self, event):

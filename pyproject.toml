@@ -12,6 +12,7 @@ dependencies = [
     "PyQt5>=5.15",
     "PyQtWebEngine>=5.15",
     "cryptography>=41",
+    "segno>=1.6.0",
 ]
 
 [project.optional-dependencies]

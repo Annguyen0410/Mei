@@ -92,7 +92,10 @@ def _decrypt_entries(data, cipher):
                 token = pw.encode("utf-8") if isinstance(pw, str) else pw
                 pw = cipher.decrypt(token).decode("utf-8")
             except Exception:
-                pass
+                # Decryption failed: surface an empty password instead of the
+                # ciphertext blob (v6.4 leaked the encrypted string as if it
+                # were the plaintext password into the UI and autofill).
+                pw = ""
         out.append({"url": entry.get("url", ""), "username": entry.get("username", ""), "password": pw})
     return out
 
@@ -116,6 +119,12 @@ def _encode_v2_vault(entries, master_password):
 
 
 def _decode_v2_vault(blob, master_password):
+    """Returns (handled, entries). handled=False means 'not a v2 vault';
+
+    handled=True with entries=list (possibly empty) means decrypted OK;
+    handled=True with entries=None means the vault IS v2 but could NOT be
+    decrypted (wrong password / corrupt). Callers must never overwrite the
+    vault in that case (v6.4 wiped the whole vault on a typo'd password)."""
     try:
         envelope = json.loads(blob.decode("utf-8"))
     except Exception:
@@ -131,17 +140,21 @@ def _decode_v2_vault(blob, master_password):
     try:
         kdf = envelope.get("kdf") if isinstance(envelope.get("kdf"), dict) else {}
         if kdf.get("name") != _KDF_NAME:
-            return True, []
+            return True, None
         salt = base64.b64decode(kdf.get("salt") or "")
         iterations = int(kdf.get("iterations") or _KDF_ITERATIONS)
         cipher, _ = _get_v2_cipher(master_password, salt=salt, iterations=iterations)
         if not cipher:
-            return True, []
+            return True, None
         raw = cipher.decrypt(str(envelope.get("payload") or "").encode("utf-8")).decode("utf-8")
         data = json.loads(raw)
         return True, _decrypt_entries(data, cipher)
     except Exception:
-        return True, []
+        return True, None
+
+
+class VaultUnlockError(RuntimeError):
+    """Raised when a v2 vault exists but the master password is wrong."""
 
 
 def save_passwords(base_dir, entries, master_password):
@@ -154,38 +167,64 @@ def save_passwords(base_dir, entries, master_password):
     try:
         path = _passwords_path(base_dir)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with profile_locked(base_dir), open(path, "wb") as f:
-            f.write(encoded)
+        tmp_path = path + ".tmp"
+        with profile_locked(base_dir):
+            with open(tmp_path, "wb") as f:
+                f.write(encoded)
+            os.replace(tmp_path, path)
         return True
     except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
         return False
 
 
 def load_passwords(base_dir, master_password):
     """Returns list of {url, username, password} (decrypted)."""
+    status, entries = load_passwords_status(base_dir, master_password)
+    return entries
+
+
+def load_passwords_status(base_dir, master_password):
+    """Returns (status, entries); status is one of:
+    - "ok":      vault read and decrypted (may be empty)
+    - "missing": no vault file yet
+    - "locked":  a vault exists but the master password is wrong / file corrupt
+    """
     if not HAS_CRYPTO or not master_password:
-        return []
+        return "missing", []
     cipher = _get_cipher(master_password)
     if not cipher:
-        return []
+        return "missing", []
     path = _passwords_path(base_dir)
     if not os.path.isfile(path):
-        return []
+        return "missing", []
     try:
         with profile_locked(base_dir), open(path, "rb") as f:
             blob = f.read()
         handled, entries = _decode_v2_vault(blob, master_password)
         if handled:
-            return entries
+            return ("locked" if entries is None else "ok"), (entries or [])
         raw = cipher.decrypt(blob).decode("utf-8")
         data = json.loads(raw)
-        return _decrypt_entries(data, cipher)
+        return "ok", _decrypt_entries(data, cipher)
     except Exception:
-        return []
+        return "locked", []
 
 
 def add_password(base_dir, url, username, password, master_password):
-    entries = load_passwords(base_dir, master_password)
+    status, entries = load_passwords_status(base_dir, master_password)
+    if status == "locked":
+        # The vault exists but this master password cannot decrypt it. Saving
+        # now would replace every stored credential with just this one entry —
+        # refuse instead (v6.4 silently wiped the whole vault on a typo).
+        raise VaultUnlockError(
+            "The saved password vault could not be unlocked with this master password. "
+            "Nothing was changed. Check the password and try again."
+        )
     url_norm = _normalize_origin(url)
     for e in entries:
         if _origin_match(e["url"], url_norm) and e["username"] == username:

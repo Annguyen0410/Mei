@@ -206,6 +206,15 @@ def get_shell_theme(base_dir):
     return name if name in _theme_mod.PALETTES else _theme_mod.DEFAULT_THEME
 
 
+DEFAULT_BASE_DIR = ""
+
+
+def set_default_base_dir(base_dir: str):
+    """Remember the primary profile dir for theme lookups without a profile."""
+    global DEFAULT_BASE_DIR
+    DEFAULT_BASE_DIR = base_dir or ""
+
+
 def set_shell_theme(base_dir, name):
     data = load_prefs(base_dir)
     fallback = _theme_mod.DEFAULT_THEME

@@ -281,7 +281,12 @@ def show_save_password_dialog(parent):
         if not u or not usr or not master:
             QMessageBox.warning(dialog, "Save", "Fill in the URL, username, and master password.")
             return
-        if password_manager.add_password(parent.base_dir, u, usr, pw, master):
+        try:
+            saved = password_manager.add_password(parent.base_dir, u, usr, pw, master)
+        except password_manager.VaultUnlockError as exc:
+            QMessageBox.warning(dialog, "Vault locked", str(exc))
+            return
+        if saved:
             QMessageBox.information(dialog, "OK", "Password saved.")
             dialog.accept()
         else:

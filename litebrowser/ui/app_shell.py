@@ -1,4 +1,3 @@
-import functools
 import os
 import sys
 import time
@@ -51,6 +50,7 @@ from litebrowser.ui.shell.pages import (
 class AppShell(QMainWindow):
     update_checked = pyqtSignal(object, bool)
     update_downloaded = pyqtSignal(object, object)
+    sync_finished = pyqtSignal(bool, str)
 
     def __init__(self, profile_dir: str, app_dir: str = None, window_slot: str = "primary", browser_workspace_id: str | None = None):
         super().__init__()
@@ -70,6 +70,7 @@ class AppShell(QMainWindow):
         self._insights_user_toggled = False
         self.update_checked.connect(self._finish_update_check)
         self.update_downloaded.connect(self._finish_downloaded_update)
+        self.sync_finished.connect(self._show_sync_result)
         title_suffix = "Workspace 1" if self.window_slot == "primary" else "Workspace 2"
         self.setWindowTitle(f"Mei Tea Room Edition - {title_suffix}")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
@@ -98,7 +99,7 @@ class AppShell(QMainWindow):
         brand_layout = QHBoxLayout(brand_wrap)
         brand_layout.setContentsMargins(0, 0, 0, 0)
         brand_layout.setSpacing(8)
-        brand_glyph = QLabel("🍵")
+        brand_glyph = QLabel("ðŸµ")
         brand_glyph.setObjectName("BrandGlyph")
         brand_layout.addWidget(brand_glyph)
         brand_text = QVBoxLayout()
@@ -205,7 +206,7 @@ class AppShell(QMainWindow):
                 "MAKE & KEEP",
                 (
                     ("ai", "AI Workspace", "✦"),
-                    ("personal", "Personal", "◍"),
+                    ("personal", "Personal", "▲"),
                     ("library", "Library", "▤"),
                 ),
             ),
@@ -363,7 +364,7 @@ class AppShell(QMainWindow):
         if status.get("running"):
             remaining = int(status.get("remaining", 0))
             mm, ss = divmod(remaining, 60)
-            self.lbl_status.setText("🍵 Focus: %02d:%02d left — %s" % (mm, ss, status.get("session", {}).get("label", "")))
+            self.lbl_status.setText("ðŸµ Focus: %02d:%02d left — %s" % (mm, ss, status.get("session", {}).get("label", "")))
         else:
             self.lbl_status.setText("No café focus pour running. Try /focus 25")
 
@@ -419,10 +420,15 @@ class AppShell(QMainWindow):
         top_bar.setMinimumHeight(24 if collapsed else 0)
 
     def _update_omnibar_hint(self, text: str):
-        command = (text or "").strip().split(None, 1)[0].lower()
+        parts = (text or "").strip().split(None, 1)
+        command = parts[0].lower() if parts else ""
         hint = self._command_hints.get(command)
         if hint:
             self.lbl_status_context.setText(hint)
+        elif parts:
+            # Only clear when the user is typing a non-command query; keep the
+            # last status line otherwise so it does not flicker on every edit.
+            self.lbl_status_context.setText("Web search — press Enter")
 
     def refresh_shell(self, force_deep: bool = False):
         theme_name = prefs.get_shell_theme(self.profile_dir)
@@ -446,7 +452,7 @@ class AppShell(QMainWindow):
         sync_state = life_service.load_sync_state(self.profile_dir)
         status = account.get("display_name") or "Offline-ready"
         self.lbl_sync_state.setText(f"{status}\npending {int(sync_state.get('pending_changes', 0) or 0)}")
-        self.lbl_status.setText(f"● Theme: {theme_name}")
+        self.lbl_status.setText(f"▲ Theme: {theme_name}")
         self.lbl_status_context.setText(f"Last sync: {_format_ts(int(sync_state.get('last_sync_at', 0) or 0))}")
         self.lbl_theme_pill.setText(f"{theme_name} · {prefs.get_accent(self.profile_dir)}")
         self._refresh_insights()
@@ -646,7 +652,14 @@ class AppShell(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._apply_compact_shell_layout()
+        # Only re-run the full compact pass when a size class boundary is
+        # crossed; v6.4 re-set the splitter and ~15 widget properties on every
+        # pixel of a window drag, fighting any manual splitter adjustment.
+        width = max(0, self.width())
+        bucket = 680 if width < 680 else 900 if width < 900 else 1080 if width < 1080 else 1320 if width < 1320 else 1 << 30
+        if bucket != getattr(self, "_compact_bucket", None):
+            self._compact_bucket = bucket
+            self._apply_compact_shell_layout()
 
     def _apply_compact_shell_layout(self):
         width = max(0, self.width())
@@ -658,7 +671,7 @@ class AppShell(QMainWindow):
 
         rail_width = 46 if rail_collapsed else (64 if xtiny else 96 if tiny else 112 if narrow else 126 if compact else 150)
         # A visible Insights panel keeps its width even in the Browser workspace
-        # once the user toggled it on, so "bật insight AI" works while browsing.
+        # once the user toggled it on, so "báº­t insight AI" works while browsing.
         insight_width = 0 if not self.insights.isVisible() else (120 if xtiny else 140 if tiny else 160 if narrow else 185 if compact else 205)
         middle_width = max(320, width - rail_width - insight_width - 18)
         self.split.setSizes([rail_width, middle_width, insight_width])
@@ -677,8 +690,8 @@ class AppShell(QMainWindow):
             section_label.setVisible(not tiny and not rail_collapsed)
 
         for key, button in self.nav_buttons.items():
-            labels = {"home": ("Home", "◧"), "browser": ("Browser", "↗"), "history": ("History", "◷"), "ai": ("AI", "◈"), "personal": ("Personal", "◍"), "library": ("Library", "▤"), "settings": ("Settings", "⚙")}
-            name, glyph = labels.get(key, (key, "◆"))
+            labels = {"home": ("Home", "◧"), "browser": ("Browser", "↗"), "history": ("History", "◷"), "ai": ("AI", "◈"), "personal": ("Personal", "▲"), "library": ("Library", "▤"), "settings": ("Settings", "⚙")}
+            name, glyph = labels.get(key, (key, "▲†"))
             button.setVisible(not rail_collapsed)
             if rail_collapsed or xtiny:
                 button.setText(glyph)
@@ -760,9 +773,29 @@ class AppShell(QMainWindow):
         self.switch_workspace("personal")
         QMessageBox.information(self, "Task", f"Created task: {title}")
 
-    @functools.lru_cache(maxsize=64)
     def _normalize_omnibar_cmd(self, text: str):
         return text.lower().strip()
+
+    def _sync_now_worker(self, profile_dir, endpoint, token):
+        from litebrowser.services import sync_service
+
+        try:
+            ok, msg = sync_service.sync_now(profile_dir, endpoint, token)
+        except Exception as exc:
+            ok, msg = False, f"Sync failed: {exc}"
+        self.sync_finished.emit(bool(ok), str(msg))
+
+    def _show_sync_result(self, ok: bool, msg: str):
+        if self._closing:
+            return
+        self.lbl_status_context.setText(f"Last sync: {time.strftime('%H:%M:%S')}")
+        QMessageBox.information(self, "Sync", msg)
+
+    def _match_cmd(self, lowered: str, cmd: str) -> bool:
+        """Exact command or command-with-argument; never a prefix of a longer
+        command (v6.4: ``/brief`` also matched ``/briefcase``, ``/sync`` ate
+        ``/syncfoo``)."""
+        return lowered == cmd or lowered.startswith(cmd + " ")
 
     def handle_omnibar(self):
         try:
@@ -858,7 +891,7 @@ class AppShell(QMainWindow):
             self.refresh_shell()
             self.switch_workspace("personal")
             return
-        if lowered == "/brief" or lowered.startswith("/brief"):
+        if self._match_cmd(lowered, "/brief"):
             from litebrowser.services import brief_service
             brief = brief_service.build_morning_brief(self.profile_dir)
             QMessageBox.information(self, "Morning Brief", brief_service.brief_text(brief))
@@ -890,25 +923,26 @@ class AppShell(QMainWindow):
                     "Commands:\n/agent summary — digest open tabs into a note\n/agent tasks <a | b | c> — turn items into tasks\n/agent review — write a weekly review note",
                 )
             return
-        if lowered == "/sync" or lowered.startswith("/sync"):
-            from litebrowser.services import sync_service
+        if self._match_cmd(lowered, "/sync"):
             endpoint = prefs.get_sync_endpoint(self.profile_dir)
             token = prefs.get_sync_token(self.profile_dir)
-            ok, msg = sync_service.sync_now(self.profile_dir, endpoint, token)
-            QMessageBox.information(self, "Sync", msg if ok else msg)
+            # sync_now does two HTTP round-trips (up to ~30 s); never freeze
+            # the GUI thread waiting on the network (v6.4 froze the shell).
+            self.lbl_status_context.setText("Syncing...")
+            self._executor.submit(self._sync_now_worker, self.profile_dir, endpoint, token)
             return
-        if lowered == "/group-tabs" or lowered.startswith("/group-tabs"):
+        if self._match_cmd(lowered, "/group-tabs"):
             self.switch_workspace("browser")
             self.browser_page.group_tabs_action()
             return
-        if lowered.startswith("/save-page"):
+        if self._match_cmd(lowered, "/save-page"):
             browser = self.current_browser_widget().current_browser()
             if browser:
                 life_service.add_saved_page(self.profile_dir, browser.title() or browser.url().toString(), browser.url().toString())
                 self._insight_cache = None
                 self.refresh_shell()
             return
-        if lowered == "/freeze" or lowered.startswith("/freeze"):
+        if self._match_cmd(lowered, "/freeze"):
             self.switch_workspace("browser")
             self.browser_page.tab_manager.optimize_memory()
             return
@@ -942,12 +976,12 @@ class AppShell(QMainWindow):
         if lowered in ("/read", "/reading-list"):
             self.switch_workspace("browser")
             return
-        if lowered == "/status" or lowered.startswith("/status"):
+        if self._match_cmd(lowered, "/status"):
             from litebrowser.services import focus_service
             status = focus_service.focus_status(self.profile_dir)
             self._announce_focus(status)
             return
-        if lowered == "/cafe" or lowered.startswith("/cafe"):
+        if self._match_cmd(lowered, "/cafe"):
             from litebrowser.services import focus_service
             self.switch_workspace("personal")
             session = focus_service.focus_status(self.profile_dir)
@@ -1092,7 +1126,7 @@ class AppShell(QMainWindow):
             self.ai_page.query_finished.connect(self._on_ai_answer_ready_for_preview)
             self._ai_preview_wired = True
 
-    def _on_ai_answer_ready_for_preview(self, future, _context_label):
+    def _on_ai_answer_ready_for_preview(self, future, _context_label, _provider_label=""):
         if self._closing:
             return
         try:

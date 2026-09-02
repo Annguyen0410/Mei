@@ -77,6 +77,16 @@ MAX_NOTE_WATCH_DIRS = 64
 NEURAL_GRAPH_MAX_NOTES = 48
 
 
+def _is_dark_palette(p: dict) -> bool:
+    """Heuristic: MAIN_BG brightness decides whether canvas art should go dark."""
+    try:
+        value = str(p.get("MAIN_BG", "#000000")).lstrip("#")
+        r, g, b = (int(value[i:i + 2], 16) for i in (0, 2, 4))
+        return (r * 299 + g * 587 + b * 114) / 1000 < 150
+    except (TypeError, ValueError):
+        return False
+
+
 class BoardView(QGraphicsView):
     stroke_finished = pyqtSignal()
     link_created = pyqtSignal(str, str)
@@ -224,8 +234,11 @@ class NeuralGraphWidget(QWidget):
         self._nodes = []
         for note in raw:
             nid = str(note.get("id") or "")
-            h = hash(nid) & 0xFFFFFFFF
-            h2 = (hash(nid + "#") & 0xFFFFFFFF) if nid else h
+            # Deterministic layout: builtin hash() is salted per process, which
+            # reshuffled the graph on every launch (v6.4 bug).
+            digest = hashlib.md5(nid.encode("utf-8") or b"mei").hexdigest()
+            h = int(digest[:8], 16)
+            h2 = int(digest[8:16], 16)
             self._nodes.append(
                 {
                     "phase": (h % 628) / 100.0,
@@ -266,7 +279,11 @@ class NeuralGraphWidget(QWidget):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.fillRect(self.rect(), QColor("#f4ebdf"))
+        # Follow the active theme instead of hardcoded cream colors that glared
+        # in every dark theme (v6.4 bug).
+        p = theme.palette()
+        dark = _is_dark_palette(p)
+        painter.fillRect(self.rect(), QColor(p["MAIN_BG_ALT"]) if dark else QColor(p["CARD_BG"]))
 
         w = max(1, self.width())
         h = max(1, self.height())
@@ -283,27 +300,29 @@ class NeuralGraphWidget(QWidget):
             size = 2.5 + depth * 6.5
             points.append((x, y, size, depth, node))
 
+        base_rgb = (140, 170, 210) if dark else (155, 109, 60)
         for idx, (x1, y1, _s1, d1, _n1) in enumerate(points):
             limit = min(idx + 4, len(points))
             for jdx in range(idx + 1, limit):
                 x2, y2, _s2, d2, _n2 = points[jdx]
                 alpha = int(30 + 70 * ((d1 + d2) * 0.5))
-                painter.setPen(QPen(QColor(155, 109, 60, alpha), 1))
+                painter.setPen(QPen(QColor(*base_rgb, alpha), 1))
                 painter.drawLine(int(x1), int(y1), int(x2), int(y2))
 
+        accent = QColor(p["ACCENT"])
         for x, y, size, depth, node in points:
             dh = int(node.get("hue") or 0)
             glow = QColor(
-                max(0, min(255, 195 + dh)),
-                max(0, min(255, 157 + dh // 2)),
-                max(0, min(255, 99)),
+                max(0, min(255, accent.red() + dh)),
+                max(0, min(255, accent.green() + dh // 2)),
+                max(0, min(255, accent.blue())),
                 int(90 + depth * 120),
             )
             painter.setPen(Qt.NoPen)
             painter.setBrush(glow)
             painter.drawEllipse(int(x - size), int(y - size), int(size * 2), int(size * 2))
 
-        painter.setPen(QColor("#8f7e69"))
+        painter.setPen(QColor(p["TEXT_MUTED"]))
         painter.drawText(12, 20, "Neural Notes Graph")
         painter.drawText(12, 36, self._subtitle)
         painter.end()
@@ -465,6 +484,8 @@ class PersonalWindow(QMainWindow):
         self.embedded = embedded
         self.current_note_id = None
         self.current_note_category = "General"
+        self._note_dirty = False
+        self._suppress_note_dirty = False
         self.current_board_id = None
         self._site_preview_on = False
         self._nav_collapsed = False
@@ -600,7 +621,11 @@ class PersonalWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._apply_compact_layout()
+        width = max(0, self.width())
+        bucket = 600 if width < 600 else 820 if width < 820 else 980 if width < 980 else 1220 if width < 1220 else 1 << 30
+        if bucket != getattr(self, "_compact_bucket", None):
+            self._compact_bucket = bucket
+            self._apply_compact_layout()
 
     def _apply_compact_layout(self):
         width = max(0, self.width())
@@ -839,7 +864,7 @@ class PersonalWindow(QMainWindow):
         split.setSizes([220, 820])
         l.addWidget(split, 1)
 
-        self.ed_note_search.textChanged.connect(self._refresh_notes)
+        self.ed_note_search.textChanged.connect(self._schedule_notes_refresh)
         self.btn_note_back.clicked.connect(self._back_to_all_notes)
         self.btn_open_note_image.clicked.connect(self._open_note_image)
         self.ed_note_find.textChanged.connect(self._find_in_note)
@@ -851,11 +876,23 @@ class PersonalWindow(QMainWindow):
         self.btn_delete_note.clicked.connect(self._delete_note)
         self.btn_save_note.clicked.connect(self._save_note)
         self.btn_note_ai.clicked.connect(self._ask_ai_about_note)
-        self.note_editor.textChanged.connect(self._update_note_stats)
+        self.note_editor.textChanged.connect(self._on_note_text_changed)
+        self._note_idle_timer = QTimer(self)
+        self._note_idle_timer.setSingleShot(True)
+        self._note_idle_timer.setInterval(250)
+        self._note_idle_timer.timeout.connect(self._on_note_edit_idle)
+        self._notes_search_timer = QTimer(self)
+        self._notes_search_timer.setSingleShot(True)
+        self._notes_search_timer.setInterval(250)
+        self._notes_search_timer.timeout.connect(self._refresh_notes)
         if not self.embedded:
             self.btn_note_ai.hide()
         self._apply_neural_graph_visibility()
         return w
+
+    def _schedule_notes_refresh(self):
+        """Debounce list rebuilds so typing in the search box stays smooth."""
+        self._notes_search_timer.start()
 
     def _on_neural_graph_toggled(self, checked: bool):
         prefs.set_show_neural_notes_graph(self.base_dir, checked)
@@ -883,17 +920,43 @@ class PersonalWindow(QMainWindow):
         font.setPointSize(int(self.cmb_note_font.currentText()))
         self.note_editor.setFont(font)
 
+    def _on_note_text_changed(self):
+        self._update_note_stats()
+        if self._suppress_note_dirty:
+            return
+        self._note_dirty = True
+        self._note_idle_timer.start()
+
+    def _on_note_edit_idle(self):
+        """Autosave debounced: persist edits 250 ms after typing stops."""
+        if not self._note_dirty or not self.current_note_id:
+            return
+        note_id = self.current_note_id
+        if personal_service.save_note(self.base_dir, note_id, self.note_editor.toPlainText()):
+            self._note_dirty = False
+
     def _update_note_stats(self):
         if not hasattr(self, "lbl_note_stats"):
             return
         text = self.note_editor.toPlainText()
-        self.lbl_note_stats.setText("%d words · %d characters" % (len(text.split()), len(text)))
+        # Avoid building a full word list on every keystroke for large notes.
+        word_count = sum(1 for _ in re.finditer(r"\S+", text))
+        self.lbl_note_stats.setText("%d words · %d characters" % (word_count, len(text)))
 
     def _refresh_notes(self):
         query = self.ed_note_search.text().strip() if hasattr(self, "ed_note_search") else ""
         selected_category = self.cmb_note_category.currentText().strip() if hasattr(self, "cmb_note_category") else ""
         self._refresh_note_categories(keep_value=selected_category)
-        self.notes_list.clear()
+        # Flush pending edits BEFORE touching the list: list.clear() fires
+        # currentItemChanged(None) which used to blank the editor and wipe
+        # unsaved edits on every search keystroke (v6.4 data-loss bug).
+        self._on_note_edit_idle()
+        keep_selection = self.current_note_id
+        self._suppress_note_dirty = True
+        try:
+            self.notes_list.clear()
+        finally:
+            self._suppress_note_dirty = False
         notes = []
         for note in personal_service.list_notes(self.base_dir, query):
             if selected_category and selected_category.lower() != "all" and note.get("category", "").lower() != selected_category.lower():
@@ -905,14 +968,32 @@ class PersonalWindow(QMainWindow):
         if order:
             rank = {nid: idx for idx, nid in enumerate(order)}
             notes.sort(key=lambda n: rank.get(n["id"], len(order)))
+        restored = None
         for note in notes:
             item = QListWidgetItem(f"[{note.get('category', 'General')}] {note['title']}")
             item.setToolTip(note["snippet"])
             item.setData(Qt.UserRole, note["id"])
             self.notes_list.addItem(item)
+            if keep_selection and note["id"] == keep_selection:
+                restored = item
+        # Keep the note that was open selected across filter changes; with
+        # signals blocked the editor is left untouched (no wipe, no scroll jump).
+        if restored is not None:
+            self.notes_list.blockSignals(True)
+            try:
+                self.notes_list.setCurrentItem(restored)
+            finally:
+                self.notes_list.blockSignals(False)
+            self.current_note_id = keep_selection
         if hasattr(self, "neural_graph") and getattr(self, "chk_neural_graph", None) and self.chk_neural_graph.isChecked():
             all_notes = personal_service.list_notes(self.base_dir, "")
             self.neural_graph.set_notes(all_notes[:NEURAL_GRAPH_MAX_NOTES], total_note_count=len(all_notes))
+        # Empty state: a muted hint row (disabled, unselectable) instead of a
+        # blank list when the search/filter matches nothing.
+        if self.notes_list.count() == 0:
+            hint = QListWidgetItem("No notes match — press New note to start")
+            hint.setFlags(Qt.NoItemFlags)
+            self.notes_list.addItem(hint)
         if hasattr(self, "_notes_fs_watcher"):
             now = time.time()
             if not hasattr(self, "_last_watcher_sync") or (now - self._last_watcher_sync) > 5.0:
@@ -959,15 +1040,23 @@ class PersonalWindow(QMainWindow):
         self.select_note(note["id"])
 
     def select_note(self, note_id: str):
+        if not note_id:
+            return
         for index in range(self.notes_list.count()):
             item = self.notes_list.item(index)
             if item.data(Qt.UserRole) == note_id:
+                if self.notes_list.currentItem() is item:
+                    return  # already selected; re-selecting would reset the editor
                 self.notes_list.setCurrentItem(item)
                 self._switch_page("notes")
                 break
 
     def _load_selected_note(self, current, _previous):
         if not current:
+            # Mid-refresh the list clear is spurious: _refresh_notes re-selects
+            # the open note afterwards, so keep the editor untouched here.
+            if self._suppress_note_dirty:
+                return
             self.current_note_id = None
             self.current_note_category = "General"
             self.lbl_note_title.setText("No note selected")
@@ -980,11 +1069,18 @@ class PersonalWindow(QMainWindow):
             return
         self.current_note_id = note["id"]
         self.current_note_category = note.get("category") or "General"
+        self._note_dirty = False
+        self._suppress_note_dirty = True
+        try:
+            prev_content = self.note_editor.toPlainText()
+            if note["content"] != prev_content:
+                self.note_editor.setPlainText(note["content"])
+                self._render_note_attachments(note["content"])
+        finally:
+            self._suppress_note_dirty = False
         # The category combo is a *filter* only. Do not change it here, or the
         # note's own category would leak into the filter and hide every other note.
         self.lbl_note_title.setText(f"{note['title']}  |  {self.current_note_category}")
-        self.note_editor.setPlainText(note["content"])
-        self._render_note_attachments(note["content"])
         self._find_in_note()
 
     def _back_to_all_notes(self):
@@ -1128,12 +1224,19 @@ class PersonalWindow(QMainWindow):
         order = []
         for index in range(self.notes_list.count()):
             item = self.notes_list.item(index)
-            if item is not None:
-                order.append(item.data(Qt.UserRole))
+            if item is None:
+                continue
+            note_id = item.data(Qt.UserRole)
+            if note_id:
+                order.append(str(note_id))
         prefs.set_note_order(self.base_dir, order)
 
     def _move_notes_to_category(self, note_ids, category):
+        # Flush unsaved edits first: moving rewrites the file under a new id,
+        # and pending editor text would otherwise be lost (v6.4 bug).
+        self._on_note_edit_idle()
         moved = 0
+        open_moved = None
         for note_id in note_ids:
             note = personal_service.read_note(self.base_dir, note_id)
             if not note:
@@ -1141,7 +1244,16 @@ class PersonalWindow(QMainWindow):
             result = personal_service.update_note(self.base_dir, note_id, note["content"], category=category)
             if result:
                 moved += 1
+                if note_id == self.current_note_id:
+                    open_moved = result
+        # update_note relocates the file, which changes the note id; the open
+        # note must follow or later saves would fail silently.
+        if open_moved is not None:
+            self.current_note_id = open_moved["id"]
+            self.current_note_category = open_moved.get("category") or category
         self._refresh_notes()
+        if self.current_note_id:
+            self.select_note(self.current_note_id)
         self._refresh_overview()
         if moved:
             self.lbl_note_title.setText(f"Đã chuyển {moved} note vào {category}")
@@ -1160,6 +1272,7 @@ class PersonalWindow(QMainWindow):
             return
         self.current_note_id = note["id"]
         self.current_note_category = note.get("category") or "General"
+        self._note_dirty = False
         self._refresh_notes()
         self.select_note(self.current_note_id)
         self._refresh_overview()
@@ -1183,9 +1296,19 @@ class PersonalWindow(QMainWindow):
         if not self.current_note_id:
             return
         deleted_id = self.current_note_id
+        confirm = QMessageBox.question(
+            self,
+            "Delete note",
+            "Delete this note permanently?\n\n" + (self.lbl_note_title.text() or deleted_id),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
         personal_service.delete_note(self.base_dir, deleted_id)
         prefs.set_note_order(self.base_dir, [nid for nid in prefs.get_note_order(self.base_dir) if nid != deleted_id])
         self.current_note_id = None
+        self._note_dirty = False
         self.note_editor.setPlainText("")
         self.lbl_note_title.setText("No note selected")
         self._clear_note_attachments()
@@ -1229,6 +1352,10 @@ class PersonalWindow(QMainWindow):
             row = QListWidgetItem(f"{prefix} {item.get('title', '')} · {due}")
             row.setData(Qt.UserRole, item.get("id", ""))
             self.tasks_list.addItem(row)
+        if self.tasks_list.count() == 0:
+            hint = QListWidgetItem("No tasks yet — type a title above and press Add task")
+            hint.setFlags(Qt.NoItemFlags)
+            self.tasks_list.addItem(hint)
 
     def _add_task(self):
         title = self.ed_task_title.text().strip()
@@ -1241,14 +1368,14 @@ class PersonalWindow(QMainWindow):
 
     def _toggle_task(self):
         item = self.tasks_list.currentItem()
-        if item:
+        if item and item.data(Qt.UserRole):
             life_service.toggle_task(self.base_dir, item.data(Qt.UserRole))
             self._refresh_tasks()
             self._refresh_overview()
 
     def _remove_task(self):
         item = self.tasks_list.currentItem()
-        if item:
+        if item and item.data(Qt.UserRole):
             life_service.remove_task(self.base_dir, item.data(Qt.UserRole))
             self._refresh_tasks()
             self._refresh_overview()
@@ -1377,10 +1504,13 @@ class PersonalWindow(QMainWindow):
         item = self.day_events_list.currentItem() if hasattr(self, "day_events_list") else None
         if not item or not item.data(Qt.UserRole):
             item = self.calendar_list.currentItem()
-        if item:
-            life_service.remove_event(self.base_dir, item.data(Qt.UserRole))
-            self._refresh_calendar()
-            self._refresh_overview()
+        if not item or not item.data(Qt.UserRole):
+            return
+        if QMessageBox.question(self, "Calendar", "Delete this event?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        life_service.remove_event(self.base_dir, item.data(Qt.UserRole))
+        self._refresh_calendar()
+        self._refresh_overview()
 
     def _jump_calendar_today(self):
         self.calendar_widget.setSelectedDate(QDate.currentDate())
@@ -1420,6 +1550,7 @@ class PersonalWindow(QMainWindow):
         self.cmb_pen_color.addItem("Caramel", "#a36a3c")
         self.cmb_pen_color.addItem("Forest", "#50624a")
         self.cmb_pen_color.addItem("Ink", "#2e2b28")
+        self.cmb_pen_color.addItem("Chalk", "#e8dcc8")
         self.cmb_pen_width = QComboBox()
         self.cmb_pen_width.addItem("Fine", 2.0)
         self.cmb_pen_width.addItem("Medium", 4.0)
@@ -1459,7 +1590,9 @@ class PersonalWindow(QMainWindow):
         split.addWidget(self.boards_list)
         self.board_scene = QGraphicsScene(self)
         self.board_scene.setSceneRect(0, 0, 2200, 1400)
-        self.board_scene.setBackgroundBrush(QBrush(QColor("#f2e5cf")))
+        # Board canvas follows the active theme (v6.4: fixed cream background).
+        _p = theme.palette()
+        self.board_scene.setBackgroundBrush(QBrush(QColor(_p["CARD_BG"] if not _is_dark_palette(_p) else _p["MAIN_BG_ALT"])))
         self.board_view = BoardView()
         self.board_view.setScene(self.board_scene)
         self._board_autosave = QTimer(self)
@@ -1516,6 +1649,15 @@ class PersonalWindow(QMainWindow):
 
     def _delete_board(self):
         if not self.current_board_id:
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Delete board",
+            "Delete this board with all its cards, strokes and links?\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
             return
         life_service.remove_board(self.base_dir, self.current_board_id)
         self.current_board_id = None
@@ -1686,9 +1828,16 @@ class PersonalWindow(QMainWindow):
         self.files_list.setObjectName("CafeList")
         self.files_list.itemDoubleClicked.connect(self._open_file_item)
         l.addWidget(self.files_list, 1)
-        self.ed_file_search.textChanged.connect(self._refresh_files)
+        self.ed_file_search.textChanged.connect(self._schedule_files_refresh)
         self.btn_file_refresh.clicked.connect(self._refresh_files)
+        self._files_search_timer = QTimer(self)
+        self._files_search_timer.setSingleShot(True)
+        self._files_search_timer.setInterval(250)
+        self._files_search_timer.timeout.connect(self._refresh_files)
         return w
+
+    def _schedule_files_refresh(self):
+        self._files_search_timer.start()
 
     def _choose_root(self):
         current = prefs.get_personal_root(self.base_dir) or ""
@@ -1856,9 +2005,12 @@ class PersonalWindow(QMainWindow):
 
     def _remove_site(self):
         item = self.sites_list.currentItem()
-        if item:
-            prefs.remove_personal_site(self.base_dir, item.data(Qt.UserRole) or "")
-            self._refresh_sites()
+        if not item:
+            return
+        if QMessageBox.question(self, "Personal sites", "Remove this site from your list?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        prefs.remove_personal_site(self.base_dir, item.data(Qt.UserRole) or "")
+        self._refresh_sites()
 
     def _build_site_view(self) -> QWebEngineView:
         """Site preview that piggybacks on the main browser profile when possible.
@@ -2208,13 +2360,27 @@ class PersonalWindow(QMainWindow):
         QMessageBox.information(self, "Personal", "Current personal session saved.")
 
     def closeEvent(self, event):
+        save_errors = []
         try:
             if self.current_note_id:
-                personal_service.save_note(self.base_dir, self.current_note_id, self.note_editor.toPlainText())
+                if not personal_service.save_note(self.base_dir, self.current_note_id, self.note_editor.toPlainText()):
+                    save_errors.append("the open note could not be saved")
+        except Exception as exc:
+            save_errors.append(f"note save failed: {exc}")
+        try:
             self._save_current_board_positions(notify=False)
+        except Exception as exc:
+            save_errors.append(f"board save failed: {exc}")
+        try:
             self._auto_save_set()
         except Exception:
             pass
+        if save_errors:
+            QMessageBox.warning(
+                self,
+                "Personal Hub",
+                "Some data may not have been saved:\n- " + "\n- ".join(save_errors),
+            )
         event.accept()
 
 

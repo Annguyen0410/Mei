@@ -58,6 +58,44 @@ class TestPasswordManager(unittest.TestCase):
         envelope = json.loads(self._vault_bytes().decode("utf-8"))
         self.assertEqual(envelope.get("version"), 2)
 
+    def test_wrong_master_password_never_overwrites_vault(self):
+        self.assertTrue(password_manager.add_password(self.base, "https://a.com", "alice", "s1", "correct"))
+        self.assertTrue(password_manager.add_password(self.base, "https://b.com", "bob", "s2", "correct"))
+        blob_before = self._vault_bytes()
+
+        with self.assertRaises(password_manager.VaultUnlockError):
+            password_manager.add_password(self.base, "https://c.com", "carol", "s3", "WRONG")
+        self.assertEqual(self._vault_bytes(), blob_before, "vault must be untouched after a wrong master password")
+
+        status, entries = password_manager.load_passwords_status(self.base, "WRONG")
+        self.assertEqual(status, "locked")
+        self.assertEqual(entries, [])
+
+        # The correct password still works and can add entries afterwards.
+        self.assertTrue(password_manager.add_password(self.base, "https://c.com", "carol", "s3", "correct"))
+        self.assertEqual(len(password_manager.load_passwords(self.base, "correct")), 3)
+
+    def test_empty_vault_after_legit_clear_still_accepts_saves(self):
+        self.assertTrue(password_manager.add_password(self.base, "https://a.com", "alice", "s1", "master"))
+        # Simulate a user deleting all entries: an empty-but-valid vault file.
+        encoded = password_manager._encode_v2_vault([], "master")
+        with open(password_manager._passwords_path(self.base), "wb") as f:
+            f.write(encoded)
+        status, entries = password_manager.load_passwords_status(self.base, "master")
+        self.assertEqual((status, entries), ("ok", []))
+        self.assertTrue(password_manager.add_password(self.base, "https://b.com", "bob", "s2", "master"))
+
+    def test_decrypt_failure_does_not_leak_ciphertext(self):
+        self.assertTrue(password_manager.add_password(self.base, "https://a.com", "alice", "s1", "master"))
+        # Tamper: replace the payload with garbage that still parses as JSON.
+        envelope = json.loads(self._vault_bytes().decode("utf-8"))
+        envelope["payload"] = "bm90LWEtdmFsaWQtZmVybmV0LXRva2Vu"
+        with open(password_manager._passwords_path(self.base), "wb") as f:
+            f.write(json.dumps(envelope, ensure_ascii=False).encode("utf-8"))
+        status, entries = password_manager.load_passwords_status(self.base, "master")
+        for entry in entries:
+            self.assertNotEqual(entry["password"], "bm90LWEtdmFsaWQtZmVybmV0LXRva2Vu")
+
 
 if __name__ == "__main__":
     unittest.main()

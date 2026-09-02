@@ -183,6 +183,9 @@ def main(app_dir=None):
         existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
         if proxy_flag not in existing:
             os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (existing + " " + proxy_flag).strip()
+    # QtWebEngine requires shared OpenGL contexts, set BEFORE QApplication is
+    # constructed (v6.4 skipped this, risking GPU-compositor crashes).
+    QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName(app_version.APP_NAME)
     app.setApplicationVersion(app_version.APP_VERSION)
@@ -199,6 +202,7 @@ def main(app_dir=None):
     app_paths.ensure_linklumina_user_layout(app_dir)
     app.setWindowIcon(QIcon(os.path.join(app_dir, "icon.png")))
     profile_dir = _get_profile_dir(app_dir)
+    prefs.set_default_base_dir(profile_dir)
     workspace_manager.ensure_dual_workspaces(profile_dir)
     _register_bundled_personal_sites(profile_dir, app_dir)
     _cleanup_webengine_cache(

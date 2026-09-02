@@ -6,8 +6,6 @@ import urllib.request
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 
-from PyQt5.QtWidgets import QMessageBox
-
 AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 DEVICE_ENDPOINT = "https://oauth2.googleapis.com/device/code"
@@ -18,6 +16,10 @@ REDIRECT_URI = "http://127.0.0.1:47923/oauth2/callback"
 
 class GoogleAuthError(RuntimeError):
     pass
+
+
+class GoogleAuthDenied(GoogleAuthError):
+    """User denied the sign-in / device code expired / timeout."""
 
 
 def _json_post(url: str, payload: dict) -> dict:
@@ -86,36 +88,29 @@ def ensure_valid_token(client_id: str, cached: dict | None) -> dict | None:
         return None
 
 
-def sign_in_via_device_code(client_id: str, parent_widget=None) -> dict | None:
-    import webbrowser
+def request_device_code(client_id: str) -> dict:
+    """Step 1 (fast): ask Google for a device code. Raises GoogleAuthError."""
+    device = _device_code_request(client_id)
+    user_code = device.get("user_code", "")
+    device_code = device.get("device_code", "")
+    if not user_code or not device_code:
+        raise GoogleAuthError("Failed to get device code from Google.")
+    return device
 
-    try:
-        device = _device_code_request(client_id)
-    except GoogleAuthError as e:
-        QMessageBox.critical(parent_widget, "Google OAuth Error", str(e))
-        return None
+
+def poll_device_token(client_id: str, device: dict) -> dict:
+    """Step 2 (long): poll until the user completes sign-in.
+
+    Runs on a worker thread — no Qt GUI objects may be touched here. Raises
+    GoogleAuthDenied for user-facing cancellation outcomes.
+    """
+    import webbrowser
 
     user_code = device.get("user_code", "")
     verification_url = device.get("verification_url", "https://www.google.com/device")
     device_code = device.get("device_code", "")
     expires_in = int(device.get("expires_in", 1800) or 1800)
     interval = int(device.get("interval", 5) or 5)
-
-    if not user_code or not device_code:
-        QMessageBox.critical(parent_widget, "Google OAuth Error", "Failed to get device code from Google.")
-        return None
-
-    msg = (
-        "Google Sign-In — Device Code\n\n"
-        "Step 1: Open this URL in any browser (Chrome, Edge, phone):\n"
-        f"    {verification_url}\n\n"
-        "Step 2: Enter this code when prompted:\n"
-        f"    {user_code}\n\n"
-        "Step 3: Sign in to your Google account.\n\n"
-        "This window will detect when you've completed sign-in.\n"
-        f"Code expires in {expires_in // 60} minutes."
-    )
-    QMessageBox.information(parent_widget, "Google Sign-In", msg)
 
     webbrowser.open(verification_url)
 
@@ -124,8 +119,7 @@ def sign_in_via_device_code(client_id: str, parent_widget=None) -> dict | None:
         try:
             result = _poll_token(client_id, device_code)
         except GoogleAuthError as e:
-            QMessageBox.critical(parent_widget, "Google OAuth Error", str(e))
-            return None
+            raise GoogleAuthError(str(e)) from e
         error = result.get("error", "")
         if error == "authorization_pending":
             time.sleep(interval)
@@ -135,11 +129,9 @@ def sign_in_via_device_code(client_id: str, parent_widget=None) -> dict | None:
             time.sleep(interval)
             continue
         if error == "access_denied":
-            QMessageBox.warning(parent_widget, "Google Sign-In", "Sign-in was denied.")
-            return None
+            raise GoogleAuthDenied("Sign-in was denied.")
         if error == "expired_token":
-            QMessageBox.warning(parent_widget, "Google Sign-In", "Device code expired. Please try again.")
-            return None
+            raise GoogleAuthDenied("Device code expired. Please try again.")
         if result.get("access_token"):
             access_token = result["access_token"]
             profile_req = urllib.request.Request(USERINFO_ENDPOINT, headers={"Authorization": f"Bearer {access_token}"})
@@ -167,5 +159,10 @@ def sign_in_via_device_code(client_id: str, parent_widget=None) -> dict | None:
                     "obtained_at": now,
                 },
             }
-    QMessageBox.warning(parent_widget, "Google Sign-In", "Sign-in timed out. Please try again.")
-    return None
+    raise GoogleAuthDenied("Sign-in timed out. Please try again.")
+
+
+def sign_in_via_device_code(client_id: str, parent_widget=None) -> dict | None:
+    """Backward-compatible combined flow (blocking, no GUI calls)."""
+    device = request_device_code(client_id)
+    return poll_device_token(client_id, device)

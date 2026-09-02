@@ -36,7 +36,7 @@ from litebrowser.ui import components, theme, win_titlebar
 
 
 class AIWindow(QMainWindow):
-    query_finished = pyqtSignal(object, str)
+    query_finished = pyqtSignal(object, str, str)
 
     def __init__(self, base_dir: str, app_dir: str = None, embedded: bool = False):
         super().__init__()
@@ -210,7 +210,11 @@ class AIWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._apply_compact_layout()
+        width = max(0, self.width())
+        bucket = 820 if width < 820 else 940 if width < 940 else 1180 if width < 1180 else 1 << 30
+        if bucket != getattr(self, "_compact_bucket", None):
+            self._compact_bucket = bucket
+            self._apply_compact_layout()
 
     def _apply_compact_layout(self):
         width = max(0, self.width())
@@ -323,7 +327,13 @@ class AIWindow(QMainWindow):
         question = (self.ed_question.text() or "").strip()
         if not question:
             return
-        self.run_assistant_query(question, self._external_context_label, self._external_context)
+        # Manual asks must not silently reuse the context injected by an older
+        # "Ask AI about this note" — that leaked stale note/site text into
+        # unrelated questions (v6.4 bug). One-shot context only.
+        context_label, context = self._external_context_label, self._external_context
+        self._external_context_label = "Workspace-wide"
+        self._external_context = ""
+        self.run_assistant_query(question, context_label, context)
 
     def run_assistant_query(self, question: str, context_label: str = "Workspace-wide", extra_context: str = ""):
         if self._query_pending:
@@ -346,9 +356,14 @@ class AIWindow(QMainWindow):
             extra_context,
             10,
         )
-        future.add_done_callback(lambda done, label=context_label: self.query_finished.emit(done, label))
+        # Capture the provider label now: the user may switch the combo while
+        # the query runs, and the answer must credit who produced it.
+        provider_label = self.cmb_provider.currentText()
+        future.add_done_callback(
+            lambda done, label=context_label, prov=provider_label: self.query_finished.emit(done, label, prov)
+        )
 
-    def _finish_assistant_query(self, future, context_label: str):
+    def _finish_assistant_query(self, future, context_label: str, provider_label: str = ""):
         self._query_pending = False
         self.btn_ask.setEnabled(True)
         self.btn_reindex.setEnabled(True)
@@ -372,7 +387,8 @@ class AIWindow(QMainWindow):
             self.txt_context.setPlainText(self._last_context or "(no sources)")
         else:
             self.txt_context.setPlainText("(hidden)")
-        provider_label = self.cmb_provider.currentText()
+        if not provider_label:
+            provider_label = self.cmb_provider.currentText()
         answer = self._last_answer or "No answer returned."
         self.txt_answer.setPlainText(f"{answer}\n\n---\nProvider: {provider_label}")
         self._append_history_item(question, self.txt_answer.toPlainText(), f"Context: {context_label}")
@@ -466,9 +482,12 @@ class AIWindow(QMainWindow):
     def closeEvent(self, event):
         try:
             self._auto_save_set()
-            self._executor.shutdown(wait=False, cancel_futures=True)
         except Exception:
             pass
+        # Deliberately do NOT shut down the executor: the AI window is embedded
+        # in the shell and may be reused after close; a shut-down executor
+        # would make every later submit raise RuntimeError (v6.4 bug). The
+        # process lifetime owns the threads.
         event.accept()
 
 

@@ -385,7 +385,9 @@ class TabManager:
         session_data = session_data or {}
         show_new_tab_page = qurl is None and not is_incognito and not session_data
         if qurl is None:
-            qurl = QUrl("https://google.com")
+            # Incognito Ctrl+T must not silently load Google: a fresh private
+            # tab starts blank so no request leaves the machine (v6.4 bug).
+            qurl = QUrl("about:blank") if is_incognito else QUrl("https://google.com")
         target_url = session_data.get("url") or ("about:newtab" if show_new_tab_page else qurl.toString())
         saved_workspace = (
             session_data.get("workspace_id")
@@ -657,6 +659,15 @@ class TabManager:
             QMessageBox.warning(self.window, "Pinned Tab", "This tab is pinned.")
             return
         if self.tab_list.count() < 2:
+            # Standard browser behaviour: closing the last tab lands on a fresh
+            # new-tab page instead of silently refusing to close (v6.4 UX).
+            browser = self.browsers[i]
+            if browser is not None:
+                browser.page().setHtml(self.window.get_new_tab_html(), QUrl("about:newtab"))
+                item = self.tab_list.item(i)
+                if item is not None:
+                    item.setText("New Tab")
+                    self._set_metadata(item, url="about:newtab")
             return
         metadata = dict(item.data(TAB_META_ROLE) or {})
         metadata["pinned"] = bool(item.data(TAB_PINNED_ROLE))

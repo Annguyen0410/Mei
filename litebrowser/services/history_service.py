@@ -462,17 +462,27 @@ def import_profile_payload(
             _import_vault_files(base_dir, payload.get("vault_files", []))
 
         notes_dir = personal_service.notes_dir(base_dir)
-        _clear_notes_directory(notes_dir)
+        # Validate every note path BEFORE clearing anything: a crafted backup
+        # with "../" ids must never escape the notes dir (v6.4 allowed an
+        # arbitrary-file-write via note_id), and a single bad entry must not
+        # leave the vault wiped.
+        valid_notes = []
+        notes_root = os.path.abspath(notes_dir)
         for note in payload.get("notes", []):
-            note_id = note.get("id", "")
+            note_id = str(note.get("id", "") or "")
             if not note_id:
                 continue
-            path = os.path.join(notes_dir, note_id.replace("/", os.sep))
+            candidate = os.path.abspath(os.path.join(notes_root, note_id.replace("/", os.sep)))
+            if not candidate.startswith(notes_root + os.sep):
+                continue
+            valid_notes.append((candidate, note.get("content", "")))
+        _clear_notes_directory(notes_dir)
+        for path, content in valid_notes:
             parent = os.path.dirname(path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
             try:
-                write_text_atomic(path, note.get("content", ""))
+                write_text_atomic(path, content)
             except OSError:
                 continue
         return True

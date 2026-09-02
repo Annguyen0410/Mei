@@ -51,11 +51,25 @@ def push_open_request(base_dir: str, request: dict[str, Any]) -> None:
 def drain_open_requests(base_dir: str) -> list[dict[str, Any]]:
     """Return all pending requests and clear the queue (thread-safe)."""
     with _lock:
-        data = storage_utils.read_json(requests_path(base_dir), {"version": 1, "requests": []})
+        path = requests_path(base_dir)
+        # Fast path: nothing pending → skip both the read AND the write. The
+        # GUI polls this every 2.5 s; v6.4 rewrote the file even when empty,
+        # costing a disk write every tick for the app's whole lifetime.
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                raw = fh.read()
+        except OSError:
+            return []
+        if not raw.strip():
+            return []
+        data = storage_utils.read_json(path, {"version": 1, "requests": []})
         requests = data.get("requests") if isinstance(data, dict) else []
         if not isinstance(requests, list):
             requests = []
-        storage_utils.write_json(requests_path(base_dir), {"version": 1, "requests": []})
+        if requests:
+            storage_utils.write_json(path, {"version": 1, "requests": []})
     return requests
 
 

@@ -81,6 +81,31 @@ class TestBackupExport(unittest.TestCase):
         with open(marker, "r", encoding="utf-8") as f:
             self.assertEqual(f.read(), "webengine-test")
 
+    def test_import_rejects_path_traversal_note_ids(self):
+        """A crafted backup must not write outside the notes dir (v6.5 fix)."""
+        payload = history_service.export_profile_payload(self.base)
+        payload["notes"] = [
+            {"id": "../escaped.md", "content": "evil"},
+            {"id": "C:/Windows/temp-evil.md", "content": "evil2"},
+            {"id": "ok/note.md", "content": "fine"},
+        ]
+        zpath = os.path.join(self._tmp.name, "evil.zip")
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(history_service.PROFILE_ZIP_JSON_MEMBER, json.dumps(payload, ensure_ascii=False))
+
+        dest = prefs.ensure_profile_layout(os.path.join(self._tmp.name, "profile-traversal"))
+        self.assertTrue(history_service.import_profile_from_path(dest, zpath))
+
+        notes_root = os.path.abspath(personal_service.notes_dir(dest))
+        escaped = os.path.abspath(os.path.join(notes_root, "..", "escaped.md"))
+        self.assertFalse(os.path.isfile(escaped))
+        self.assertFalse(os.path.isfile(os.path.join(notes_root, "escaped.md")))
+        self.assertFalse(os.path.isfile(os.path.join(notes_root, "C:", "Windows", "temp-evil.md")))
+        good = os.path.join(notes_root, "ok", "note.md")
+        self.assertTrue(os.path.isfile(good))
+        with open(good, "r", encoding="utf-8") as f:
+            self.assertEqual(f.read(), "fine")
+
 
 if __name__ == "__main__":
     unittest.main()

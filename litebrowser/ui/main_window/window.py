@@ -3,6 +3,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qs, quote_plus, unquote_plus, urlparse
@@ -10,10 +11,12 @@ from urllib.parse import parse_qs, quote_plus, unquote_plus, urlparse
 from PyQt5.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
+    QObject,
     Qt,
     QTimer,
     QUrl,
     QVariantAnimation,
+    pyqtSignal,
 )
 from PyQt5.QtGui import QDesktopServices, QFont, QIcon, QKeySequence
 from PyQt5.QtNetwork import QNetworkProxy
@@ -88,9 +91,13 @@ MEMORY_SAVER_RSS_THRESHOLD_MB = 800
 
 def _process_rss_mb():
     """Current process working-set size in MB (Windows), or None if unknown."""
+    global _RSS_DLL_CACHE
     try:
         import ctypes
         from ctypes import wintypes
+
+        if _RSS_DLL_CACHE is None:
+            _RSS_DLL_CACHE = (ctypes.WinDLL("kernel32"), ctypes.WinDLL("psapi"))
 
         class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
             _fields_ = [
@@ -106,15 +113,43 @@ def _process_rss_mb():
                 ("PeakPagefileUsage", ctypes.c_size_t),
             ]
 
+        kernel32, psapi = _RSS_DLL_CACHE
         counters = PROCESS_MEMORY_COUNTERS()
         counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
-        handle = ctypes.WinDLL("kernel32").GetCurrentProcess()
-        ok = ctypes.WinDLL("psapi").GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
+        handle = kernel32.GetCurrentProcess()
+        ok = psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
         if ok:
             return int(counters.WorkingSetSize // (1024 * 1024))
     except Exception:
         pass
     return None
+
+
+_RSS_DLL_CACHE = None
+
+
+class _WorkerRelay(QObject):
+    """Queued-call bridge from executor threads to the GUI thread.
+
+    QObjects/QTimers must not be created from worker threads (v6.4 used
+    QTimer.singleShot inside future callbacks, which is unsafe); emit the
+    callable instead and it runs on the GUI thread via a queued connection.
+    """
+
+    run_on_gui = pyqtSignal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.run_on_gui.connect(self._exec)
+
+    def post(self, fn):
+        self.run_on_gui.emit(fn)
+
+    def _exec(self, fn):
+        try:
+            fn()
+        except Exception:
+            pass
 
 
 class SearchWindow(QMainWindow):
@@ -131,6 +166,7 @@ class SearchWindow(QMainWindow):
         self.base_dir = prefs.ensure_profile_layout(base_dir or app_paths.project_root())
         self.app_dir = app_dir or app_paths.project_root()
         self._executor = ThreadPoolExecutor(max_workers=2)
+        self._worker_relay = _WorkerRelay(self)
         self._google_auth_running = False
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
 
@@ -815,7 +851,7 @@ class SearchWindow(QMainWindow):
         bad_format_hint = ""
         if cid and not cid.endswith(".apps.googleusercontent.com"):
             bad_format_hint = (
-                "\n\n?  Client ID does not end with '.apps.googleusercontent.com'  "
+                "\n\nNote: this Client ID does not end with '.apps.googleusercontent.com'  "
                 "you may have pasted a client_secret by mistake or copied incompletely. Double-check it in Google Cloud Console."
             )
 
@@ -833,15 +869,15 @@ class SearchWindow(QMainWindow):
         client_id = prefs.get_google_oauth_client_id(self.base_dir) or os.environ.get("LITEBROWSER_GOOGLE_CLIENT_ID", "")
         lines = []
         if not client_id:
-            lines.append("? No Client ID set. Use 'Configure OAuth Client ID' to add one.")
+            lines.append("No Client ID set. Use 'Configure OAuth Client ID' to add one.")
         elif not client_id.endswith(".apps.googleusercontent.com"):
             lines.append(
-                f"? Invalid Client ID: '{client_id[:30]}'"
-                "\n   ? It must end with .apps.googleusercontent.com "
+                f"Invalid Client ID: '{client_id[:30]}'"
+                "\n   It must end with .apps.googleusercontent.com "
                 "('Desktop app' type in Google Cloud Console)."
             )
         else:
-            lines.append(f"? Client ID looks valid: {client_id[:30]}")
+            lines.append(f"Client ID looks valid: {client_id[:30]}")
             lines.append("\nMei uses Device Code flow (no Redirect URI needed).")
         QMessageBox.information(self, "Google OAuth check", "\n".join(lines))
 
@@ -856,13 +892,45 @@ class SearchWindow(QMainWindow):
             if not client_id:
                 return
         self._google_auth_running = True
-        future = self._executor.submit(google_auth.sign_in_via_device_code, client_id)
-        future.add_done_callback(lambda done: QTimer.singleShot(0, lambda: self._finish_google_auth(done)))
+        self._google_client_id = client_id
+        future = self._executor.submit(google_auth.request_device_code, client_id)
+        future.add_done_callback(lambda done: self._worker_relay.post(lambda: self._on_device_code_ready(done)))
+
+    def _on_device_code_ready(self, future):
+        try:
+            device = future.result()
+        except google_auth.GoogleAuthError as exc:
+            self._google_auth_running = False
+            QMessageBox.warning(self, "Google OAuth", str(exc))
+            return
+        except Exception as exc:
+            self._google_auth_running = False
+            QMessageBox.warning(self, "Google OAuth", f"Error:\n{exc}")
+            return
+        verification_url = device.get("verification_url", "https://www.google.com/device")
+        user_code = device.get("user_code", "")
+        minutes = int(device.get("expires_in", 1800) or 1800) // 60
+        QMessageBox.information(
+            self,
+            "Google Sign-In — Device Code",
+            "Step 1: Open this URL in any browser (Chrome, Edge, phone):\n"
+            f"    {verification_url}\n\n"
+            "Step 2: Enter this code when prompted:\n"
+            f"    {user_code}\n\n"
+            "Step 3: Sign in to your Google account.\n\n"
+            "Mei will detect when you've completed sign-in.\n"
+            f"Code expires in {minutes} minutes.",
+        )
+        future = self._executor.submit(google_auth.poll_device_token, self._google_client_id or "", device)
+        future.add_done_callback(lambda done: self._worker_relay.post(lambda: self._finish_google_auth(done)))
 
     def _finish_google_auth(self, future):
         self._google_auth_running = False
         try:
             result = future.result()
+        except google_auth.GoogleAuthError as exc:
+            QMessageBox.warning(self, "Google OAuth", str(exc))
+            return
         except Exception as exc:
             QMessageBox.warning(self, "Google OAuth", f"Error:\n{exc}")
             return
@@ -1036,13 +1104,22 @@ class SearchWindow(QMainWindow):
         engine = prefs.get_search_engine(self.base_dir)
         mode = prefs.get_shell_theme(self.base_dir)
         accent = prefs.get_accent(self.base_dir)
-        return new_tab_page.build_new_tab_html(
+        # build_new_tab_html re-reads history + bookmarks and formats ~30 KB of
+        # HTML per tab open; cache it briefly so rapid tab creation stays snappy.
+        cache = getattr(self, "_new_tab_html_cache", None)
+        key = (engine, mode, accent)
+        now = time.time()
+        if cache and cache[0] == key and (now - cache[1]) < 30.0:
+            return cache[2]
+        html = new_tab_page.build_new_tab_html(
             self.base_dir,
             getattr(self, "app_dir", None),
             engine,
             mode=mode,
             accent=accent,
         )
+        self._new_tab_html_cache = (key, now, html)
+        return html
 
     def add_new_tab(self, qurl=None, label="New Tab", is_active=True, is_incognito=False):
         self.tab_manager.add_tab(qurl, label, is_active, is_incognito)
@@ -1205,7 +1282,11 @@ class SearchWindow(QMainWindow):
                 visible_rows.append(i)
         current_row = self.tab_list.currentRow()
         if visible_rows and (current_row not in visible_rows):
-            self.tab_list.setCurrentRow(visible_rows[0])
+            # Only auto-switch when the current tab was hidden by a *workspace*
+            # change, not by typing in the filter: switching rows loads a whole
+            # different page, which is jarring mid-search (v6.4 UX bug).
+            if not query:
+                self.tab_list.setCurrentRow(visible_rows[0])
         return visible_rows
 
     def _apply_workspace_filter(self):
@@ -1540,7 +1621,7 @@ class SearchWindow(QMainWindow):
                 pass
 
         future = self._executor.submit(_run)
-        future.add_done_callback(lambda f: QTimer.singleShot(0, lambda: _done(f)))
+        future.add_done_callback(lambda f: self._worker_relay.post(lambda: _done(f)))
 
     def _refresh_adblock_now(self):
         def _run():
@@ -1564,7 +1645,7 @@ class SearchWindow(QMainWindow):
             )
 
         future = self._executor.submit(_run)
-        future.add_done_callback(lambda f: QTimer.singleShot(0, lambda: _done(f)))
+        future.add_done_callback(lambda f: self._worker_relay.post(lambda: _done(f)))
 
     def _auto_memory_saver_tick(self):
         """Chrome-style memory saver: freeze background tabs when RAM runs hot."""
@@ -1665,8 +1746,15 @@ class SearchWindow(QMainWindow):
             if hasattr(self, "central_widget"):
                 self.central_widget.setStyleSheet("")
             return
+        # A setStyleSheet with a new string re-polishes the whole widget tree
+        # (sidebar + tabs + content). Skip the churn when the window is hidden
+        # or minimized so background windows cost nothing.
+        if not self.isVisible() or self.windowState() & (Qt.WindowMinimized | Qt.WindowMaximized) == Qt.WindowMinimized:
+            return
         theme_name = prefs.get_shell_theme(self.base_dir)
-        self.central_widget.setStyleSheet(theme.dynamic_main_widget_css(theme_name, self._dynamic_bg_phase))
+        self.central_widget.setStyleSheet(
+            theme.dynamic_main_widget_css(theme_name, self._dynamic_bg_phase, prefs.get_accent(self.base_dir))
+        )
 
     def toggle_ui_dynamic_background(self):
         on = self.act_dynamic_bg.isChecked()
@@ -1949,7 +2037,7 @@ class SearchWindow(QMainWindow):
                     self,
                     "Google sign-in",
                     "Google often blocks sign-in inside embedded browsers (Qt WebEngine).\n\n"
-                    "Use the page menu (?) ? Open externally to sign in with Chrome or Edge, "
+                    "Use the page menu (Page) > Open externally to sign in with Chrome or Edge, "
                     "then use Mei for everything else if you prefer.",
                 )
 
@@ -2668,7 +2756,7 @@ class SearchWindow(QMainWindow):
                     "VPN / Proxy",
                     "Proxy saved for Mei.\n\n"
                     "Important: QtWebEngine only reads proxy settings at startup.\n"
-                    "? Close and reopen Mei for all web tabs to go through the proxy.",
+                    "Close and reopen Mei for all web tabs to go through the proxy.",
                 )
 
     def _load_block_third_party_cookies_pref(self):
@@ -3040,20 +3128,33 @@ class SearchWindow(QMainWindow):
             download.cancel()
 
     def _finalize_download(self, index, download):
+        # stateChanged and finished both fire per download; only the first
+        # terminal event may be recorded or statuses get overwritten.
+        if not hasattr(self, "_finalized_downloads"):
+            self._finalized_downloads = set()
+        if index in self._finalized_downloads:
+            return
         try:
             from litebrowser.services import download_mgr
             state = download.state() if hasattr(download, "state") else None
             completed = getattr(download, "DownloadCompleted", None)
             cancelled = getattr(download, "DownloadCancelled", None)
             interrupted = getattr(download, "DownloadInterrupted", None)
+            in_progress = getattr(download, "DownloadInProgress", None)
+            requested = getattr(download, "DownloadRequested", None)
+            terminal_states = [s for s in (completed, cancelled, interrupted) if s is not None]
+            if state is None:
+                return  # unknown state — do not mark anything yet
+            if terminal_states and state not in terminal_states:
+                return  # still requested/in-progress; keep "downloading" status
             status = "completed"
-            if state is not None and cancelled is not None and state == cancelled:
+            if cancelled is not None and state == cancelled:
                 status = "cancelled"
-            elif state is not None and interrupted is not None and state == interrupted:
+            elif interrupted is not None and state == interrupted:
                 status = "interrupted"
-            elif completed is not None and state != completed:
-                status = "finished"
             download_mgr.update_status(self.base_dir, index, status)
+            self._finalized_downloads.add(index)
+            self._load_downloads_panel()
         except Exception:
             pass
 
@@ -3150,7 +3251,7 @@ class SearchWindow(QMainWindow):
             lambda text: self._handle_inline_ai_context(shell, browser, question, text or ""),
         )
 
-    def _on_inline_ai_answer(self, future, _context_label):
+    def _on_inline_ai_answer(self, future, _context_label, _provider_label=""):
         if self._closing:
             return
         try:

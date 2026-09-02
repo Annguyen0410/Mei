@@ -531,6 +531,20 @@ class TestAndroidBridgeHTTP(unittest.TestCase):
         self.assertEqual(len(open_request.drain_open_requests(self.base)), 1)
         self.assertEqual(len(open_request.drain_open_requests(other)), 0)
 
+    def test_drain_empty_queue_does_not_touch_disk(self):
+        """The GUI polls every 2.5 s: an empty queue must not rewrite the file."""
+        from litebrowser.services import open_request
+        # No file at all yet.
+        self.assertEqual(open_request.drain_open_requests(self.base), [])
+        self.assertFalse(os.path.exists(open_request.requests_path(self.base)))
+        # Empty queue file on disk: still no write churn (mtime unchanged).
+        path = open_request.requests_path(self.base)
+        open_request.push_open_request(self.base, {"url": "https://example.com", "source": "t"})
+        self.assertEqual(len(open_request.drain_open_requests(self.base)), 1)  # clears it
+        mtime_before = os.path.getmtime(path)
+        self.assertEqual(open_request.drain_open_requests(self.base), [])
+        self.assertEqual(os.path.getmtime(path), mtime_before)
+
 
 if __name__ == "__main__":
     unittest.main()

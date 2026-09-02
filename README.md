@@ -4,6 +4,15 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 > **Run & build the desktop app**: see the dedicated **`RUN_AND_BUILD.md`** — app testing checklist, how to use `.venv`, common run errors, and the full PyInstaller command (`--collect-all PyQt6.QtWebEngine*`) to produce the `.exe`.
 
+> ## What's new in 6.5
+>
+> - **Notes are safe to type in** — a deep data-loss fix round for the Personal Hub: searching or filtering no longer wipes the open note, saving keeps your selection, moving a note to another category keeps following it, and edits now autosave 250 ms after you stop typing. Deleting notes/boards/events/sites asks for confirmation, and failed saves are reported instead of silently swallowed.
+> - **Password vault hardening** — a mistyped master password can no longer overwrite the vault with a single new entry; decryption failures surface an empty password instead of leaking the ciphertext; the vault file is written atomically (crash-safe).
+> - **Security fixes** — profile import no longer allows path traversal via crafted note ids; Google sign-in no longer creates Qt widgets on a worker thread; adblock/GitHub-style update callbacks are marshalled to the GUI thread safely.
+> - **Downloads done right** — terminal state is recorded exactly once (no more “finished” races), and the sidebar downloads panel refreshes on completion.
+> - **Less lag** — the Android-bridge poll no longer rewrites a JSON file every 2.5 s, the new-tab page HTML is cached for rapid tab creation, the animated background skips hidden/minimized windows, note/file search boxes are debounced, word counting no longer allocates per keystroke, and the memory-saver probe caches its WinDLL handles.
+> - **UX polish** — typing in the tab filter no longer yanks you to a different tab; AI answers credit the provider that actually ran the query; manual AI questions no longer inherit a stale “Ask about this note” context; omnibar hints clear properly and no longer crash on empty input.
+
 > ## What's new in 6.3
 >
 > - **Text highlight & one-click copy** — select any text on any page (main browser tabs and embedded previews alike) to highlight it in amber and get a floating “📋 Copy” bubble next to the selection. Toggle: Page menu → “✎ Highlight text to copy”.
@@ -111,6 +120,7 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 ## Current build
 
+- Version **6.5.0** (see "What's new in 6.5" above)
 - `AppShell` as the master shell for workspace navigation
 - `Browser` for web browsing: tabs, imports, workspaces, privacy, downloads
 - `Personal Hub` for notes, tasks, boards, files, sites, calendar

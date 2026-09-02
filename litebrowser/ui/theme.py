@@ -332,6 +332,15 @@ def palette_tokens(mode: str = "minimal", accent: str | None = None) -> dict:
     return _palette(mode, accent)
 
 
+def palette(mode: str | None = None, accent: str | None = None) -> dict:
+    """Resolved tokens for the *stored* profile theme when no mode is given."""
+    if mode is None:
+        from litebrowser.core import prefs as _prefs
+
+        mode = _prefs.get_shell_theme(_prefs.DEFAULT_BASE_DIR) or DEFAULT_THEME
+    return _palette(mode, accent)
+
+
 def main_qss(mode: str = "cafe-night", accent: str | None = None):
     p = _palette(mode, accent)
     return """
@@ -1210,9 +1219,9 @@ def dialog_qss(mode: str = "cafe-night", accent: str | None = None):
     """ % p
 
 
-def dynamic_main_widget_css(mode: str, phase: int) -> str:
+def dynamic_main_widget_css(mode: str, phase: int, accent: str | None = None) -> str:
     """Subtle shifting gradient on #MainWidget when user enables dynamic background."""
-    p = _palette(mode)
+    p = _palette(mode, accent)
     a, b = (p["MAIN_BG"], p["MAIN_BG_ALT"]) if (phase % 2) == 0 else (p["MAIN_BG_ALT"], p["MAIN_BG"])
     return (
         "#MainWidget {\n"
@@ -1245,7 +1254,18 @@ def animate_entrance(widget, duration: int = 160) -> None:
     animation.setStartValue(0.0)
     animation.setEndValue(1.0)
     animation.setEasingCurve(QEasingCurve.OutCubic)
-    animation.finished.connect(lambda: widget.graphicsEffect() is effect and widget.setGraphicsEffect(None))
+
+    def _cleanup():
+        # The widget can be destroyed before the 160 ms animation lands
+        # (workspace switch/teardown); touching a deleted C++ object would
+        # raise inside the signal handler (v6.4 bug).
+        try:
+            if widget.graphicsEffect() is effect:
+                widget.setGraphicsEffect(None)
+        except RuntimeError:
+            pass
+
+    animation.finished.connect(_cleanup)
     widget._cafe_entrance_animation = animation  # retain animation for Qt's async lifetime.
     animation.start()
 

@@ -155,6 +155,18 @@ def update_note(base_dir: str, note_id: str, content: str, category: str | None 
             target_id = os.path.join(*target_category.split("/"), os.path.basename(note_id))
             target_path = _note_path(base_dir, target_id)
             if os.path.normcase(target_path) != os.path.normcase(_note_path(base_dir, note_id)):
+                # A same-named note in the destination must never be clobbered
+                # (v6.4 silently os.replace'd over it — data loss). Suffix like
+                # create_note does.
+                if os.path.exists(target_path):
+                    stem = os.path.splitext(os.path.basename(note_id))[0]
+                    suffix = 2
+                    while True:
+                        target_id = os.path.join(*target_category.split("/"), f"{stem}-{suffix}.md")
+                        target_path = _note_path(base_dir, target_id)
+                        if not os.path.exists(target_path):
+                            break
+                        suffix += 1
                 os.replace(_note_path(base_dir, note_id), target_path)
                 note_id = target_id
         path = _note_path(base_dir, note_id)

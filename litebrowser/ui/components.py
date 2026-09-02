@@ -6,12 +6,13 @@ stat tiles, section cards with headers, and empty-state hints. They only
 compose plain Qt widgets + object names, so styling stays in ``theme.py``.
 """
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QFont, QListWidgetItem
+from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidgetItem,
     QPushButton,
     QVBoxLayout,
     QWidget,

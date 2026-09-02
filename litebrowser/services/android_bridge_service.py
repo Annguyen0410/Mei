@@ -66,6 +66,10 @@ class BridgeHTTPServer(ThreadingHTTPServer):
 
     profile_dir: str
     allow_reuse_address = True
+    # Per-request socket timeout: a client that opens a connection and then
+    # dribbles bytes (slowloris) used to pin a thread forever — one thread per
+    # request with no timeout meant unbounded thread accumulation (v6.4).
+    timeout = 30
 
     def __init__(self, profile_dir: str, server_address, RequestHandlerClass):
         self.profile_dir = profile_dir
@@ -537,12 +541,14 @@ def dispatch_ingest(profile_dir: str, envelope: dict[str, Any]) -> dict[str, Any
             "error": _json_error("invalid_payload", str(e))["error"],
         }
     except Exception as e:
+        # Never return raw exception text to the phone: str(e) often embeds
+        # local file paths (v6.4 leaked them).
         return {
             "ok": False,
             "action": action,
             "received_at": received,
             "result": None,
-            "error": _json_error("service_failure", str(e))["error"],
+            "error": _json_error("service_failure", "The desktop app could not complete this action.")["error"],
         }
 
 

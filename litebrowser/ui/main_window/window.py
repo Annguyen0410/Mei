@@ -130,14 +130,12 @@ _RSS_DLL_CACHE = None
 
 class _FindBar(QWidget):
     """Chrome-style find bar: sticky row with next/prev, match count, Esc to
-    close. Replaces the v6.4 modal QInputDialog that reopened on every Ctrl+F."""
+    close. Replaces the v6.4 modal QInputDialog that reopened on every Ctrl+F.
+    Styling comes from the shell QSS (#FindBar) so it follows the theme."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("FindBar")
-        self.setStyleSheet(
-            "#FindBar { background: palette(window); border: 1px solid palette(midlight); border-radius: 4px; }"
-        )
         lay = QHBoxLayout(self)
         lay.setContentsMargins(8, 4, 8, 4)
         lay.setSpacing(6)
@@ -147,10 +145,13 @@ class _FindBar(QWidget):
         self.ed_query.setFixedWidth(260)
         self.btn_prev = QToolButton()
         self.btn_prev.setText("▲")
+        self.btn_prev.setToolTip("Previous match (Shift+F3)")
         self.btn_next = QToolButton()
         self.btn_next.setText("▼")
+        self.btn_next.setToolTip("Next match (F3)")
         self.btn_close = QToolButton()
         self.btn_close.setText("✕")
+        self.btn_close.setToolTip("Close (Esc)")
         for b in (self.btn_prev, self.btn_next, self.btn_close):
             b.setAutoRaise(True)
             b.setCursor(Qt.PointingHandCursor)
@@ -1928,14 +1929,11 @@ class SearchWindow(QMainWindow):
 
     def _flash_status(self, message: str):
         """Non-modal toast: transient feedback without dialog spam (v6.4 used
-        a modal QMessageBox for routine actions like mute/auto-reload)."""
+        a modal QMessageBox for routine actions like mute/auto-reload).
+        Styling comes from the shell QSS (#ToastLabel) so it follows the theme."""
         if getattr(self, "_toast_label", None) is None:
             self._toast_label = QLabel(self.central_widget)
             self._toast_label.setObjectName("ToastLabel")
-            self._toast_label.setStyleSheet(
-                "background: rgba(30, 24, 18, 215); color: #f5ead9;"
-                "padding: 6px 14px; border-radius: 12px; font-size: 12px;"
-            )
             self._toast_label.hide()
             self._toast_timer = QTimer(self)
             self._toast_timer.setSingleShot(True)

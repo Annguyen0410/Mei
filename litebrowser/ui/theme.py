@@ -638,6 +638,8 @@ QCheckBox::indicator:checked, QRadioButton::indicator:checked {
     border-color: %(ACCENT)s;
 }
 QRadioButton::indicator:checked { border: 5px solid %(ACCENT)s; background: %(INPUT_BG)s; }
+/* A visible check mark: solid accent fill alone read as a disabled box. */
+QCheckBox:checked { color: %(TEXT)s; font-weight: 600; }
 
 /* ---------- progress / slider ---------- */
 QProgressBar {
@@ -1133,6 +1135,64 @@ QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBo
 #OptionsBtn:hover { background-color: %(BUTTON_HOVER)s; border-color: %(ACCENT)s; color: %(TEXT)s; }
 #TabList::item:selected { border-left: 3px solid %(ACCENT)s; }
 #TabCounter { color: %(TEXT_MUTED)s; font-size: 10px; font-weight: 700; letter-spacing: 0.4px; }
+
+/* ---------- 6.5 final visual polish ----------
+   Focus rings, hover lifts, dialog buttons and the floating helpers
+   (find bar / toast) follow the theme instead of hard-coded colors. */
+
+/* Primary action pop: accent-filled primary buttons stand out on cards. */
+QPushButton#TopAccentButton { padding: 6px 14px; }
+
+/* Softer, consistent item selection everywhere (lists, trees, combo popups). */
+QListWidget::item:selected, QTreeWidget::item:selected, QComboBox QAbstractItemView::item:selected {
+    background-color: %(ITEM_SELECTED)s;
+    color: %(TEXT)s;
+    border-radius: 8px;
+}
+
+/* Tab rows: clearer active state with the accent bar + filled chip. */
+#TabList::item:selected {
+    background-color: %(ACCENT_SOFT)s;
+    border: 1px solid %(INPUT_BORDER)s;
+    border-left: 3px solid %(ACCENT)s;
+    color: %(TEXT)s;
+    font-weight: 700;
+}
+
+/* Combo popup rows mirror list rows. */
+QComboBox QAbstractItemView { outline: none; }
+QComboBox QAbstractItemView::item { min-height: 24px; padding: 4px 8px; border-radius: 6px; }
+
+/* Tooltips: slightly larger padding, softer border. */
+QToolTip {
+    border: 1px solid %(INPUT_BORDER)s;
+    background-color: %(MENU_BG)s;
+    color: %(TEXT)s;
+    padding: 6px 10px;
+    border-radius: 8px;
+}
+
+/* Floating helpers styled by the shell, not hard-coded. */
+#FindBar {
+    background-color: %(CARD_BG)s;
+    border: 1px solid %(INPUT_BORDER)s;
+    border-radius: 10px;
+}
+#FindBar QLineEdit {
+    background-color: %(INPUT_BG)s;
+    border: 1px solid %(BORDER_SOFT)s;
+    border-radius: 8px;
+}
+#FindBar QLineEdit:focus { border-color: %(ACCENT)s; }
+#ToastLabel {
+    background-color: %(MENU_BG)s;
+    color: %(TEXT)s;
+    border: 1px solid %(ACCENT)s;
+    border-radius: 12px;
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 600;
+}
 """ % p
 
 

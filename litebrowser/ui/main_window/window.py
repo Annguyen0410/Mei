@@ -18,7 +18,7 @@ from PyQt5.QtCore import (
     QVariantAnimation,
     pyqtSignal,
 )
-from PyQt5.QtGui import QDesktopServices, QFont, QIcon, QKeySequence
+from PyQt5.QtGui import QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPainter, QPen
 from PyQt5.QtNetwork import QNetworkProxy
 from PyQt5.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt5.QtWebEngineWidgets import (
@@ -1800,19 +1800,116 @@ class SearchWindow(QMainWindow):
         return live, sleeping
 
     def show_performance_dashboard(self):
+        """GX-style control center: live RAM graph, live-tab limiter and one
+        click freeze — the resource cockpit Mei's hibernation engine already
+        has the machinery for."""
+        from litebrowser.ui import theme as _th
+
+        pal = _th._palette(prefs.get_shell_theme(self.base_dir), prefs.get_accent(self.base_dir))
         dlg = QDialog(self)
-        dlg.setWindowTitle("Bảng đo hiệu năng — Mei")
-        dlg.resize(440, 260)
+        dlg.setWindowTitle("Mei Control Center")
+        dlg.resize(520, 420)
         layout = QVBoxLayout(dlg)
-        title = QLabel("Bảng đo hiệu năng")
+        title = QLabel("⚡ Control Center")
         title.setObjectName("SectionTitle")
         layout.addWidget(title)
-        lbl_ram = QLabel("")
+
+        # --- Live RAM mini graph (custom paint, no deps) ---
+        class _RamGraph(QWidget):
+            def __init__(self, _parent=None):
+                super().__init__()
+                self.samples = []
+                self.limit_mb = MEMORY_SAVER_RSS_THRESHOLD_MB
+                self.setMinimumHeight(90)
+
+            def add(self, mb):
+                self.samples.append(max(0.0, float(mb or 0)))
+                self.samples = self.samples[-60:]
+                self.update()
+
+            def paintEvent(self, _event):
+                painter = QPainter(self)
+                w, h = self.width(), self.height()
+                painter.fillRect(self.rect(), QColor(pal["MAIN_BG_ALT"]))
+                peak = max([self.limit_mb] + self.samples or [self.limit_mb]) * 1.15 or 1.0
+                line_y = int(h - (self.limit_mb / peak) * h)
+                painter.setPen(QPen(QColor(pal["DANGER"]), 1, Qt.DashLine))
+                painter.drawLine(0, line_y, w, line_y)
+                if len(self.samples) >= 2:
+                    painter.setPen(QPen(QColor(pal["ACCENT"]), 2))
+                    step = w / max(1, len(self.samples) - 1)
+                    prev = None
+                    for idx, mb in enumerate(self.samples):
+                        y = int(h - (mb / peak) * h)
+                        x = int(idx * step)
+                        if prev is not None:
+                            painter.drawLine(prev[0], prev[1], x, y)
+                        prev = (x, y)
+                painter.setPen(QColor(pal["TEXT_MUTED"]))
+                painter.drawText(8, 14, f"Process RAM · limit {self.limit_mb} MB")
+                if self.samples:
+                    painter.drawText(8, h - 8, f"now: {self.samples[-1]:.0f} MB")
+                painter.end()
+
+        ram_graph = _RamGraph(dlg)
+        ram_graph.setObjectName("SectionCard")
+        layout.addWidget(ram_graph, 1)
         lbl_tabs = QLabel("")
+        lbl_ram = QLabel("")
         lbl_heap = QLabel("JS heap tab hiện tại: đang đo…")
         layout.addWidget(lbl_ram)
         layout.addWidget(lbl_tabs)
         layout.addWidget(lbl_heap)
+
+        # --- Live-tab limiter (real effect: auto_hibernate_threshold) ---
+        limit_row = QHBoxLayout()
+        limit_lbl = QLabel("")
+        limit_combo = QComboBox()
+        for label, value in (("6 tabs (default)", 6), ("8 tabs", 8), ("10 tabs", 10), ("14 tabs", 14), ("Unlimited", 99)):
+            limit_combo.addItem(label, value)
+        current_limit = prefs.get_max_live_tabs(self.base_dir)
+
+        def _apply_limit(index):
+            value = limit_combo.itemData(index)
+            if value is None:
+                return
+            try:
+                prefs.set_max_live_tabs(self.base_dir, int(value))
+                limit_lbl.setText(f"Max live tabs: {value}" if value < 90 else "Max live tabs: unlimited")
+                # Background tabs over the new limit hibernate on the next tick;
+                # also enforce immediately for instant feedback.
+                self.tab_manager._enforce_background_hibernation(active_index=self.tab_list.currentRow())
+            except Exception:
+                pass
+
+        try:
+            limit_combo.setCurrentIndex(max(0, limit_combo.findData(current_limit)))
+        except Exception:
+            pass
+        limit_combo.currentIndexChanged.connect(_apply_limit)
+        limit_row.addWidget(QLabel("Max live tabs:"))
+        limit_row.addWidget(limit_combo, 1)
+        limit_lbl.setText(f"Max live tabs: {current_limit}")
+        limit_row.addWidget(limit_lbl)
+        layout.addLayout(limit_row)
+
+        # --- RAM-saver threshold ---
+        thresh_row = QHBoxLayout()
+        thresh_spin = QSpinBox()
+        thresh_spin.setRange(200, 8000)
+        thresh_spin.setSingleStep(50)
+        thresh_spin.setSuffix(" MB")
+        thresh_spin.setValue(MEMORY_SAVER_RSS_THRESHOLD_MB)
+
+        def _apply_threshold(v):
+            global MEMORY_SAVER_RSS_THRESHOLD_MB
+            MEMORY_SAVER_RSS_THRESHOLD_MB = int(v)
+
+        thresh_spin.valueChanged.connect(_apply_threshold)
+        thresh_row.addWidget(QLabel("Auto-freeze when RAM exceeds:"))
+        thresh_row.addWidget(thresh_spin)
+        thresh_row.addStretch(1)
+        layout.addLayout(thresh_row)
 
         def _on_heap(value):
             try:
@@ -1827,11 +1924,13 @@ class SearchWindow(QMainWindow):
         def refresh():
             rss = _process_rss_mb()
             live, sleeping = self._live_sleeping_counts()
-            lbl_ram.setText(
-                f"RAM tiến trình: {rss} MB (Memory Saver kích hoạt > {MEMORY_SAVER_RSS_THRESHOLD_MB} MB)"
-                if rss is not None
-                else "RAM tiến trình: không đọc được trên hệ điều hành này"
-            )
+            if rss is not None:
+                lbl_ram.setText(
+                    f"RAM tiến trình: {rss} MB (Memory Saver kích hoạt > {MEMORY_SAVER_RSS_THRESHOLD_MB} MB)"
+                )
+                ram_graph.add(rss)
+            else:
+                lbl_ram.setText("RAM tiến trình: không đọc được trên hệ điều hành này")
             lbl_tabs.setText(f"Tab: {live} live · {sleeping} sleeping")
             lbl_heap.setText("JS heap tab hiện tại: đang đo…")
             current = self.current_browser()
@@ -1842,6 +1941,9 @@ class SearchWindow(QMainWindow):
                 )
 
         refresh()
+        graph_timer = QTimer(dlg)
+        graph_timer.timeout.connect(refresh)
+        graph_timer.start(1000)
         row = QHBoxLayout()
         btn_refresh = QPushButton("Đo lại")
         btn_refresh.clicked.connect(refresh)

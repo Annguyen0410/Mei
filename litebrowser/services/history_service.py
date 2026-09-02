@@ -44,14 +44,27 @@ def log_event(base_dir: str, kind: str, title: str, detail: str = "", meta: dict
     with profile_locked(base_dir):
         data = load_activity(base_dir)
         events = data.get("events", [])
+        now = int(time.time())
         event = {
             "id": uuid.uuid4().hex,
-            "ts": int(time.time()),
+            "ts": now,
             "kind": (kind or "").strip() or "activity",
             "title": (title or "").strip(),
             "detail": (detail or "").strip(),
             "meta": meta if isinstance(meta, dict) else {},
         }
+        # Consecutive-duplicate suppression: urlChanged fires for every
+        # redirect, so identical browser-visit events within a 2 s window used
+        # to each cost a full 3000-event rewrite (v6.5 audit).
+        if events:
+            first = events[0]
+            if (
+                first.get("kind") == event["kind"]
+                and first.get("title") == event["title"]
+                and first.get("detail") == event["detail"]
+                and now - int(first.get("ts", 0) or 0) <= 2
+            ):
+                return first
         events.insert(0, event)
         data["events"] = events[:3000]
         payload = dict(data)

@@ -49,8 +49,19 @@ def _chunks(text: str, size: int = 1100):
     return parts or [text[:size]]
 
 
+_index_signature_cache: dict[str, tuple[float, str]] = {}
+
+
 def _index_signature(base_dir: str) -> str:
-    """Cheap, content-relevant invalidation; never scans the bundled web archive."""
+    """Cheap, content-relevant invalidation; never scans the bundled web archive.
+
+    Result is cached for 3 s per profile: the library search path invokes this
+    on every keystroke-adjacent refresh, and it stats 7 files + walks the
+    whole notes tree each time (v6.5 audit)."""
+    now = time.time()
+    cached = _index_signature_cache.get(base_dir)
+    if cached and now - cached[0] < 3.0:
+        return cached[1]
     paths = (
         prefs.bookmarks_path(base_dir), prefs.history_path(base_dir), prefs.downloads_list_path(base_dir),
         life_service.tasks_path(base_dir), life_service.calendar_path(base_dir), life_service.boards_path(base_dir),
@@ -75,6 +86,7 @@ def _index_signature(base_dir: str) -> str:
             except OSError:
                 pass
     signature = hashlib.blake2s("\0".join(rows).encode("utf-8", "surrogatepass"), digest_size=16).hexdigest()
+    _index_signature_cache[base_dir] = (now, signature)
     return signature
 
 

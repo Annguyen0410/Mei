@@ -449,11 +449,16 @@ def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None
         if url and url not in seen:
             seen.add(url)
             quick_links.append((url, item.get("title", "")[:24] or url[:24]))
-    for _, url in entries:
-        url = _safe_link_url(url)
-        if url.startswith(("http://", "https://")) and url not in seen and len(quick_links) < 12:
-            seen.add(url)
-            quick_links.append((url, url.replace("https://", "").replace("http://", "")[:24]))
+    # Early-break: v6.5 audited a full O(N) walk of the entire history file
+    # even after the 12 slots were filled (history is sorted newest-first).
+    if len(quick_links) < 12:
+        for _, url in entries:
+            if len(quick_links) >= 12:
+                break
+            url = _safe_link_url(url)
+            if url.startswith(("http://", "https://")) and url not in seen:
+                seen.add(url)
+                quick_links.append((url, url.replace("https://", "").replace("http://", "")[:24]))
 
     tiles_html = ""
     for url, label in quick_links:

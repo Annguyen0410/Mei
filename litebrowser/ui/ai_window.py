@@ -37,6 +37,7 @@ from litebrowser.ui import components, theme, win_titlebar
 
 class AIWindow(QMainWindow):
     query_finished = pyqtSignal(object, str, str)
+    _ollama_models_ready = pyqtSignal(list)
 
     def __init__(self, base_dir: str, app_dir: str = None, embedded: bool = False):
         super().__init__()
@@ -52,7 +53,19 @@ class AIWindow(QMainWindow):
         self._external_context_label = "Workspace-wide"
         self._query_pending = False
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="litebrowser-ai")
-        self.ollama_models = ai_service.detect_ollama_models()
+        # detect_ollama_models runs `ollama list` with a 2 s timeout on the
+        # GUI thread (v6.4 froze startup when Ollama was hung). Detect lazily
+        # on the AI executor; the combo default just needs it before first use.
+        self.ollama_models = []
+
+        def _detect_models():
+            try:
+                models = ai_service.detect_ollama_models()
+            except Exception:
+                models = []
+            self._ollama_models_ready.emit(models)
+
+        self._executor.submit(_detect_models)
         self.setWindowTitle("AI Workspace - Mei")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
         self.resize(1180, 780)
@@ -204,6 +217,7 @@ class AIWindow(QMainWindow):
         self.history_list.itemDoubleClicked.connect(self._load_history_item)
         self.btn_save_settings.clicked.connect(self._save_settings_with_notice)
         self.query_finished.connect(self._finish_assistant_query)
+        self._ollama_models_ready.connect(self._on_ollama_models_ready)
         self._load_settings()
         self._refresh_index_label()
         self._apply_compact_layout()
@@ -241,6 +255,15 @@ class AIWindow(QMainWindow):
         self._refresh_model_value()
         self.chk_show_context.setChecked(bool(data.get("show_sources", True)))
         self._on_provider_change()
+
+    def _on_ollama_models_ready(self, models):
+        """Background probe finished: fill the model field if still on the
+        default and the user has not chosen a model yet."""
+        self.ollama_models = list(models or [])
+        settings = prefs.load_ai_settings(self.base_dir)
+        if self.cmb_provider.currentData() == "ollama" and not (settings.get("ollama_model") or "").strip():
+            if self.ollama_models:
+                self.ed_model.setText(self.ollama_models[0])
 
     def _refresh_model_value(self):
         settings = prefs.load_ai_settings(self.base_dir)

@@ -207,23 +207,36 @@ def show_history_dialog(parent):
     dialog.resize(620, 480)
     dialog.setStyleSheet(_stylesheet(parent))
     layout = QVBoxLayout(dialog)
+    search_edit = QLineEdit()
+    search_edit.setPlaceholderText("Filter history by title or URL...")
+    layout.addWidget(search_edit)
     list_widget = QListWidget()
     entries = prefs.load_history_entries(base_dir)
     entries.sort(key=lambda x: -x[0])
     history_data = list(entries)
 
-    def refresh_list():
+    def refresh_list(query=""):
         list_widget.clear()
         ent = prefs.load_history_entries(base_dir)
         ent.sort(key=lambda x: -x[0])
         history_data.clear()
         history_data.extend(ent)
+        q = (query or "").strip().lower()
+        shown = 0
         for ts, url in ent:
+            if q and q not in url.lower():
+                continue
             list_widget.addItem(url)
-        if not ent:
+            shown += 1
+            if shown >= 500:
+                break
+        if not shown:
             list_widget.addItem("No history yet...")
 
-    for ts, url in entries:
+    search_edit.textChanged.connect(refresh_list)
+
+    # Initial fill (unfiltered)
+    for ts, url in entries[:500]:
         list_widget.addItem(url)
     if not entries:
         list_widget.addItem("No history yet...")
@@ -286,12 +299,17 @@ def show_bookmarks_dialog(parent):
         bookmarks.clear()
         bookmarks.extend(prefs.load_bookmarks(base_dir))
         for bm in bookmarks:
-            list_widget.addItem(f"{bm['title']} - {bm['url']}")
+            # .get: a malformed entry must not crash the dialog (v6.4 KeyError).
+            title = (bm.get("title") if isinstance(bm, dict) else "") or ""
+            url = (bm.get("url") if isinstance(bm, dict) else "") or ""
+            list_widget.addItem(f"{title} - {url}")
         if not bookmarks:
             list_widget.addItem("No bookmarks yet...")
 
     for bm in bookmarks:
-        list_widget.addItem(f"{bm['title']} - {bm['url']}")
+        title = (bm.get("title") if isinstance(bm, dict) else "") or ""
+        url = (bm.get("url") if isinstance(bm, dict) else "") or ""
+        list_widget.addItem(f"{title} - {url}")
     if not bookmarks:
         list_widget.addItem("No bookmarks yet...")
     layout.addWidget(list_widget)
@@ -365,9 +383,11 @@ def show_bookmarks_dialog(parent):
     row = QHBoxLayout()
     def open_selected():
         idx = list_widget.currentRow()
-        if idx >= 0 and bookmarks:
-            parent.tab_manager.add_tab(QUrl(bookmarks[idx]["url"]))
-            dialog.accept()
+        if idx >= 0 and 0 <= idx < len(bookmarks):
+            url = bookmarks[idx].get("url") if isinstance(bookmarks[idx], dict) else ""
+            if url:
+                parent.tab_manager.add_tab(QUrl(url))
+                dialog.accept()
     btn_open = QPushButton("Open selected page")
     btn_open.clicked.connect(open_selected)
     row.addStretch()

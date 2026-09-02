@@ -92,20 +92,23 @@ def stat_tile(value: str = "0", label: str = "") -> QFrame:
 def stat_row(tiles) -> QWidget:
     """An evenly distributed row of stat tiles (tiles: list of QFrame from stat_tile).
 
-    Every column gets equal stretch so any number of tiles (up to 5 per row)
-    spreads across the full available width instead of hugging the left edge.
+    Every column gets equal stretch so the tiles spread across the full
+    available width; rows wrap every 5 tiles (works for any count, not just
+    multiples of 5).
     """
     wrap = QWidget()
     wrap.setObjectName("StatRow")
     grid = QGridLayout(wrap)
     grid.setContentsMargins(0, 0, 0, 0)
     grid.setSpacing(8)
+    per_row = max(1, len(tiles)) if 0 < len(tiles) <= 5 else 5
     for idx, tile in enumerate(tiles):
-        row, col = divmod(idx, 5)
+        row, col = divmod(idx, per_row)
         grid.addWidget(tile, row, col)
-    for col in range(5):
+    for col in range(per_row):
         grid.setColumnStretch(col, 1)
-    grid.setRowStretch(0, 1)
+    for row in range((len(tiles) + per_row - 1) // per_row):
+        grid.setRowStretch(row, 1)
     return wrap
 
 

@@ -78,7 +78,10 @@ def _get_profile_dir(app_dir):
         return prefs.ensure_profile_layout(os.path.join(profiles_d, "Default"))
     root = QWidget()
     root.setWindowTitle(app_version.APP_NAME)
+    root.resize(1, 1)
+    root.show()
     show_profiles_dialog(root, app_dir)
+    root.close()
     last = prefs.get_last_profile(app_dir)
     if not last and names:
         prefs.set_last_profile(app_dir, names[0])

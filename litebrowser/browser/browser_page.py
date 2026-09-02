@@ -236,8 +236,15 @@ _CHROME_STUB_JS = r"""
             var origQuery = navigator.permissions.query.bind(navigator.permissions);
             navigator.permissions.query = makeNative(function(params){
                 if (params && params.name === 'notifications') {
-                    try { return Promise.resolve({ state: Notification.permission, onchange: null }); } catch (eN) {}
+                    try {
+                        if (typeof Notification !== 'undefined') {
+                            return Promise.resolve({ state: Notification.permission, onchange: null });
+                        }
+                    } catch (eN) {}
                 }
+                // Notification missing / unknown param: fall through to the
+                // real query instead of returning undefined (v6.4: callers
+                // doing .then() on the result then threw).
                 return origQuery(params);
             }, 'query');
         } catch (e) {}
@@ -355,7 +362,9 @@ def ensure_forced_dark_script(profile, enabled: bool, base_dir=None) -> None:
         scripts = profile.scripts()
     except Exception:
         return
-    if not base_dir:
+    if base_dir:
+        # Guard was inverted in v6.4 (called prefs with the falsy base_dir and
+        # read/wrote the wrong profile's prefs).
         try:
             from litebrowser.core import prefs
             enabled = prefs.get_force_dark_web(base_dir) if enabled is None else enabled
@@ -776,20 +785,33 @@ class BrowserPage(QWebEnginePage):
         if saved == "deny":
             self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionDeniedByUser)
             return
+        # Non-modal prompt: an app-modal exec_() inside this callback froze the
+        # renderer IPC for the whole window until the user answered (v6.4).
+        # The permission stays pending until we call setFeaturePermission, so
+        # answering asynchronously is safe.
         msg = QMessageBox(self._host)
         msg.setWindowTitle("Permission request")
         msg.setText("Site %s requests permission: %s.\nAllow?" % (origin_str, feature_name))
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.NoToAll)
         msg.setDefaultButton(QMessageBox.No)
-        ret = msg.exec_()
-        if ret == QMessageBox.Yes:
-            self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionGrantedByUser)
-            prefs.set_permission(self._base_dir, origin_str, feature_name, "allow")
-        elif ret == QMessageBox.NoToAll:
-            self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionDeniedByUser)
-            prefs.set_permission(self._base_dir, origin_str, feature_name, "deny")
-        else:
-            self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionDeniedByUser)
+
+        def _decide(what, remember):
+            if what == "allow":
+                self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionGrantedByUser)
+            else:
+                self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionDeniedByUser)
+            if remember:
+                try:
+                    prefs.set_permission(self._base_dir, origin_str, feature_name, what)
+                except Exception:
+                    pass
+            msg.deleteLater()
+
+        msg.button(QMessageBox.Yes).clicked.connect(lambda: _decide("allow", True))
+        msg.button(QMessageBox.NoToAll).clicked.connect(lambda: _decide("deny", True))
+        msg.button(QMessageBox.No).clicked.connect(lambda: _decide("deny", False))
+        msg.setModal(False)
+        msg.show()
 
     def _feature_name(self, feature):
         names = {

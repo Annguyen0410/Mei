@@ -2,6 +2,7 @@
 import os
 import re
 
+from PyQt5.QtCore import QUrl
 from PyQt5.QtWebEngineCore import QWebEngineUrlRequestInterceptor
 
 _CACHED_CHROME_VERSION: str | None = None
@@ -333,11 +334,14 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
                 try:
                     from urllib.parse import urlparse
                     parsed = urlparse(url_str)
-                    if parsed.hostname and parsed.hostname.lower() not in ("localhost", "127.0.0.1", "::1"):
-                        info.block(True)
-                        return
+                    hostname = (parsed.hostname or "").lower()
                 except Exception:
-                    info.block(True)
+                    hostname = ""
+                if hostname and hostname not in ("localhost", "127.0.0.1", "::1"):
+                    # Upgrade to https instead of blocking dead (v6.4 served a
+                    # bare ERR page; Chrome-style auto-upgrade keeps the page
+                    # working when the site supports TLS).
+                    info.redirect(QUrl("https://" + url_str[len("http://"):]))
                     return
 
         if is_challenge:

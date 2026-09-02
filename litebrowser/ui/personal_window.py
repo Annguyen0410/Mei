@@ -473,7 +473,11 @@ class CategoryDropList(QListWidget):
         note_ids = list(getattr(self._owner, "_drag_note_ids", []) or [])
         if category and note_ids:
             self._owner._move_notes_to_category(note_ids, category)
-        event.accept()
+            event.accept()
+        else:
+            # No category target or no dragged note: ignore instead of
+            # accepting a silent no-op (v6.4 swallowed every drop).
+            event.ignore()
 
 
 class PersonalWindow(QMainWindow):
@@ -1668,6 +1672,9 @@ class PersonalWindow(QMainWindow):
         previous_board_id = self.current_board_id
         if previous_board_id:
             self._save_current_board_positions(notify=False)
+        # Cancel any pending autosave: it must not fire against the *new*
+        # board after a quick switch (v6.4 saved the wrong board's positions).
+        self._board_autosave.stop()
         self.board_scene.clear()
         self.current_board_id = current.data(Qt.UserRole) if current else None
         if not self.current_board_id:
@@ -1701,7 +1708,9 @@ class PersonalWindow(QMainWindow):
         if not ok:
             return
         life_service.add_board_node(self.base_dir, self.current_board_id, title or "Card", payload="Idea, note, or task link")
-        self._refresh_boards()
+        # Force the scene rebuild even if the board was already the current
+        # item (re-selecting it fires no currentItemChanged, v6.4 bug).
+        self._load_selected_board(self.boards_list.currentItem(), None)
         self._refresh_overview()
 
     def _set_board_mode(self, mode: str):
@@ -1798,8 +1807,12 @@ class PersonalWindow(QMainWindow):
                             "color": item.edge.get("color") or "#a36a3c",
                         }
                     )
+            # QGraphicsScene.items() iterates in reverse stacking order; both
+            # strokes and edges are stored in that reversed order so loading
+            # them back keeps a stable z-order (v6.4 only reversed strokes,
+            # flipping edge order on every save).
             board["strokes"] = list(reversed(strokes))
-            board["edges"] = edges
+            board["edges"] = list(reversed(edges))
             life_service.update_board(self.base_dir, board)
             self.lbl_board_hint.setText(
                 f"Saved board with {len(board.get('nodes', []))} cards, {len(edges)} links, and {len(board.get('strokes', []))} ink strokes."
@@ -2115,7 +2128,11 @@ class PersonalWindow(QMainWindow):
             return
         try:
             if page is not None:
+                # "Stop" alone leaves loaded JS timers running in the background
+                # (v6.4 claimed the preview "stops consuming CPU" but did not).
+                # Navigating to about:blank actually unloads the site.
                 page.triggerAction(_PersonalWebEnginePage.Stop)
+                page.setUrl(QUrl("about:blank"))
         except Exception:
             pass
 
@@ -2327,12 +2344,24 @@ class PersonalWindow(QMainWindow):
             self._switch_page("boards")
             target_board_id = item_id
             if kind == "board-node":
-                target_board_id = item_id
+                # Resolve the node's parent board; v6.4 used the node id itself
+                # and could never match any board.
+                target_board_id = self._find_board_for_node(item_id) or self.current_board_id
             for index in range(self.boards_list.count()):
                 item = self.boards_list.item(index)
                 if item.data(Qt.UserRole) == target_board_id:
-                    self.boards_list.setCurrentItem(item)
-                    break
+                    if self.boards_list.currentItem() is not item:
+                        self.boards_list.setCurrentItem(item)
+                    else:
+                        self._load_selected_board(item, None)  # force scene rebuild
+                    return
+
+    def _find_board_for_node(self, node_id: str) -> str:
+        for board in life_service.load_boards(self.base_dir):
+            for node in board.get("nodes", []) or []:
+                if isinstance(node, dict) and node.get("id") == node_id:
+                    return board.get("id", "")
+        return ""
 
     def get_current_state(self):
         tabs = []

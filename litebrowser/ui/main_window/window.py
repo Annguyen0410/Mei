@@ -205,6 +205,10 @@ class SearchWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Shift+Tab"), self).activated.connect(self._cycle_tab_prev)
         QShortcut(QKeySequence("Ctrl+PgUp"), self).activated.connect(self._cycle_tab_prev)
         QShortcut(QKeySequence("Ctrl+Shift+K"), self).activated.connect(lambda: dialogs.show_quick_switcher(self))
+        QShortcut(QKeySequence("Ctrl+0"), self).activated.connect(self.zoom_reset)
+        QShortcut(QKeySequence("Ctrl+="), self).activated.connect(self.zoom_in)
+        QShortcut(QKeySequence("Ctrl+-"), self).activated.connect(self.zoom_out)
+        QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self.print_page)
         QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(
             lambda: getattr(self, "tab_manager", None) and self.tab_manager.optimize_memory()
         )
@@ -637,10 +641,11 @@ class SearchWindow(QMainWindow):
                     session_state = prefs.session_state_load(self.base_dir)
                     tabs = session_state.get("tabs", [])
                     if not tabs:
-                        if mode == "newtab":
-                            self.add_new_tab(None, "New Tab")
-                        else:
-                            self.add_new_tab(QUrl(home_url or "https://google.com"), "Home")
+                        # No saved tabs (mode still "restore"): fall back to the
+                        # configured startup page. v6.4 tested mode == "newtab"
+                        # here — always false inside a "restore" branch — so the
+                        # new-tab path was dead code.
+                        self.add_new_tab(None, "New Tab")
                     else:
                         active_index = next((idx for idx, tab in enumerate(tabs) if tab.get("active")), 0)
                         self.tab_manager.begin_batch()
@@ -1855,7 +1860,7 @@ class SearchWindow(QMainWindow):
                 return
             browser.page().setAudioMuted(not browser.page().isAudioMuted())
             state = "Muted" if browser.page().isAudioMuted() else "Unmuted"
-            QMessageBox.information(self, "Audio", f"{state} for this tab.")
+            self._flash_status(f"{state} for this tab")
         elif action == reload_action:
             if browser is None:
                 return
@@ -1863,26 +1868,16 @@ class SearchWindow(QMainWindow):
             if timer:
                 timer.stop()
                 browser.setProperty("auto_reload_timer", None)
-                QMessageBox.information(self, "Auto Refresh", "Auto-reload turned OFF.")
+                self._flash_status("Auto-reload turned OFF")
             else:
                 timer = QTimer(browser)
                 timer.timeout.connect(browser.reload)
                 timer.start(10000)
                 browser.setProperty("auto_reload_timer", timer)
-                QMessageBox.information(self, "Auto Refresh", "This tab will auto-reload every 10 seconds!")
+                self._flash_status("This tab will auto-reload every 10 seconds")
         elif action == pin_action:
-            lbl = item.data(Qt.UserRole)
             is_pinned = bool(item.data(TAB_PINNED_ROLE))
-            if lbl:
-                if is_pinned:
-                    item.setData(TAB_PINNED_ROLE, False)
-                    txt = lbl.text().replace("Pin  ", "")
-                    lbl.setText(txt)
-                    lbl.set_title_style("color: #4a4037; font-size: 11px; font-weight: 600; background: transparent;")
-                else:
-                    item.setData(TAB_PINNED_ROLE, True)
-                    lbl.set_title_style("color: #f0b84a; font-size: 11px; font-weight: 700; background: transparent;")
-                    lbl.setText(f"Pin  {lbl.text()}")
+            self.tab_manager.set_tab_pinned(row, not is_pinned)
         elif action == dup_action:
             self.tab_manager.duplicate_tab_at_row(row)
         elif action == close_action:
@@ -1893,6 +1888,31 @@ class SearchWindow(QMainWindow):
             self.showNormal()
         else:
             self.showFullScreen()
+
+    def _flash_status(self, message: str):
+        """Non-modal toast: transient feedback without dialog spam (v6.4 used
+        a modal QMessageBox for routine actions like mute/auto-reload)."""
+        if getattr(self, "_toast_label", None) is None:
+            self._toast_label = QLabel(self.central_widget)
+            self._toast_label.setObjectName("ToastLabel")
+            self._toast_label.setStyleSheet(
+                "background: rgba(30, 24, 18, 215); color: #f5ead9;"
+                "padding: 6px 14px; border-radius: 12px; font-size: 12px;"
+            )
+            self._toast_label.hide()
+            self._toast_timer = QTimer(self)
+            self._toast_timer.setSingleShot(True)
+            self._toast_timer.timeout.connect(self._toast_label.hide)
+        toast = self._toast_label
+        toast.setText(message)
+        toast.adjustSize()
+        margin = 24
+        x = self.central_widget.width() - toast.width() - margin
+        y = self.central_widget.height() - toast.height() - margin
+        toast.move(max(margin, x), max(margin, y))
+        toast.raise_()
+        toast.show()
+        self._toast_timer.start(2200)
 
     def update_urlbar(self, q, browser=None):
         if browser != self.current_browser():
@@ -1921,11 +1941,26 @@ class SearchWindow(QMainWindow):
             tt += "\n\nWarning: unencrypted connection (HTTP)."
         self.url_bar.setToolTip(tt)
 
-    def record_history(self, qurl):
+    def record_history(self, qurl, browser=None):
         url_str = qurl.toString()
         if url_str.startswith("http"):
             prefs.append_history_entry(self.base_dir, url_str)
-            history_service.log_event(self.base_dir, "browser-visit", self.current_browser().title() if self.current_browser() else url_str, url_str, {"url": url_str})
+            # Attribute the visit to the tab that actually navigated; v6.4 read
+            # the *current* tab's title, so background-tab redirects were logged
+            # under whatever page the user was viewing.
+            title = ""
+            if browser is not None:
+                try:
+                    title = browser.title()
+                except Exception:
+                    title = ""
+            if not title:
+                try:
+                    current = self.current_browser()
+                    title = current.title() if current is not None else ""
+                except Exception:
+                    title = ""
+            history_service.log_event(self.base_dir, "browser-visit", title or url_str, url_str, {"url": url_str})
 
     def on_title_changed(self, title, browser):
         try:
@@ -1934,9 +1969,9 @@ class SearchWindow(QMainWindow):
                 return
             if title:
                 item = self.tab_list.item(i)
-                lbl = item.data(Qt.UserRole)
-                if lbl:
-                    lbl.setText(title)
+                widget = item.data(TAB_WIDGET_ROLE) if item else None
+                if widget is not None:
+                    widget.setText(title)
             if browser == self.current_browser():
                 self.setWindowTitle(f"{title} - Mei")
         except Exception:
@@ -2026,29 +2061,34 @@ class SearchWindow(QMainWindow):
                 "try using a different browser",
                 "browser or app may not be secure",
             )
+            # Once per host per session: repeated redirects/loads must not nag
+            # the user with the same modal every time (v6.4 did).
+            if not hasattr(self, "_compat_notified_hosts"):
+                self._compat_notified_hosts = set()
+            already_notified = host_l in self._compat_notified_hosts
             if any(token in hay for token in bot_tokens):
-                QMessageBox.information(
-                    self,
-                    "Compatibility Mode",
-                    "This site uses anti-bot verification that Mei may not pass. Use 'Open externally' from the page menu.",
-                )
+                if not already_notified:
+                    self._compat_notified_hosts.add(host_l)
+                    self._flash_status("Anti-bot verification: use Page menu > Open externally")
             elif on_accounts_google and any(token in hay for token in google_block_tokens):
-                QMessageBox.information(
-                    self,
-                    "Google sign-in",
-                    "Google often blocks sign-in inside embedded browsers (Qt WebEngine).\n\n"
-                    "Use the page menu (Page) > Open externally to sign in with Chrome or Edge, "
-                    "then use Mei for everything else if you prefer.",
-                )
+                if not already_notified:
+                    self._compat_notified_hosts.add(host_l)
+                    QMessageBox.information(
+                        self,
+                        "Google sign-in",
+                        "Google often blocks sign-in inside embedded browsers (Qt WebEngine).\n\n"
+                        "Use the page menu (Page) > Open externally to sign in with Chrome or Edge, "
+                        "then use Mei for everything else if you prefer.",
+                    )
 
-                if QMessageBox.question(
-                    self,
-                    "Open externally",
-                    "Mei cannot complete Google sign-in here.\n\nOpen this page in Chrome or Edge now?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.Yes,
-                ) == QMessageBox.Yes:
-                    self.open_url_in_external_browser(browser.url().toString())
+                    if QMessageBox.question(
+                        self,
+                        "Open externally",
+                        "Mei cannot complete Google sign-in here.\n\nOpen this page in Chrome or Edge now?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes,
+                    ) == QMessageBox.Yes:
+                        self.open_url_in_external_browser(browser.url().toString())
         self._maybe_local_workspace_perf_hints(browser)
 
     def _browser_compat_patch_js(self):
@@ -2641,18 +2681,14 @@ class SearchWindow(QMainWindow):
             prefs.set_search_engine(self.base_dir, self.search_engine.currentText())
         except Exception:
             pass
+        # v6.5 UX: merely switching engines must not navigate the tab the user
+        # is reading (v6.4 re-ran the last query and could yank them away).
+        # The next new tab / search picks the new engine automatically.
         browser = self.current_browser()
-        current_text = (self.url_bar.text() or "").strip()
-        current_url = browser.url().toString() if browser else current_text
-        query = self._extract_search_query(current_text) or self._extract_search_query(current_url)
-        if query:
-            target = self._engine_search_url(self.search_engine.currentText(), query)
-            self.url_bar.setText(target)
-            if browser:
-                browser.setUrl(QUrl(target))
-            return
-        if browser and current_url in ("", "about:blank", "about:newtab"):
-            browser.setUrl(QUrl(self._engine_home_url(self.search_engine.currentText())))
+        if browser is not None:
+            current_url = browser.url().toString()
+            if current_url in ("", "about:blank"):
+                browser.setUrl(QUrl(self._engine_home_url(self.search_engine.currentText())))
 
     def save_bookmark(self, folder_id=None):
         browser = self.current_browser()
@@ -2661,20 +2697,22 @@ class SearchWindow(QMainWindow):
         url = browser.url().toString()
         title = browser.title()
         bookmarks = prefs.load_bookmarks(self.base_dir)
-        if any(b["url"] == url for b in bookmarks):
-            QMessageBox.information(self, "Bookmarks", "This page is already in your Bookmarks!")
+        # Guard against malformed entries (v6.4 raised KeyError on one).
+        if any((b or {}).get("url") == url for b in bookmarks):
+            self._flash_status("This page is already in your Bookmarks")
             return
         if folder_id is None:
             current_item = self.bookmarks_tree.currentItem()
             if current_item:
-                kind, data = current_item.data(0, Qt.UserRole) or ("", "")
+                data = current_item.data(0, Qt.UserRole)
+                kind, data = data if isinstance(data, tuple) and len(data) == 2 else ("", data)
                 if kind == "folder":
                     folder_id = data
         bookmarks.append({"title": title, "url": url, "folder_id": folder_id or ""})
         prefs.save_bookmarks(self.base_dir, bookmarks)
         history_service.log_event(self.base_dir, "bookmark", title or url, url, {"url": url})
         self._load_bookmarks_panel()
-        QMessageBox.information(self, "Bookmarks", "Page saved successfully!")
+        self._flash_status("Page saved to Bookmarks")
 
     def open_current_in_external_browser(self):
         browser = self.current_browser()
@@ -2908,12 +2946,25 @@ class SearchWindow(QMainWindow):
     def show_dev_tools(self):
         if not self.current_browser():
             return
+        # Reuse the existing devtools window: v6.4 stacked a fresh orphan
+        # window (holding a whole renderer view) on every F12 press.
+        existing = getattr(self, "_dev_windows", None)
+        if existing:
+            dev_window = existing[-1]
+            if dev_window.isVisible():
+                dev_window.raise_()
+                dev_window.activateWindow()
+                return
+            dev_window.close()
+            self._dev_windows.remove(dev_window)
         dev_view = QWebEngineView()
         self.current_browser().page().setDevToolsPage(dev_view.page())
         dev_window = QMainWindow(self)
         dev_window.setWindowTitle("Developer Tools - F12")
         dev_window.resize(800, 600)
         dev_window.setCentralWidget(dev_view)
+        if not hasattr(self, "_dev_windows"):
+            self._dev_windows = []
         self._dev_windows.append(dev_window)
         dev_window.destroyed.connect(lambda *_: self._dev_windows.remove(dev_window) if dev_window in self._dev_windows else None)
         dev_window.show()
@@ -3369,7 +3420,16 @@ class SearchWindow(QMainWindow):
             state = prefs.session_state_load(self.base_dir)
             state["tabs"] = tabs
             prefs.session_state_save(self.base_dir, state)
-            self.remember_closed_window(tabs)
+            # "Reopen Closed Window" must not offer the session that is live at
+            # app exit (v6.4 recorded it on every quit). Only remember the
+            # window when another shell window is still open, i.e. the user
+            # closed one of the two browser windows.
+            other_visible = 0
+            for w in QApplication.topLevelWidgets():
+                if w is not self and w.isVisible() and w.inherits("QMainWindow") and w.windowTitle():
+                    other_visible += 1
+            if other_visible > 0:
+                self.remember_closed_window(tabs)
             # Auto snapshot tab set (listtab)
             self._auto_save_tab_set()
         except Exception:

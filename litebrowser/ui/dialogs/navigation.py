@@ -1,7 +1,7 @@
 """Dialog helpers for browser and shell."""
 import os
 
-from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -140,7 +140,13 @@ def show_quick_switcher(parent):
             parent.tab_manager.add_tab(QUrl(url), (title or url)[:40], is_active=True)
         dialog.accept()
 
-    search_edit.textChanged.connect(build_results)
+    # Debounce the rebuild: build_results parses the entire history file;
+    # v6.4 did that on every keystroke.
+    debounce = QTimer(dialog)
+    debounce.setSingleShot(True)
+    debounce.setInterval(200)
+    debounce.timeout.connect(build_results)
+    search_edit.textChanged.connect(lambda _t: debounce.start())
     list_widget.itemDoubleClicked.connect(on_accept)
     QShortcut(QKeySequence(Qt.Key_Return), dialog).activated.connect(on_accept)
     QShortcut(QKeySequence(Qt.Key_Enter), dialog).activated.connect(on_accept)

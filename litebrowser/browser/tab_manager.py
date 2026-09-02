@@ -1,5 +1,6 @@
 import hashlib
 import os
+import time
 
 from PyQt5.QtCore import QSignalBlocker, QSize, Qt, QTimer, QUrl
 from PyQt5.QtGui import QColor, QIcon, QPixmap
@@ -297,6 +298,11 @@ class TabManager:
             browser = QWebEngineView()
             browser.setPage(browser_page.BrowserPage(profile, browser, self.base_dir, host=self.window))
             browser._lite_incognito_interceptor = interceptor
+            # Incognito profiles have no downloadRequested wiring otherwise —
+            # downloads from private tabs silently did nothing (v6.4 bug).
+            if hasattr(self.window, "handle_download_request"):
+                profile.downloadRequested.connect(self.window.handle_download_request)
+                browser._lite_incognito_download_conn = True
         else:
             profile = self.profile
             if hasattr(self.window, "get_profile_for_url"):
@@ -348,10 +354,53 @@ class TabManager:
             # put to sleep, even with only a handful of tabs open.
             hibernate_timer.start(sec * 1000)
         browser.urlChanged.connect(lambda q, b=browser: self.window.update_urlbar(q, b))
-        browser.urlChanged.connect(self.window.record_history)
+        browser.urlChanged.connect(lambda q, b=browser: self.window.record_history(q, b))
         browser.titleChanged.connect(lambda title, b=browser: self.on_title_changed(title, b))
         browser.iconChanged.connect(lambda icon, b=browser: self.on_icon_changed(icon, b))
-        browser.loadFinished.connect(lambda ok, b=browser: self.window.on_load_finished(ok, b))
+        browser.loadFinished.connect(lambda ok, b=browser: self._on_load_finished_wire(ok, b))
+        # Renderer crash recovery: a dead renderer used to leave a white tab
+        # with no way back (v6.4 had no renderProcessTerminated handler).
+        browser.renderProcessTerminated.connect(
+            lambda status, code, b=browser, i=item: self._on_render_process_terminated(b, i, status, code)
+        )
+
+    def _on_load_finished_wire(self, ok, browser):
+        if ok:
+            # A successful load proves the renderer is healthy again; reset the
+            # crash-reload budget so a later crash still gets its auto-retry.
+            browser.setProperty("crash_reload_count", 0)
+        self.window.on_load_finished(ok, browser)
+
+    def _on_render_process_terminated(self, browser, item, status, code):
+        """Reload a crashed tab once, then surface a status note instead of a
+        blank white page."""
+        url = ""
+        try:
+            url = browser.url().toString()
+        except Exception:
+            url = ""
+        crash_count = browser.property("crash_reload_count") or 0
+        if crash_count < 1 and url and url != "about:blank":
+            # One automatic reload recovers most OOM/renderer hiccups.
+            browser.setProperty("crash_reload_count", crash_count + 1)
+            QTimer.singleShot(250, lambda: self._safe_reload(browser, url))
+            return
+        try:
+            item.setText("[Crashed] " + (self._metadata_for_item(item).get("title") or "Tab"))
+        except Exception:
+            pass
+        status_bar = getattr(self.window, "lbl_status_context", None)
+        if status_bar is not None:
+            status_bar.setText(f"Tab crashed (code {code}) — reload to recover")
+
+    def _safe_reload(self, browser, url):
+        try:
+            if browser.url().toString() in ("", "about:blank"):
+                browser.setUrl(QUrl(url))
+            else:
+                browser.reload()
+        except Exception:
+            pass
 
     def _materialize_tab(self, index):
         """Recreate a renderer only when a dormant tab is actually selected."""
@@ -647,16 +696,53 @@ class TabManager:
         row = self.tab_list.row(item)
         if row != -1:
             if item.data(TAB_PINNED_ROLE):
-                QMessageBox.warning(self.window, "Pinned Tab", "This tab is pinned. Unpin it from the context menu before closing.")
+                # Chrome/Edge/FF UX: clicking the close button on a pinned tab
+                # unpins it instead of nagging with a modal (v6.4 blocked close).
+                self.set_tab_pinned(row, False)
                 return
             self.close_tab(row)
+
+    def set_tab_pinned(self, i, pinned):
+        """Toggle pin state for row ``i``; keeps visuals in sync.
+
+        v6.4's context-menu handler read the label from ``Qt.UserRole`` which
+        nothing ever set, so "Pin / Unpin" silently did nothing."""
+        item = self.tab_list.item(i)
+        if item is None:
+            return
+        widget = item.data(TAB_WIDGET_ROLE)
+        item.setData(TAB_PINNED_ROLE, bool(pinned))
+        if widget is None:
+            return
+        lbl = getattr(widget, "lbl_title", None)
+        state_lbl = getattr(widget, "lbl_state", None)
+        pal = getattr(self, "_pal", None) or {}
+        accent = pal.get("ACCENT_HOVER", "#f0b84a")
+        text_color = pal.get("TEXT", "#4a4037")
+        if state_lbl is not None:
+            state_lbl.setText("Pin" if pinned else "")
+        if lbl is None:
+            return
+        if pinned:
+            if not lbl.text().startswith("Pin  "):
+                lbl.setText("Pin  " + lbl.text())
+            lbl.set_title_style(
+                f"color: {accent}; font-size: 11px; font-weight: 700; background: transparent;"
+            )
+        else:
+            lbl.setText(lbl.text().replace("Pin  ", ""))
+            lbl.set_title_style(
+                f"color: {text_color}; font-size: 11px; font-weight: 600; background: transparent;"
+            )
 
     def close_tab(self, i):
         if i < 0 or i >= len(self.browsers):
             return
         item = self.tab_list.item(i)
         if item and item.data(TAB_PINNED_ROLE):
-            QMessageBox.warning(self.window, "Pinned Tab", "This tab is pinned.")
+            # Chrome/Edge/FF UX: clicking the close button on a pinned tab
+            # unpins it instead of nagging with a modal (v6.4 blocked close).
+            self.set_tab_pinned(i, False)
             return
         if self.tab_list.count() < 2:
             # Standard browser behaviour: closing the last tab lands on a fresh
@@ -780,28 +866,45 @@ class TabManager:
             self._position_memory_tip(item)
             return
 
-        def _show(result):
-            # The cursor may have left the row while the page answered.
-            if self._hovered_item is not item:
-                return
-            try:
-                heap_mb = float(result or 0.0)
-            except Exception:
-                heap_mb = 0.0
-            rough_ram = max(24.0, heap_mb * 2.4)
-            browser.setProperty("memory_hint_mb", rough_ram)
-            title = (metadata.get("title") or "Tab")[:60]
-            host = ""
-            url = metadata.get("url") or ""
-            if url and url.startswith("http"):
-                from urllib.parse import urlparse
-                host = (urlparse(url).netloc or "")[:40]
+        # Throttle the JS-heap probe: v6.4 fired a runJavaScript round-trip on
+        # every hover; 10 s per tab is plenty for an estimate bubble.
+        now_ms = time.monotonic() * 1000.0
+        last = browser.property("heap_probe_at") or 0.0
+        cached_hint = browser.property("memory_hint_mb") or 0.0
+        if now_ms - last < 10_000.0 and cached_hint:
+            self._show_memory_estimate(item, browser, metadata, cached_hint)
+            return
+        browser.setProperty("heap_probe_at", now_ms)
+        browser.page().runJavaScript(
+            "(function(){try{return (performance && performance.memory) ? (performance.memory.usedJSHeapSize/1048576) : 0;}catch(e){return 0;}})();",
+            lambda result, b=browser, m=metadata, i=item: self._show_memory_result(result, b, m, i),
+        )
+
+    def _show_memory_result(self, result, browser, metadata, item):
+        # The cursor may have left the row while the page answered.
+        if self._hovered_item is not item:
+            return
+        try:
+            heap_mb = float(result or 0.0)
+        except Exception:
+            heap_mb = 0.0
+        rough_ram = max(24.0, heap_mb * 2.4)
+        browser.setProperty("memory_hint_mb", rough_ram)
+        self._show_memory_estimate(item, browser, metadata, rough_ram, heap_mb)
+
+    def _show_memory_estimate(self, item, browser, metadata, rough_ram, heap_mb=None):
+        title = (metadata.get("title") or "Tab")[:60]
+        host = ""
+        url = metadata.get("url") or ""
+        if url and url.startswith("http"):
+            from urllib.parse import urlparse
+            host = (urlparse(url).netloc or "")[:40]
+        if heap_mb is None:
+            self._memory_tip().setText(
+                f"{title}\n{host}\nEstimated RAM: ~{rough_ram:.1f} MB"
+            )
+        else:
             self._memory_tip().setText(
                 f"{title}\n{host}\nJS heap: {heap_mb:.1f} MB · Estimated RAM: {rough_ram:.1f} MB"
             )
-            self._position_memory_tip(item)
-
-        browser.page().runJavaScript(
-            "(function(){try{return (performance && performance.memory) ? (performance.memory.usedJSHeapSize/1048576) : 0;}catch(e){return 0;}})();",
-            _show,
-        )
+        self._position_memory_tip(item)

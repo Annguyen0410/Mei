@@ -4,7 +4,7 @@ import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QRect, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeySequence
 from PyQt5.QtWidgets import (
     QApplication,
@@ -637,8 +637,16 @@ class AppShell(QMainWindow):
             w = state.get("width")
             h = state.get("height")
             if all(isinstance(v, int) for v in (x, y, w, h)):
-                self.setGeometry(x, y, w, h)
-                return
+                # Validate against current screens: after a monitor change the
+                # saved geometry could be off-screen entirely (invisible window).
+                visible = False
+                for screen in QApplication.screens():
+                    if screen.availableGeometry().intersects(QRect(x, y, max(w, 1), max(h, 1))):
+                        visible = True
+                        break
+                if visible:
+                    self.setGeometry(x, y, w, h)
+                    return
         screen = self.screen()
         if not screen:
             return
@@ -727,10 +735,13 @@ class AppShell(QMainWindow):
         for title in titles[:12]:
             self.sleeping_tabs_list.addItem(title)
 
-    def switch_workspace(self, name: str):
+    def switch_workspace(self, name: str) -> bool:
+        if name not in self.workspace_index:
+            # Unknown workspace names must not raise inside a UI slot.
+            return False
         if name in ("ai", "personal") and name not in self._unlocked_spaces:
             if not security.ensure_unlocked(self, self.profile_dir, title=f"Open {name.title()}"):
-                return
+                return False
             self._unlocked_spaces.add(name)
         previous = self.stack.currentIndex()
         self.stack.setCurrentIndex(self.workspace_index[name])
@@ -760,6 +771,7 @@ class AppShell(QMainWindow):
         if previous != self.stack.currentIndex() and name != "browser":  # #[c] avoid compositing a QWebEngine surface.
             theme.animate_entrance(self.stack.currentWidget())
         self._apply_compact_shell_layout()
+        return True
 
     def current_browser_widget(self):
         return self.browser_page
@@ -1118,7 +1130,10 @@ class AppShell(QMainWindow):
         self._submit_ai_ask(prompt, context_label, context_text)
 
     def _submit_ai_ask(self, prompt: str, context_label: str, context_text: str):
-        self.switch_workspace("ai")
+        # If the AI workspace is passcode-locked and the user cancels the
+        # unlock, the prompt must not be submitted anyway (v6.4 did).
+        if not self.switch_workspace("ai"):
+            return
         self.ai_page.ask_with_context(prompt, context_label, context_text)
         # Wire the assistant's reply back to the floating preview through the
         # ``query_finished`` signal so we never display a stale ``_last_answer``.

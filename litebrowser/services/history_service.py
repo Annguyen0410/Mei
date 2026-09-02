@@ -248,43 +248,64 @@ def _import_browser_data_from_zip(base_dir: str, zf: zipfile.ZipFile) -> bool:
         return False
     bd = app_paths.browser_data_path(base_dir)
     bd_abs = os.path.abspath(bd)
-    if os.path.isdir(bd_abs):
-        for name in os.listdir(bd_abs):
-            path = os.path.join(bd_abs, name)
-            try:
-                if os.path.isfile(path):
-                    os.remove(path)
-                else:
-                    shutil.rmtree(path, ignore_errors=True)
-            except OSError:
-                pass
-    else:
-        os.makedirs(bd_abs, exist_ok=True)
 
+    # Extract to a staging dir FIRST and only then swap: v6.4 wiped the live
+    # BrowserData (cookies, localStorage, extension state) before extracting,
+    # so any OSError left the profile with the old data gone and the new data
+    # partial.
+    staging = bd_abs + ".import-staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    os.makedirs(staging, exist_ok=True)
     prefix = PROFILE_ZIP_BROWSER_PREFIX
     wrote = False
-    for info in zf.infolist():
-        name = info.filename.replace("\\", "/")
-        if info.is_dir():
-            continue
-        if not name.startswith(prefix):
-            continue
-        rel = name[len(prefix) :].lstrip("/")
-        if not rel or ".." in rel.split("/"):
-            continue
-        dest = os.path.normpath(os.path.join(bd_abs, *rel.split("/")))
-        dest_abs = os.path.abspath(dest)
-        if dest_abs != bd_abs and not dest_abs.startswith(bd_abs + os.sep):
-            continue
-        parent = os.path.dirname(dest)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        try:
-            with zf.open(info, "r") as src, open(dest, "wb") as out:
-                shutil.copyfileobj(src, out)
-            wrote = True
-        except OSError:
-            continue
+    try:
+        for info in zf.infolist():
+            name = info.filename.replace("\\", "/")
+            if info.is_dir():
+                continue
+            if not name.startswith(prefix):
+                continue
+            rel = name[len(prefix) :].lstrip("/")
+            if not rel or ".." in rel.split("/"):
+                continue
+            dest = os.path.normpath(os.path.join(staging, *rel.split("/")))
+            dest_abs = os.path.abspath(dest)
+            if dest_abs != os.path.abspath(staging) and not dest_abs.startswith(os.path.abspath(staging) + os.sep):
+                continue
+            parent = os.path.dirname(dest)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            try:
+                with zf.open(info, "r") as src, open(dest, "wb") as out:
+                    shutil.copyfileobj(src, out)
+                wrote = True
+            except OSError:
+                continue
+        if not wrote:
+            shutil.rmtree(staging, ignore_errors=True)
+            return False
+        # Extract succeeded: now retire the old tree and move the staging in.
+        if os.path.isdir(bd_abs):
+            retired = bd_abs + ".import-old"
+            shutil.rmtree(retired, ignore_errors=True)
+            try:
+                os.replace(bd_abs, retired)
+                try:
+                    os.replace(staging, bd_abs)
+                finally:
+                    shutil.rmtree(retired, ignore_errors=True)
+            except OSError:
+                shutil.rmtree(staging, ignore_errors=True)
+                return False
+        else:
+            os.makedirs(bd_abs, exist_ok=True)
+            try:
+                os.replace(staging, bd_abs)
+            except OSError:
+                shutil.rmtree(staging, ignore_errors=True)
+                return False
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     return wrote
 
 

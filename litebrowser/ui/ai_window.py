@@ -129,6 +129,13 @@ class AIWindow(QMainWindow):
         badge_row.addWidget(self.lbl_index)
         self.lbl_context_scope = components.badge("Context: Workspace-wide")
         badge_row.addWidget(self.lbl_context_scope)
+        # Live provider badge: shows which engine will answer (v6.4 only
+        # revealed the provider in the answer footer after the fact).
+        self.lbl_provider = components.badge("Provider: RAG local only", "accent")
+        self.cmb_provider.currentTextChanged.connect(
+            lambda _t: self.lbl_provider.setText("Provider: " + (self.cmb_provider.currentText() or "—"))
+        )
+        badge_row.addWidget(self.lbl_provider)
         badge_row.addStretch(1)
         self.chk_show_context = QCheckBox("Show sources")
         self.chk_show_context.setChecked(True)
@@ -369,7 +376,9 @@ class AIWindow(QMainWindow):
         self._query_pending = True
         self.btn_ask.setEnabled(False)
         self.btn_reindex.setEnabled(False)
-        self.txt_answer.setPlainText("Thinking...")
+        provider_name = self.cmb_provider.currentText() or "assistant"
+        self.txt_answer.setPlainText(f"Thinking with {provider_name}...\n\nGathering workspace context and sources.")
+        self._start_thinking_pulse()
         future = self._executor.submit(
             ai_service.answer_query,
             self.base_dir,
@@ -386,7 +395,30 @@ class AIWindow(QMainWindow):
             lambda done, label=context_label, prov=provider_label: self.query_finished.emit(done, label, prov)
         )
 
+    def _start_thinking_pulse(self):
+        """Animate the 'Thinking' dots while a query runs (a static 'Thinking...'
+        read as a frozen app during long retrievals)."""
+        if getattr(self, "_thinking_timer", None) is None:
+            self._thinking_timer = QTimer(self)
+            self._thinking_timer.setInterval(400)
+            self._thinking_dots = 0
+
+            def _tick():
+                self._thinking_dots = (self._thinking_dots + 1) % 4
+                base = "Thinking with %s...\n\nGathering workspace context and sources." % (
+                    self.cmb_provider.currentText() or "assistant"
+                )
+                self.txt_answer.setPlainText(base + "\n" + "•" * (self._thinking_dots or 1))
+
+            self._thinking_timer.timeout.connect(_tick)
+        self._thinking_timer.start()
+
+    def _stop_thinking_pulse(self):
+        if getattr(self, "_thinking_timer", None) is not None:
+            self._thinking_timer.stop()
+
     def _finish_assistant_query(self, future, context_label: str, provider_label: str = ""):
+        self._stop_thinking_pulse()
         self._query_pending = False
         self.btn_ask.setEnabled(True)
         self.btn_reindex.setEnabled(True)

@@ -128,6 +128,42 @@ def _process_rss_mb():
 _RSS_DLL_CACHE = None
 
 
+class _FindBar(QWidget):
+    """Chrome-style find bar: sticky row with next/prev, match count, Esc to
+    close. Replaces the v6.4 modal QInputDialog that reopened on every Ctrl+F."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("FindBar")
+        self.setStyleSheet(
+            "#FindBar { background: palette(window); border: 1px solid palette(midlight); border-radius: 4px; }"
+        )
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setSpacing(6)
+        self.ed_query = QLineEdit()
+        self.ed_query.setPlaceholderText("Find in page")
+        self.ed_query.setClearButtonEnabled(True)
+        self.ed_query.setFixedWidth(260)
+        self.btn_prev = QToolButton()
+        self.btn_prev.setText("▲")
+        self.btn_next = QToolButton()
+        self.btn_next.setText("▼")
+        self.btn_close = QToolButton()
+        self.btn_close.setText("✕")
+        for b in (self.btn_prev, self.btn_next, self.btn_close):
+            b.setAutoRaise(True)
+            b.setCursor(Qt.PointingHandCursor)
+        self.lbl_count = QLabel("")
+        self.lbl_count.setObjectName("MutedLabel")
+        lay.addWidget(self.ed_query, 1)
+        lay.addWidget(self.lbl_count)
+        lay.addWidget(self.btn_prev)
+        lay.addWidget(self.btn_next)
+        lay.addWidget(self.btn_close)
+        self.setFixedHeight(36)
+
+
 class _WorkerRelay(QObject):
     """Queued-call bridge from executor threads to the GUI thread.
 
@@ -2887,9 +2923,84 @@ class SearchWindow(QMainWindow):
     def find_text(self):
         if not self.current_browser():
             return
-        text, ok = QInputDialog.getText(self, "Find", "Enter search term:")
-        if ok and text:
-            self.current_browser().findText(text)
+        bar = self._ensure_find_bar()
+        bar.show()
+        bar.raise_()
+        bar.ed_query.setFocus()
+        bar.ed_query.selectAll()
+        self._find_browser = self.current_browser()
+
+    def _ensure_find_bar(self):
+        if getattr(self, "_find_bar", None) is None:
+            self._find_bar = _FindBar(self)
+            lay = self.central_widget.layout()
+            lay.addWidget(self._find_bar)
+            # Hidden until first use; sits above the web area like Chrome.
+            self._find_bar.hide()
+            self._find_bar.ed_query.textChanged.connect(self._on_find_text_changed)
+            self._find_bar.ed_query.returnPressed.connect(self._find_next)
+            self._find_bar.btn_next.clicked.connect(self._find_next)
+            self._find_bar.btn_prev.clicked.connect(self._find_prev)
+            self._find_bar.btn_close.clicked.connect(self._close_find_bar)
+            QShortcut(QKeySequence(Qt.Key_Escape), self._find_bar).activated.connect(self._close_find_bar)
+            QShortcut(QKeySequence("F3"), self._find_bar).activated.connect(self._find_next)
+            QShortcut(QKeySequence("Shift+F3"), self._find_bar).activated.connect(self._find_prev)
+        return self._find_bar
+
+    def _find_next(self):
+        bar = getattr(self, "_find_bar", None)
+        if bar and bar.isVisible() and self.current_browser():
+            self.current_browser().findText(bar.ed_query.text(), self._find_flags_forward())
+
+    def _find_prev(self):
+        bar = getattr(self, "_find_bar", None)
+        if bar and bar.isVisible() and self.current_browser():
+            self.current_browser().findText(bar.ed_query.text(), self._find_flags_backward())
+
+    def _find_flags_forward(self):
+        from PyQt5.QtWebEngineWidgets import QWebEnginePage
+        return QWebEnginePage.FindFlags() if hasattr(QWebEnginePage, "FindFlags") else 0
+
+    def _find_flags_backward(self):
+        from PyQt5.QtWebEngineWidgets import QWebEnginePage
+        try:
+            return QWebEnginePage.FindFlag.FindBackward
+        except AttributeError:
+            return QWebEnginePage.FindBackward
+
+    def _find_flags_count(self):
+        from PyQt5.QtWebEngineWidgets import QWebEnginePage
+        try:
+            return QWebEnginePage.FindFlag.FindCaseSensitively
+        except AttributeError:
+            return 0
+
+    def _on_find_text_changed(self, text):
+        browser = self.current_browser()
+        if not browser:
+            return
+        if not text:
+            browser.findText("")
+            bar = self._find_bar
+            if bar:
+                bar.lbl_count.setText("")
+            return
+        browser.findText(text, self._find_flags_forward(), self._on_find_result)
+
+    def _on_find_result(self, result):
+        bar = getattr(self, "_find_bar", None)
+        if bar is None:
+            return
+        count, index = result.numberOfMatches(), result.activeMatch()
+        bar.lbl_count.setText(f"{index}/{count}" if count else "0/0")
+
+    def _close_find_bar(self):
+        bar = getattr(self, "_find_bar", None)
+        if bar is not None:
+            bar.hide()
+            browser = self.current_browser()
+            if browser:
+                browser.findText("")
 
     def _translate_page(self, service="google"):
         browser = self.current_browser()

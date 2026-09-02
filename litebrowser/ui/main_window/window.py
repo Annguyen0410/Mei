@@ -2867,17 +2867,19 @@ class SearchWindow(QMainWindow):
             if hasattr(store, "setCookieFilter"):
                 store.setCookieFilter(self._cookie_filter)
                 if show_message:
-                    QMessageBox.information(self, "Cookie", "Third-party cookies blocked for the current profile.")
+                    self._flash_status("Third-party cookies blocked for this profile")
             elif show_message:
-                QMessageBox.information(self, "Cookie", "Preference saved. This Qt build does not support full cookie filtering like newer Chromium.")
+                self._flash_status("Preference saved — this Qt build cannot filter cookies")
         else:
+            # Qt has no unsetCookieFilter: install a pass-through instead
+            # (v6.4 approach, kept).
             if hasattr(store, "setCookieFilter"):
                 self._cookie_filter = lambda _req: True
                 store.setCookieFilter(self._cookie_filter)
             else:
                 self._cookie_filter = None
             if show_message:
-                QMessageBox.information(self, "Cookie", "Third-party cookie blocking turned off.")
+                self._flash_status("Third-party cookie blocking turned off")
 
     def toggle_block_third_party_cookies(self):
         checked = self.act_block_3p_cookies.isChecked()

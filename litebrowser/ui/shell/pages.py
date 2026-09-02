@@ -283,7 +283,7 @@ class HomeDashboardPage(QWidget):
         for note in personal_service.list_notes(self.shell.profile_dir)[:8]:
             self.recent_notes.addItem(note["title"])
         if self.recent_notes.count() == 0:
-            self.recent_notes.addItem("No notes yet")
+            self.recent_notes.addItem(components.hint_list_item("No notes yet"))
 
         self.recent_tasks.clear()
         tasks = [item for item in life_service.load_tasks(self.shell.profile_dir) if not item.get("completed")][:8]
@@ -291,7 +291,7 @@ class HomeDashboardPage(QWidget):
             due = _format_ts(int(task.get("due_at", 0) or 0)) if int(task.get("due_at", 0) or 0) else task.get("bucket", "")
             self.recent_tasks.addItem(f"{task.get('title', '')} - {due}")
         if self.recent_tasks.count() == 0:
-            self.recent_tasks.addItem("No active tasks")
+            self.recent_tasks.addItem(components.hint_list_item("No active tasks", "○"))
 
         self.recent_closed.clear()
         state = prefs.session_state_load(self.shell.profile_dir)
@@ -302,7 +302,7 @@ class HomeDashboardPage(QWidget):
             row.setData(Qt.UserRole, entry.get("url", ""))
             self.recent_closed.addItem(row)
         if self.recent_closed.count() == 0:
-            self.recent_closed.addItem("Nothing closed recently")
+            self.recent_closed.addItem(components.hint_list_item("Nothing closed recently", "○"))
 
         self.brief_card.setVisible(prefs.get_show_morning_brief(self.shell.profile_dir))
         self._refresh_brief()

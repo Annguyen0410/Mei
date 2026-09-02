@@ -6,7 +6,7 @@ stat tiles, section cards with headers, and empty-state hints. They only
 compose plain Qt widgets + object names, so styling stays in ``theme.py``.
 """
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QColor, QFont, QListWidgetItem
 from PyQt5.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -162,6 +162,24 @@ def empty_state(text: str, hint: str = "") -> QFrame:
         sub.setObjectName("MutedLabel")
         layout.addWidget(sub)
     return card
+
+
+def hint_list_item(text: str, glyph: str = "✦") -> object:
+    """A non-interactive placeholder row for empty lists, tinted with the
+    active theme's muted color (plain addItem rows ignored the theme)."""
+    from litebrowser.ui import theme
+
+    item = QListWidgetItem(f"{glyph}  {text}")
+    item.setFlags(Qt.NoItemFlags)
+    try:
+        p = theme.palette()
+        item.setForeground(QColor(p["TEXT_MUTED"]))
+        font = item.font()
+        font.setItalic(True)
+        item.setFont(font)
+    except Exception:
+        pass
+    return item
 
 
 def nav_button(label: str, glyph: str = "◆", tooltip: str = "") -> QPushButton:

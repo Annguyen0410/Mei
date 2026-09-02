@@ -765,12 +765,12 @@ class PersonalWindow(QMainWindow):
         for item in [task for task in life_service.load_tasks(self.base_dir) if not task.get("completed")] [:8]:
             self.overview_focus_list.addItem(f"{item.get('title', '')} · {item.get('bucket', '')}")
         if self.overview_focus_list.count() == 0:
-            self.overview_focus_list.addItem("No active tasks")
+            self.overview_focus_list.addItem(components.hint_list_item("No active tasks", "○"))
         self.overview_timeline_list.clear()
         for event in life_service.load_events(self.base_dir)[:8]:
             self.overview_timeline_list.addItem(f"{event.get('title', '')} · {_format_ts(int(event.get('starts_at', 0) or 0))}")
         if self.overview_timeline_list.count() == 0:
-            self.overview_timeline_list.addItem("No calendar events yet")
+            self.overview_timeline_list.addItem(components.hint_list_item("No calendar events yet", "○"))
 
     def _build_notes_page(self):
         w = QWidget()
@@ -1002,7 +1002,7 @@ class PersonalWindow(QMainWindow):
         # Empty state: a muted hint row (disabled, unselectable) instead of a
         # blank list when the search/filter matches nothing.
         if self.notes_list.count() == 0:
-            hint = QListWidgetItem("No notes match — press New note to start")
+            hint = components.hint_list_item("No notes match — press New note to start")
             hint.setFlags(Qt.NoItemFlags)
             self.notes_list.addItem(hint)
         if hasattr(self, "_notes_fs_watcher"):
@@ -1364,7 +1364,7 @@ class PersonalWindow(QMainWindow):
             row.setData(Qt.UserRole, item.get("id", ""))
             self.tasks_list.addItem(row)
         if self.tasks_list.count() == 0:
-            hint = QListWidgetItem("No tasks yet — type a title above and press Add task")
+            hint = components.hint_list_item("No tasks yet — type a title above and press Add task", "○")
             hint.setFlags(Qt.NoItemFlags)
             self.tasks_list.addItem(hint)
 

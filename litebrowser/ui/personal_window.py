@@ -194,7 +194,8 @@ class BoardView(QGraphicsView):
     def _highlight_link_card(self, card, on: bool):
         if on:
             card._orig_pen = card.pen()
-            card.setPen(QPen(QColor("#e0b878"), 3))
+            # Accent ring instead of a hard-coded beige (invisible on dark themes).
+            card.setPen(QPen(QColor(theme.palette()["ACCENT"]), 3))
         elif hasattr(card, "_orig_pen"):
             card.setPen(card._orig_pen)
             del card._orig_pen
@@ -338,17 +339,23 @@ class StickyCardItem(QGraphicsRectItem):
             | QGraphicsRectItem.ItemIsSelectable
             | QGraphicsRectItem.ItemSendsGeometryChanges
         )
-        self.setBrush(QBrush(QColor(node.get("color", "#c39d63"))))
-        self.setPen(QPen(QColor("#2a2119"), 2))
+        p = theme.palette()
+        fill = QColor(node.get("color") or p["CARD_BG"])
+        self.setBrush(QBrush(fill))
+        self.setPen(QPen(QColor(p["BORDER_SOFT"]), 2))
         self.setPos(float(node.get("x", 40)), float(node.get("y", 40)))
+        # Text contrast follows the fill: light cards get ink, dark cards get
+        # the theme text color (v6.4 always painted near-black text).
+        lum = (fill.red() * 299 + fill.green() * 587 + fill.blue() * 114) / 1000
+        text_color = QColor(p["TEXT"]) if lum < 150 else QColor("#1b140f")
         text = QGraphicsTextItem(node.get("title", "Card"), self)
-        text.setDefaultTextColor(QColor("#1b140f"))
+        text.setDefaultTextColor(text_color)
         text.setTextWidth(190)
         text.setPos(14, 12)
         body = node.get("payload", "").strip()
         if body:
             body_item = QGraphicsTextItem(body[:180], self)
-            body_item.setDefaultTextColor(QColor("#2d2318"))
+            body_item.setDefaultTextColor(text_color)
             body_item.setTextWidth(190)
             body_item.setPos(14, 42)
 
@@ -1180,8 +1187,11 @@ class PersonalWindow(QMainWindow):
                 cursor.setPosition(idx)
                 cursor.setPosition(idx + len(query), QTextCursor.KeepAnchor)
                 extra.cursor = cursor
-                extra.format.setBackground(QColor("#f2d16b"))
-                extra.format.setForeground(QColor("#1b140f"))
+                # Theme-aware highlight: v6.4 hard-coded amber/ink colors that
+                # vanished on dark themes.
+                p = theme.palette()
+                extra.format.setBackground(QColor(p["ACCENT"]))
+                extra.format.setForeground(QColor(p["MAIN_BG"]))
                 selections.append(extra)
                 self._note_find_matches.append(idx)
                 pos = idx + len(query)
@@ -1461,9 +1471,11 @@ class PersonalWindow(QMainWindow):
             for date_key in getattr(self, "_calendar_marked_dates", set()):
                 year, month, day = [int(part) for part in date_key.split("-")]
                 self.calendar_widget.setDateTextFormat(QDate(year, month, day), QTextCharFormat())
+            # Theme-aware event marks: v6.4 hard-coded beige/ink on every theme.
+            p = theme.palette()
             accent_fmt = QTextCharFormat()
-            accent_fmt.setBackground(QColor("#d8bf95"))
-            accent_fmt.setForeground(QColor("#2d2118"))
+            accent_fmt.setBackground(QColor(p["ACCENT"]))
+            accent_fmt.setForeground(QColor(p["MAIN_BG"]))
             accent_fmt.setFontWeight(QFont.DemiBold)
             for date_key in events_by_day:
                 year, month, day = [int(part) for part in date_key.split("-")]

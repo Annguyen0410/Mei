@@ -106,7 +106,15 @@ class HomeDashboardPage(QWidget):
         hero_layout.setSpacing(12)
 
         brand_row = QHBoxLayout()
-        brand = QLabel("Your quiet corner of the web")
+        # Time-of-day greeting: the home hero greets like the new-tab page
+        # does (v6.4 used a static tagline on Home only).
+        try:
+            from litebrowser.browser.new_tab_page import cafe_greeting
+
+            _eyebrow, headline = cafe_greeting()
+        except Exception:
+            headline = "Your quiet corner of the web"
+        brand = QLabel(headline)
         brand.setObjectName("HeroTitle")
         brand.setFont(components._font(26, components.WEIGHT_BOLD))
         brand_row.addWidget(brand)

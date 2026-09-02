@@ -1981,12 +1981,21 @@ class SearchWindow(QMainWindow):
         self.url_bar.setText(url_str)
         self.url_bar.setCursorPosition(0)
         if hasattr(self, "lbl_site_state"):
+            # Glyph + tinted pill: security state readable at a glance.
             if url_str.startswith("https://"):
-                self.lbl_site_state.setText("Secure")
-                self.lbl_site_state.setStyleSheet("color: %s;" % self._palette_lookup("SUCCESS"))
+                self.lbl_site_state.setText("🔒 Secure")
+                self.lbl_site_state.setStyleSheet(
+                    "color: %s; background-color: %s; border-radius: 8px; padding: 2px 7px;"
+                    " font-size: 10px; font-weight: 700;"
+                    % (self._palette_lookup("SUCCESS"), self._palette_lookup("ACCENT_SOFT"))
+                )
             elif url_str.startswith("http://"):
-                self.lbl_site_state.setText("HTTP")
-                self.lbl_site_state.setStyleSheet("color: %s;" % self._palette_lookup("DANGER"))
+                self.lbl_site_state.setText("⚠ HTTP")
+                self.lbl_site_state.setStyleSheet(
+                    "color: %s; background-color: %s; border-radius: 8px; padding: 2px 7px;"
+                    " font-size: 10px; font-weight: 700;"
+                    % (self._palette_lookup("DANGER"), self._palette_lookup("MAIN_BG_ALT"))
+                )
             elif url_str.startswith("about:"):
                 self.lbl_site_state.setText("Local")
                 self.lbl_site_state.setStyleSheet("")

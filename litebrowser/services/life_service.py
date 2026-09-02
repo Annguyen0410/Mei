@@ -12,6 +12,29 @@ def _entity_path(base_dir: str, name: str) -> str:
     return os.path.join(base_dir, name)
 
 
+# mtime-keyed read cache: dashboard/home refreshes call load_tasks/events/
+# boards/saved_pages together, and each re-parsed + re-locked its JSON file on
+# every call. The cache returns a fresh copy only when the file changed.
+_load_cache: dict[str, tuple[int, int, list]] = {}
+
+
+def _read_list_cached(path: str, base_dir: str):
+    import copy as _copy
+
+    try:
+        st = os.stat(path)
+        signature = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        _load_cache.pop(path, None)
+        return []
+    cached = _load_cache.get(path)
+    if cached is not None and cached[0] == signature[0] and cached[1] == signature[1]:
+        return _copy.deepcopy(cached[2])
+    items = _read_list(path)
+    _load_cache[path] = (signature[0], signature[1], items)
+    return _copy.deepcopy(items)
+
+
 def _now() -> int:
     return int(time.time())
 
@@ -77,7 +100,7 @@ def sync_account_path(base_dir: str) -> str:
 
 def load_tasks(base_dir: str):
     with profile_locked(base_dir):
-        return _read_list(tasks_path(base_dir))
+        return _read_list_cached(tasks_path(base_dir), base_dir)
 
 
 def save_tasks(base_dir: str, items):
@@ -140,7 +163,7 @@ def remove_task(base_dir: str, task_id: str) -> bool:
 
 def load_events(base_dir: str):
     with profile_locked(base_dir):
-        return _read_list(calendar_path(base_dir))
+        return _read_list_cached(calendar_path(base_dir), base_dir)
 
 
 def save_events(base_dir: str, items):
@@ -185,7 +208,7 @@ def remove_event(base_dir: str, event_id: str) -> bool:
 
 def load_boards(base_dir: str):
     with profile_locked(base_dir):
-        items = _read_list(boards_path(base_dir))
+        items = _read_list_cached(boards_path(base_dir), base_dir)
         normalized = []
         changed = False
         for board in items:
@@ -198,6 +221,9 @@ def load_boards(base_dir: str):
             normalized.append(current)
         if changed:
             _write_list(boards_path(base_dir), normalized)
+            # The normalization rewrite changed the file; refresh the cache so
+            # the next read does not replay the old raw data.
+            return load_boards(base_dir)
         return normalized
 
 
@@ -298,7 +324,7 @@ def _normalize_board(board):
 
 def load_saved_pages(base_dir: str):
     with profile_locked(base_dir):
-        return _read_list(saved_pages_path(base_dir))
+        return _read_list_cached(saved_pages_path(base_dir), base_dir)
 
 
 def save_saved_pages(base_dir: str, items):

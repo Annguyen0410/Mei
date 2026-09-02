@@ -938,6 +938,9 @@ class PersonalWindow(QMainWindow):
         note_id = self.current_note_id
         if personal_service.save_note(self.base_dir, note_id, self.note_editor.toPlainText()):
             self._note_dirty = False
+        # Find highlights were computed against the old text; offsets are now
+        # stale (v6.4 jumped to wrong spans). Recompute on the edited content.
+        self._find_in_note()
 
     def _update_note_stats(self):
         if not hasattr(self, "lbl_note_stats"):

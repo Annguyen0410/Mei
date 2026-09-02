@@ -50,7 +50,12 @@ def _normalize_batch(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Payload does not contain any importable tabs.")
 
     batch_id = str(payload.get("batch_id") or payload.get("id") or f"ext_{now_ms}")
-    created_at = int(payload.get("created_at") or payload.get("captured_at") or now_ms)
+    try:
+        created_at = int(payload.get("created_at") or payload.get("captured_at") or now_ms)
+    except (TypeError, ValueError):
+        # A non-numeric created_at must not abort the whole import (v6.4
+        # raised ValueError here and dropped every batch in the file).
+        created_at = now_ms
     imported_at = payload.get("imported_at")
     window_id = str(payload.get("window_id") or payload.get("source_window_id") or "unknown")
     source_browser = str(payload.get("source_browser") or payload.get("browser") or "chrome-family").strip() or "chrome-family"
@@ -146,6 +151,11 @@ def import_from_zip(base_dir: str, path: str) -> dict[str, Any]:
         names = [n for n in archive.namelist() if n.lower().endswith(".json")]
         if not names:
             raise ValueError("ZIP archive contains no .json files.")
+        # Zip-bomb guard: refuse members beyond a sane size before reading.
+        max_member_bytes = 32 * 1024 * 1024
+        for info in archive.infolist():
+            if info.file_size > max_member_bytes:
+                raise ValueError(f"ZIP member {os.path.basename(info.filename)} is too large (> 32 MB).")
 
         last = None
         # Extension manifest takes priority when present.

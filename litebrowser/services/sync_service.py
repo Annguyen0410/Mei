@@ -88,7 +88,24 @@ def _apply_bundle(base_dir: str, bundle: dict) -> dict:
 
     remote_bookmarks = bundle.get("bookmarks") or []
     if remote_bookmarks:
-        prefs.save_bookmarks(base_dir, remote_bookmarks)
+        # Merge by URL instead of wholesale replace: v6.4 overwrote local
+        # bookmarks with the remote set, so pulling from a device with sparse
+        # data silently deleted everything saved on this machine.
+        local_bookmarks = prefs.load_bookmarks(base_dir) or []
+        local_by_url = {}
+        for bm in local_bookmarks:
+            if isinstance(bm, dict) and bm.get("url"):
+                local_by_url[bm["url"]] = bm
+        merged = list(local_bookmarks)
+        for bm in remote_bookmarks:
+            if not isinstance(bm, dict) or not bm.get("url"):
+                continue
+            if bm["url"] in local_by_url:
+                continue
+            merged.append(bm)
+            local_by_url[bm["url"]] = bm
+        if merged != local_bookmarks:
+            prefs.save_bookmarks(base_dir, merged)
         applied["bookmarks"] = len(remote_bookmarks)
 
     remote_history = [tuple(item) for item in (bundle.get("history") or [])]
@@ -96,7 +113,9 @@ def _apply_bundle(base_dir: str, bundle: dict) -> dict:
         existing = prefs.load_history_entries(base_dir)
         merged = existing + [item for item in remote_history if item not in existing]
         merged.sort(key=lambda item: -int(item[0] or 0))
-        prefs.save_history_entries(base_dir, merged[:1500])
+        # Keep a generous cap: v6.4 trimmed to 1500, so one pull from a
+        # sparse device could throw away months of local history.
+        prefs.save_history_entries(base_dir, merged[:5000])
         applied["history"] = len(remote_history)
     return applied
 

@@ -293,8 +293,8 @@ input[type="search"]:focus {
   background: @CARD_BG@;
   border: 1px solid @BORDER_SOFT@;
   border-radius: 16px;
-  min-height: 82px;
-  padding: 16px 10px;
+  min-height: 92px;
+  padding: 14px 10px;
   text-align: center;
   overflow: hidden;
   transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
@@ -307,24 +307,43 @@ input[type="search"]:focus {
   opacity: 0;
   transition: opacity .15s ease;
 }
-.tile:hover {
+.tile:hover,
+.tile:focus-visible {
   transform: translateY(-4px);
   border-color: @ACCENT_HOVER@;
   box-shadow: 0 10px 24px @WATERMARK@;
+  outline: none;
 }
-.tile:hover::before { opacity: 1; }
+.tile:hover::before, .tile:focus-visible::before { opacity: 1; }
+.tile:focus-visible { box-shadow: 0 0 0 3px @GLOW2@, 0 10px 24px @WATERMARK@; }
 .tile-mark {
   position: relative;
-  display: block;
-  font-size: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 8px;
+  border-radius: 50%;
+  font-size: 20px;
   color: @ACCENT_HOVER@;
-  margin-bottom: 8px;
+  background: radial-gradient(circle at 50% 32%, @ACCENT_SOFT@, transparent 78%);
+  border: 1px solid @INPUT_BORDER@;
+  transition: transform .15s ease, border-color .15s ease;
 }
+.tile-mark-letter {
+  font-size: 19px;
+  font-weight: 800;
+  font-family: Georgia, serif;
+  background: @ACCENT_SOFT@;
+}
+.tile:hover .tile-mark { transform: scale(1.08); border-color: @ACCENT@; }
 .tile-label {
   position: relative;
   display: block;
   color: @TEXT@;
   font-size: 12px;
+  font-weight: 600;
   line-height: 1.4;
 }
 /* Recent pour list */
@@ -340,10 +359,39 @@ input[type="search"]:focus {
   transition: color .12s ease, padding-left .12s ease, background .12s ease;
 }
 .recent-row::before { content: "◦"; color: @ACCENT_HOVER@; }
+.recent-row .recent-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-row .recent-host {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: @ACCENT_HOVER@;
+  background: @ACCENT_SOFT@;
+  border: 1px solid @INPUT_BORDER@;
+  border-radius: 999px;
+  padding: 2px 9px;
+}
 .recent-row:hover { color: @TEXT@; background: @MAIN_BG_ALT@; padding-left: 14px; }
 .recent-row:last-child { border-bottom: none; }
 
 .empty { color: @TEXT_MUTED@; font-size: 13px; padding: 8px 4px; }
+/* Keyboard users get a visible ring on every interactive row. */
+a:focus-visible {
+  outline: 2px solid @ACCENT@;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+/* Quiet themed scrollbar for the page itself. */
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: @INPUT_BORDER@;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: @ACCENT@; background-clip: content-box; }
 .hint-row {
   display: flex;
   flex-wrap: wrap;
@@ -409,18 +457,35 @@ def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None
 
     tiles_html = ""
     for url, label in quick_links:
+        # Per-site glyph: first letter of the host looks like a favicon chip
+        # and stops every tile showing the identical teacup emoji.
+        try:
+            host = urlparse(url).netloc.removeprefix("www.")
+        except Exception:
+            host = ""
+        glyph = escape_html((host[:1] or "•").upper())
         tiles_html += (
-            '<a href="%s" class="tile" title="%s"><span class="tile-mark">🍵</span><span class="tile-label">%s</span></a>'
-            % (escape_html(url), escape_html(url), escape_html(label))
+            '<a href="%s" class="tile" title="%s"><span class="tile-mark tile-mark-letter">%s</span>'
+            '<span class="tile-label">%s</span></a>'
+            % (escape_html(url), escape_html(url), glyph, escape_html(label))
         )
     if not tiles_html:
         tiles_html = '<div class="empty">Save bookmarks or visit more pages to build your cafe shelf.</div>'
 
-    recent_rows = "".join(
-        '<a href="%s" class="recent-row" title="%s">%s</a>'
-        % (escape_html(url), escape_html(url), escape_html(url.replace("https://", "").replace("http://", "")[:60]))
-        for url in recent
-    )
+    recent_rows = ""
+    for url in recent:
+        try:
+            host = urlparse(url).netloc or ""
+        except Exception:
+            host = ""
+        host = host[:26]
+        label = url.replace("https://", "").replace("http://", "")[:60]
+        recent_rows += (
+            '<a href="%s" class="recent-row" title="%s">'
+            '<span class="recent-url">%s</span>'
+            '<span class="recent-host">%s</span></a>'
+            % (escape_html(url), escape_html(url), escape_html(label), escape_html(host or "link"))
+        )
     if not recent_rows:
         recent_rows = '<div class="empty">No recent browsing yet.</div>'
 

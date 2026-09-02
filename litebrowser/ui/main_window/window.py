@@ -3020,18 +3020,23 @@ class SearchWindow(QMainWindow):
         browser = self.current_browser()
         if not browser:
             return
+        # Reader palette follows the shell theme (v6.4 forced a dark scheme
+        # even in light themes, then dark-forced sites double-inverted).
+        p = theme.palette()
+        bg, fg, muted = p["MAIN_BG"], p["TEXT"], p["TEXT_MUTED"]
         js = """
         var elements = document.querySelectorAll('header, footer, nav, aside, .sidebar, .ads, script, style, iframe');
         for (var i=0; i<elements.length; i++) elements[i].style.display = 'none';
         document.body.style.maxWidth = '800px';
         document.body.style.margin = '0 auto';
         document.body.style.padding = '20px';
-        document.body.style.backgroundColor = '#1e1e1e';
-        document.body.style.color = '#e0e0e0';
+        document.body.style.backgroundColor = '%s';
+        document.body.style.color = '%s';
         document.body.style.fontSize = '18px';
         document.body.style.lineHeight = '1.6';
-        """
+        """ % (bg, fg)
         browser.page().runJavaScript(js)
+        self._flash_status("Reader mode — colors follow your theme")
 
     def toggle_text_highlight(self, checked=None):
         """Enable/disable the highlight-text-to-copy helper on every open page.

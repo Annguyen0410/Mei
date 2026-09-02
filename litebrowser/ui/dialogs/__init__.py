@@ -1,5 +1,6 @@
 """Modal dialogs: VPN, history, bookmarks, profiles, privacy, control center."""
 from litebrowser.ui.dialogs.help_hub import show_browser_control_center
+from litebrowser.ui.dialogs.hotkeys import show_hotkeys_hub
 from litebrowser.ui.dialogs.navigation import (
     show_downloads_dialog,
     show_quick_switcher,
@@ -31,6 +32,7 @@ __all__ = [
     "show_extensions_dialog",
     "show_hibernate_pref_dialog",
     "show_history_dialog",
+    "show_hotkeys_hub",
     "show_permissions_manager",
     "show_privacy_dialog",
     "show_profiles_dialog",

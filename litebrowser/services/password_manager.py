@@ -292,3 +292,68 @@ def build_autofill_script(username, password):
     u_esc = json.dumps(username)
     p_esc = json.dumps(password)
     return "var __lite_username = " + u_esc + "; var __lite_password = " + p_esc + "; " + AUTOFILL_SCRIPT.strip()
+
+
+# Chrome-style save-password capture: a profile-level script watches every
+# login form; on submit it stashes the credentials in sessionStorage under a
+# fixed key. The app reads (and clears) that key on the NEXT page load, which
+# is when a real login would have succeeded — no QWebChannel needed.
+CAPTURE_INSTALL_SCRIPT = """
+(function() {
+  if (window.__mei_capture_installed) return;
+  window.__mei_capture_installed = true;
+  function findCreds(root) {
+    var pass = root.querySelector('input[type="password"]');
+    if (!pass) return null;
+    var form = pass.closest('form') || document;
+    var user = null;
+    var inputs = (form === document ? document.querySelectorAll('input') : form.querySelectorAll('input'));
+    for (var i = 0; i < inputs.length; i++) {
+      if (inputs[i] === pass) continue;
+      var t = (inputs[i].type || '').toLowerCase();
+      if (t === 'email' || t === 'text' || t === 'tel') { user = inputs[i]; break; }
+    }
+    if (!pass.value) return null;
+    return { user: user ? user.value : '', pass: pass.value };
+  }
+  function stash(creds) {
+    try {
+      sessionStorage.setItem('__mei_pending_creds', JSON.stringify({
+        user: creds.user, pass: creds.pass, at: Date.now()
+      }));
+    } catch (e) {}
+  }
+  document.addEventListener('submit', function(ev) {
+    try {
+      var creds = findCreds(ev.target);
+      if (creds) stash(creds);
+    } catch (e) {}
+  }, true);
+  // SPA-style logins (fetch/XHR without form submit): watch password fields
+  // losing focus right before a same-tick navigation is too fragile, so also
+  // listen for Enter inside a password field.
+  document.addEventListener('keydown', function(ev) {
+    if (ev.key !== 'Enter') return;
+    try {
+      var t = ev.target;
+      if (t && (t.type || '').toLowerCase() === 'password') {
+        var creds = findCreds(t.closest('form') || document);
+        if (creds) stash(creds);
+      }
+    } catch (e) {}
+  }, true);
+})();
+"""
+
+READ_CAPTURED_SCRIPT = """
+(function() {
+  try {
+    var raw = sessionStorage.getItem('__mei_pending_creds');
+    if (!raw) return null;
+    sessionStorage.removeItem('__mei_pending_creds');
+    var d = JSON.parse(raw);
+    if (!d || !d.pass || (Date.now() - (d.at || 0) > 60000)) return null;
+    return { user: d.user || '', pass: d.pass };
+  } catch (e) { return null; }
+})();
+"""

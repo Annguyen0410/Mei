@@ -1216,6 +1216,11 @@ QToolTip {
 #WebPanelView {
     background-color: %(MAIN_BG)s;
 }
+/* Chrome-style save-password prompt bar. */
+#SavePasswordBar {
+    background-color: %(ACCENT_SOFT)s;
+    border-top: 1px solid %(ACCENT)s;
+}
 """ % p
 
 

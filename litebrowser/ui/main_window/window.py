@@ -23,6 +23,7 @@ from PyQt5.QtNetwork import QNetworkProxy
 from PyQt5.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt5.QtWebEngineWidgets import (
     QWebEngineProfile,
+    QWebEngineScript,
     QWebEngineSettings,
     QWebEngineView,
 )
@@ -1166,6 +1167,21 @@ class SearchWindow(QMainWindow):
             profile.setHttpCacheMaximumSize(64 * 1024 * 1024)
         if hasattr(QWebEngineSettings, "HyperlinkAuditingEnabled"):
             settings.setAttribute(QWebEngineSettings.HyperlinkAuditingEnabled, False)
+        # Chrome-style save-password capture: profile script stashes submitted
+        # login credentials in sessionStorage; on_load_finished reads them on
+        # the next page and offers to save (only when password manager is on).
+        if not off_the_record and prefs.get_password_manager_enabled(self.base_dir):
+            try:
+                from litebrowser.services import password_manager as _pm
+                script = QWebEngineScript()
+                script.setName("MeiPasswordCapture")
+                script.setInjectionPoint(QWebEngineScript.DocumentCreation)
+                script.setWorldId(QWebEngineScript.MainWorld)
+                script.setRunsOnSubFrames(False)
+                script.setSourceCode(_pm.CAPTURE_INSTALL_SCRIPT)
+                profile.scripts().insert(script)
+            except Exception:
+                pass
 
     def get_profile_for_url(self, qurl=None, is_incognito=False):
         return self.profile
@@ -2014,6 +2030,79 @@ class SearchWindow(QMainWindow):
         self.load_progress.show()
         self.load_progress.raise_()
 
+    def _maybe_offer_saved_password(self, browser):
+        """Chrome-style save-password prompt after a login page navigates away.
+
+        The profile capture script stashes submitted credentials in
+        sessionStorage; this reads them once per successful load and offers to
+        store them in the vault (deduped per host)."""
+        if not prefs.get_password_manager_enabled(self.base_dir):
+            return
+        try:
+            from litebrowser.services import password_manager
+            if not password_manager.HAS_CRYPTO:
+                return
+            url_str = browser.url().toString()
+            if not url_str.startswith("http"):
+                return
+            host = password_manager._normalize_origin(url_str)
+            if not host or host in getattr(self, "_password_prompt_hosts", set()):
+                return
+            browser.page().runJavaScript(
+                password_manager.READ_CAPTURED_SCRIPT,
+                lambda result, b=browser, h=host: self._on_captured_credentials(result, b, h),
+            )
+        except Exception:
+            pass
+
+    def _on_captured_credentials(self, result, browser, host):
+        if not result or not isinstance(result, dict):
+            return
+        password = result.get("pass") or ""
+        username = result.get("user") or ""
+        if not password:
+            return
+        self._password_prompt_hosts = getattr(self, "_password_prompt_hosts", set()) | {host}
+
+        bar = QFrame(self.content_widget)
+        bar.setObjectName("SavePasswordBar")
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(12, 6, 12, 6)
+        lbl = QLabel(f"Save login for {host}?")
+        lbl.setObjectName("PageTitle")
+        bar_layout.addWidget(lbl, 1)
+        result_box = {"master": None, "saved": False}
+
+        def _with_master(save: bool):
+            master = getattr(self, "_master_password", None)
+            if master is None:
+                master = dialogs.ask_master_password(self)
+            if not master:
+                if master is None:
+                    bar.setParent(None)
+                    bar.deleteLater()
+                return
+            self._master_password = master
+            try:
+                from litebrowser.services import password_manager
+                if save:
+                    password_manager.add_password(self.base_dir, browser.url().toString(), username, password, master)
+                    self._flash_status(f"Login saved for {host}")
+                result_box["saved"] = save
+            except Exception as exc:
+                QMessageBox.warning(self, "Passwords", str(exc))
+            bar.setParent(None)
+            bar.deleteLater()
+
+        yes_btn = QPushButton("Save")
+        yes_btn.setObjectName("TopAccentButton")
+        yes_btn.clicked.connect(lambda: _with_master(True))
+        no_btn = QPushButton("Never")
+        no_btn.clicked.connect(lambda: _with_master(False))
+        bar_layout.addWidget(yes_btn)
+        bar_layout.addWidget(no_btn)
+        self.content_layout.addWidget(bar, 0)
+
     def _flash_status(self, message: str):
         """Non-modal toast: transient feedback without dialog spam (v6.4 used
         a modal QMessageBox for routine actions like mute/auto-reload).
@@ -2310,6 +2399,8 @@ class SearchWindow(QMainWindow):
                                 browser.page().runJavaScript(password_manager.build_autofill_script(cred["username"], cred["password"]))
             except Exception:
                 pass
+        if browser is self.current_browser():
+            self._maybe_offer_saved_password(browser)
         host_l = (browser.url().host() or "").lower()
         on_accounts_google = host_l == "accounts.google.com" or host_l.endswith(".accounts.google.com")
         if self.is_compatibility_host(browser.url()) or on_accounts_google:

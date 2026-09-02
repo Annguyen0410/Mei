@@ -330,6 +330,33 @@ def set_ui_dynamic_background(base_dir, value):
     save_prefs(base_dir, data)
 
 
+def get_last_web_panel(base_dir):
+    """(title, url) of the most recently used web panel, or ("", "")."""
+    data = load_prefs(base_dir).get("web_panel", {})
+    if isinstance(data, dict):
+        return str(data.get("title") or ""), str(data.get("url") or "")
+    return "", ""
+
+
+def set_last_web_panel(base_dir, title, url):
+    data = load_prefs(base_dir)
+    data["web_panel"] = {"title": str(title or ""), "url": str(url or ""), "visible": True}
+    save_prefs(base_dir, data)
+
+
+def get_web_panel_visible(base_dir):
+    data = load_prefs(base_dir).get("web_panel", {})
+    return bool(data.get("visible")) if isinstance(data, dict) else False
+
+
+def set_web_panel_visible(base_dir, value):
+    data = load_prefs(base_dir)
+    panel = data.get("web_panel") if isinstance(data.get("web_panel"), dict) else {}
+    panel["visible"] = bool(value)
+    data["web_panel"] = panel
+    save_prefs(base_dir, data)
+
+
 def get_adblock_filter_file(base_dir):
     return load_prefs(base_dir).get("adblock_filter_file", "")
 

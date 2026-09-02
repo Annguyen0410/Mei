@@ -540,6 +540,13 @@ class SearchWindow(QMainWindow):
         self.url_clear_action.setVisible(False)
         self.url_bar.textChanged.connect(lambda text: self.url_clear_action.setVisible(bool(text)))
         self.topbar_layout.addWidget(self.url_bar, 1)
+        # Opera GX-style web panels: messenger/media dock beside the page.
+        self.btn_panels = QToolButton()
+        self.btn_panels.setObjectName("TopIconButton")
+        self.btn_panels.setText("◫")
+        self.btn_panels.setToolTip("Web panels — Telegram, WhatsApp, Discord, Spotify... (docked beside the page)")
+        self.btn_panels.clicked.connect(self.show_web_panel_menu)
+        self.topbar_layout.addWidget(self.btn_panels)
         self.lbl_zoom = QLabel("100%")
         self.lbl_zoom.setObjectName("ZoomLabel")
         self.lbl_zoom.setMinimumWidth(42)
@@ -614,7 +621,20 @@ class SearchWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.web_container_layout.addWidget(self.stack, 1)
-        self.content_layout.addWidget(self.web_container, 1)
+        # Opera GX-style web panels: a right dock holding a slim WebEngine view
+        # that shares the main profile (logins persist across sessions). The
+        # dock frame is built here; its view is created lazily because the
+        # QWebEngineProfile does not exist yet at this point.
+        self._build_web_panel_dock()
+        self.panel_split = QSplitter(Qt.Horizontal)
+        self.panel_split.setChildrenCollapsible(False)
+        self.panel_split.setHandleWidth(2)
+        self.panel_split.addWidget(self.web_container)
+        self.panel_split.addWidget(self.panel_dock)
+        self.panel_split.setStretchFactor(0, 1)
+        self.panel_split.setStretchFactor(1, 0)
+        self.panel_dock.hide()
+        self.content_layout.addWidget(self.panel_split, 1)
         self.main_splitter.addWidget(self.content_widget)
         initial_sidebar = self._sidebar_expanded_nominal_width()
         self.main_splitter.setSizes([initial_sidebar, max(420, (1216 if self.embedded else 1228) - initial_sidebar)])
@@ -667,6 +687,10 @@ class SearchWindow(QMainWindow):
         self._load_ui_dynamic_background_pref()
         self.apply_styles()
         self._apply_responsive_layout()
+        # Restore the last web panel if it was open when the app closed.
+        _panel_title, panel_url = prefs.get_last_web_panel(self.base_dir)
+        if prefs.get_web_panel_visible(self.base_dir) and panel_url:
+            QTimer.singleShot(400, lambda: self.toggle_web_panel(_panel_title, panel_url))
         self._audio_indicator_timer = QTimer(self)
         self._audio_indicator_timer.timeout.connect(self._update_audio_indicators)
         self._audio_indicator_timer.start(5000)
@@ -1988,6 +2012,138 @@ class SearchWindow(QMainWindow):
         toast.raise_()
         toast.show()
         self._toast_timer.start(2200)
+
+    # ------------------------------------------------------------------
+    # Opera GX-style web panels: messenger/media apps docked beside the web.
+    # The panel view shares the main QWebEngineProfile, so logging into
+    # Telegram once keeps every later session signed in.
+
+    WEB_PANEL_PRESETS = (
+        ("Telegram", "✈", "https://web.telegram.org/k/"),
+        ("WhatsApp", "◉", "https://web.whatsapp.com/"),
+        ("Discord", "◕", "https://discord.com/channels/@me"),
+        ("Messenger", "◈", "https://www.messenger.com/"),
+        ("Spotify", "♫", "https://open.spotify.com/"),
+        ("YouTube Music", "▶", "https://music.youtube.com/"),
+        ("Instagram", "◍", "https://www.instagram.com/"),
+        ("Gmail", "✉", "https://mail.google.com/"),
+    )
+
+    def _build_web_panel_dock(self):
+        from litebrowser.ui import theme as _th
+
+        pal = _th._palette(prefs.get_shell_theme(self.base_dir), prefs.get_accent(self.base_dir))
+        self.panel_dock = QFrame()
+        self.panel_dock.setObjectName("WebPanelDock")
+        dock_layout = QVBoxLayout(self.panel_dock)
+        dock_layout.setContentsMargins(0, 0, 0, 0)
+        dock_layout.setSpacing(0)
+
+        header = QFrame()
+        header.setObjectName("WebPanelHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 3, 6, 3)
+        header_layout.setSpacing(4)
+        self.lbl_panel_title = QLabel("Panel")
+        self.lbl_panel_title.setObjectName("PageTitle")
+        f = self.lbl_panel_title.font()
+        f.setPointSize(9)
+        f.setBold(True)
+        self.lbl_panel_title.setFont(f)
+        header_layout.addWidget(self.lbl_panel_title, 1)
+        self.btn_panel_pop = QToolButton()
+        self.btn_panel_pop.setObjectName("TopIconButton")
+        self.btn_panel_pop.setText("↗")
+        self.btn_panel_pop.setToolTip("Open this panel as a full tab")
+        self.btn_panel_pop.clicked.connect(self._open_panel_in_tab)
+        self.btn_panel_reload = QToolButton()
+        self.btn_panel_reload.setObjectName("TopIconButton")
+        self.btn_panel_reload.setText("⟳")
+        self.btn_panel_reload.setToolTip("Reload panel")
+        self.btn_panel_reload.clicked.connect(lambda: self._ensure_panel_view().reload())
+        self.btn_panel_close = QToolButton()
+        self.btn_panel_close.setObjectName("TopIconButton")
+        self.btn_panel_close.setText("✕")
+        self.btn_panel_close.setToolTip("Close panel")
+        self.btn_panel_close.clicked.connect(self.close_web_panel)
+        header_layout.addWidget(self.btn_panel_pop)
+        header_layout.addWidget(self.btn_panel_reload)
+        header_layout.addWidget(self.btn_panel_close)
+        dock_layout.addWidget(header, 0)
+
+        # The WebEngine view is attached later by _ensure_panel_view(), after
+        # the shared QWebEngineProfile exists.
+        self.panel_view = None
+        self._panel_last_url = prefs.get_last_web_panel(self.base_dir)[1] or ""
+        self.panel_body = QWidget()
+        self.panel_body_layout = QVBoxLayout(self.panel_body)
+        self.panel_body_layout.setContentsMargins(0, 0, 0, 0)
+        dock_layout.addWidget(self.panel_body, 1)
+        self.panel_dock.setMinimumWidth(300)
+        self.panel_dock.setMaximumWidth(620)
+
+    def _ensure_panel_view(self):
+        if getattr(self, "panel_view", None) is not None:
+            return self.panel_view
+        self.panel_view = QWebEngineView(self.panel_dock)
+        self.panel_view.setObjectName("WebPanelView")
+        try:
+            self.panel_view.setPage(browser_page.BrowserPage(self.profile, self.panel_view, self.base_dir, host=self))
+        except Exception:
+            pass
+        self.panel_view.setZoomFactor(0.9)
+        self.panel_body_layout.addWidget(self.panel_view)
+        return self.panel_view
+
+    def toggle_web_panel(self, title="", url=""):
+        """Show/hide the panel dock; a new preset replaces the current URL."""
+        url = (url or "").strip()
+        if self.panel_dock.isVisible() and not url:
+            self.close_web_panel()
+            return
+        panel_view = self._ensure_panel_view()
+        if url:
+            self.lbl_panel_title.setText(title or "Panel")
+            self._panel_last_url = url
+            prefs.set_last_web_panel(self.base_dir, title, url)
+            panel_view.setUrl(QUrl(url))
+        if not self.panel_dock.isVisible():
+            self.panel_dock.show()
+            prefs.set_web_panel_visible(self.base_dir, True)
+            total = max(600, self.panel_split.width())
+            self.panel_split.setSizes([max(420, total - 380), 380])
+        panel_view.setFocus()
+
+    def close_web_panel(self):
+        self.panel_dock.hide()
+        prefs.set_web_panel_visible(self.base_dir, False)
+
+    def _open_panel_in_tab(self):
+        url = self._panel_last_url or ""
+        if url:
+            self.tab_manager.add_tab(QUrl(url), self.lbl_panel_title.text() or "Panel", is_active=True)
+
+    def show_web_panel_menu(self):
+        menu = QMenu(self)
+        for name, glyph, url in self.WEB_PANEL_PRESETS:
+            act = menu.addAction(f"{glyph}  {name}")
+            act.triggered.connect(lambda _c=False, n=name, u=url: self.toggle_web_panel(n, u))
+        menu.addSeparator()
+        custom = menu.addAction("⌨  Custom URL...")
+        custom.triggered.connect(self._open_custom_panel)
+        menu.addSeparator()
+        if self.panel_dock.isVisible():
+            close_act = menu.addAction("✕  Close panel")
+            close_act.triggered.connect(self.close_web_panel)
+        menu.exec_(self.cursor().pos())
+
+    def _open_custom_panel(self):
+        text, ok = QInputDialog.getText(self, "Web panel", "Panel URL:")
+        if ok and (text or "").strip():
+            url = text.strip()
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            self.toggle_web_panel("Custom", url)
 
     def update_urlbar(self, q, browser=None):
         if browser != self.current_browser():

@@ -1204,6 +1204,18 @@ QToolTip {
     background-color: %(ACCENT)s;
     border-radius: 1px;
 }
+/* Opera GX-style web panel dock beside the page. */
+#WebPanelDock {
+    background-color: %(CARD_BG)s;
+    border-left: 1px solid %(BORDER_SOFT)s;
+}
+#WebPanelHeader {
+    background-color: %(MAIN_BG_ALT)s;
+    border-bottom: 1px solid %(BORDER_SOFT)s;
+}
+#WebPanelView {
+    background-color: %(MAIN_BG)s;
+}
 """ % p
 
 

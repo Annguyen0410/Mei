@@ -135,7 +135,7 @@ class AppShell(QMainWindow):
 
         # Keyboard-first shell: Ctrl+K jumps to the omnibar, Ctrl+1..7 switch
         # straight to a workspace without touching the mouse.
-        QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self.omnibar.setFocus)
+        QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self._focus_omnibar)
         _workspace_order = ["home", "browser", "history", "ai", "personal", "library", "settings"]
         for _index, _name in enumerate(_workspace_order, start=1):
             _shortcut = QShortcut(QKeySequence("Ctrl+%d" % _index), self)
@@ -784,6 +784,12 @@ class AppShell(QMainWindow):
         self.refresh_shell()
         self.switch_workspace("personal")
         QMessageBox.information(self, "Task", f"Created task: {title}")
+
+    def _focus_omnibar(self):
+        """Ctrl+K: focus AND select existing text so typing replaces it (the
+        v6.4 binding left the caret mid-string with stale text selected)."""
+        self.omnibar.setFocus()
+        self.omnibar.selectAll()
 
     def _normalize_omnibar_cmd(self, text: str):
         return text.lower().strip()

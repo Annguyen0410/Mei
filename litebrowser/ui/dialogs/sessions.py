@@ -31,7 +31,6 @@ from litebrowser.ui.dialogs.common import _stylesheet
 
 def show_vpn_dialog(parent):
     base_dir = parent.base_dir
-    cfg_path = prefs.proxy_config_path(base_dir)
     dialog = QDialog(parent)
     dialog.setWindowTitle("VPN / Proxy")
     dialog.setGeometry(parent.x() + 200, parent.y() + 150, 420, 320)

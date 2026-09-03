@@ -506,7 +506,6 @@ class SearchWindow(QMainWindow):
         else:
             self.topbar_layout.setContentsMargins(4, 3, 4, 3)
             self.topbar_layout.setSpacing(2)
-        style = self.style()
         self.btn_back = QToolButton()
         self.btn_back.setObjectName("TopIconButton")
         self.btn_back.setText("←")
@@ -2734,9 +2733,6 @@ class SearchWindow(QMainWindow):
             self.close_split_view()
 
     def _build_web_panel_dock(self):
-        from litebrowser.ui import theme as _th
-
-        pal = _th._palette(prefs.get_shell_theme(self.base_dir), prefs.get_accent(self.base_dir))
         self.panel_dock = QFrame()
         self.panel_dock.setObjectName("WebPanelDock")
         dock_layout = QVBoxLayout(self.panel_dock)
@@ -3962,7 +3958,7 @@ class SearchWindow(QMainWindow):
         # Reader palette follows the shell theme (v6.4 forced a dark scheme
         # even in light themes, then dark-forced sites double-inverted).
         p = theme.palette()
-        bg, fg, muted = p["MAIN_BG"], p["TEXT"], p["TEXT_MUTED"]
+        bg, fg = p["MAIN_BG"], p["TEXT"]
         js = """
         var elements = document.querySelectorAll('header, footer, nav, aside, .sidebar, .ads, script, style, iframe');
         for (var i=0; i<elements.length; i++) elements[i].style.display = 'none';
@@ -4247,8 +4243,6 @@ class SearchWindow(QMainWindow):
             completed = getattr(download, "DownloadCompleted", None)
             cancelled = getattr(download, "DownloadCancelled", None)
             interrupted = getattr(download, "DownloadInterrupted", None)
-            in_progress = getattr(download, "DownloadInProgress", None)
-            requested = getattr(download, "DownloadRequested", None)
             terminal_states = [s for s in (completed, cancelled, interrupted) if s is not None]
             if state is None:
                 return  # unknown state — do not mark anything yet

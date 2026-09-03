@@ -8,7 +8,6 @@ import time
 from PyQt5.QtCore import (
     QDate,
     QFileSystemWatcher,
-    QPoint,
     QPointF,
     Qt,
     QTimer,
@@ -1137,7 +1136,6 @@ class PersonalWindow(QMainWindow):
             return
         titles = sorted({n["title"] for n in personal_service.list_notes(self.base_dir)})
         model = self._wiki_completer.model()
-        from PyQt5.QtCore import QStringListModel
 
         if model is None or not isinstance(model, QStringListModel):
             model = QStringListModel(titles, self._wiki_completer)
@@ -1349,7 +1347,6 @@ class PersonalWindow(QMainWindow):
 
     def _note_mouse_press(self, event):
         """Ctrl+click on a [[wiki-link]] opens that note (creates it if missing)."""
-        from PyQt5.QtCore import QEvent
 
         if not (event.modifiers() & Qt.ControlModifier) or event.button() != Qt.LeftButton:
             QPlainTextEdit.mousePressEvent(self.note_editor, event)

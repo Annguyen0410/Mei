@@ -107,7 +107,6 @@ class _WeekActivityChart(QWidget):
         import time as _time
 
         from litebrowser.core import prefs as _prefs
-        from litebrowser.ui import theme as _theme
 
         base_dir = self._page.shell.profile_dir
         entries = _prefs.load_history_entries(base_dir)

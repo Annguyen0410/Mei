@@ -540,7 +540,7 @@ def dispatch_ingest(profile_dir: str, envelope: dict[str, Any]) -> dict[str, Any
             "result": None,
             "error": _json_error("invalid_payload", str(e))["error"],
         }
-    except Exception as e:
+    except Exception:
         # Never return raw exception text to the phone: str(e) often embeds
         # local file paths (v6.4 leaked them).
         return {

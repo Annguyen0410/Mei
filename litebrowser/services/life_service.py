@@ -1,7 +1,7 @@
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import read_json, write_json

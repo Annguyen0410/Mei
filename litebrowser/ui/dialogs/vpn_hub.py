@@ -162,8 +162,6 @@ def run_leak_test(parent, base_dir) -> None:
         errors.append(f"OS path: {exc}")
     browser_path_ip = {"v": ""}
 
-    done = {"remaining": 1}
-
     def _finish():
         QApplication.restoreOverrideCursor()
         protected = bool(prefs.get_proxy_config(base_dir).get("enabled"))

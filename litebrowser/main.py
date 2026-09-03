@@ -59,7 +59,6 @@ def _saved_proxy_chromium_flag(app_dir: str) -> str:
         # auth challenge with the saved credentials at runtime. SOCKS5 with
         # auth is genuinely unsupported by Chromium flags — warn loudly.
         user = (cfg.get("user") or "").strip()
-        password = (cfg.get("password") or "").strip()
         if user and scheme == "socks5":
             os.environ["MEI_PROXY_AUTH_WARNING"] = (
                 "SOCKS5 with username/password is not supported by Chromium; connect an HTTP proxy for authenticated use."

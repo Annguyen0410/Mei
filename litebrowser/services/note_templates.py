@@ -11,7 +11,6 @@ import time
 from litebrowser.core import prefs
 from litebrowser.services import (
     focus_service,
-    history_service,
     life_service,
     personal_service,
 )

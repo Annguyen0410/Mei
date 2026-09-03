@@ -106,7 +106,6 @@ def poll_device_token(client_id: str, device: dict) -> dict:
     """
     import webbrowser
 
-    user_code = device.get("user_code", "")
     verification_url = device.get("verification_url", "https://www.google.com/device")
     device_code = device.get("device_code", "")
     expires_in = int(device.get("expires_in", 1800) or 1800)

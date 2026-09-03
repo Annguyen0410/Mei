@@ -876,8 +876,6 @@ class TabManager:
         expanding shows them all. Per-window, non-persistent by design."""
         if not group_name:
             return
-        ws_role = Qt.UserRole + workspace_manager.WORKSPACE_ROLE
-        current_ws = getattr(self.window, "current_workspace_id", workspace_manager.PRIMARY_WORKSPACE_ID)
         members = []
         collapsed_now = False
         for i in range(self.tab_list.count()):

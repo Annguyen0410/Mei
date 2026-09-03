@@ -7,7 +7,6 @@ window drains them on a QTimer and opens the URLs in real tabs.
 File lives in the profile dir so multiple windows/profiles never mix.
 """
 
-import json
 import os
 import threading
 from typing import Any

@@ -217,6 +217,7 @@ class NeuralGraphWidget(QWidget):
         self.setMaximumHeight(180)
         self._tick = 0.0
         self._nodes: list[dict] = []
+        self._edges: list[tuple[int, int]] = []
         self._total_note_count = 0
         self._subtitle = "No notes yet"
         self._timer = QTimer(self)
@@ -237,8 +238,11 @@ class NeuralGraphWidget(QWidget):
         raw = notes or []
         self._total_note_count = int(total_note_count) if total_note_count is not None else len(raw)
         self._nodes = []
+        title_index = {}
         for note in raw:
             nid = str(note.get("id") or "")
+            title = (note.get("title") or "").strip()
+            title_index[title.lower()] = len(self._nodes)
             # Deterministic layout: builtin hash() is salted per process, which
             # reshuffled the graph on every launch (v6.4 bug).
             digest = hashlib.md5(nid.encode("utf-8") or b"mei").hexdigest()
@@ -250,14 +254,30 @@ class NeuralGraphWidget(QWidget):
                     "speed": 0.012 + (h % 17) / 500.0,
                     "layer": ((h >> 8) % 200) / 100.0 - 1.0,
                     "orbit": 0.25 + ((h >> 16) % 75) / 100.0,
-                    "title": (note.get("title") or "")[:28],
+                    "title": title[:28],
                     "hue": (h2 % 40) - 20,
                 }
             )
+        # Real edges from [[wiki-links]]: a link between two known notes draws
+        # as a highlighted connection (v6.6 turns the decorative graph into an
+        # actual note map).
+        self._edges = []
+        for note in raw:
+            src = title_index.get((note.get("title") or "").strip().lower())
+            if src is None:
+                continue
+            for match in WIKILINK_RE.finditer(note.get("content") or ""):
+                dst = title_index.get(match.group(1).strip().lower())
+                if dst is not None and dst != src:
+                    edge = (min(src, dst), max(src, dst))
+                    if edge not in self._edges:
+                        self._edges.append(edge)
         if self._total_note_count == 0:
             self._subtitle = "No notes yet"
+        elif self._edges:
+            self._subtitle = f"{self._total_note_count} notes · {len(self._edges)} links"
         else:
-            self._subtitle = f"{self._total_note_count} notes"
+            self._subtitle = f"{self._total_note_count} notes · type [[ to link"
         if not self._nodes:
             for idx in range(10):
                 self._nodes.append(
@@ -306,15 +326,27 @@ class NeuralGraphWidget(QWidget):
             points.append((x, y, size, depth, node))
 
         base_rgb = (140, 170, 210) if dark else (155, 109, 60)
+        accent = QColor(p["ACCENT"])
+        # Real wiki-link edges first (under the dots): thick accent lines.
+        for src, dst in self._edges:
+            if src >= len(points) or dst >= len(points):
+                continue
+            x1, y1, _s1, _d1, _n1 = points[src]
+            x2, y2, _s2, _d2, _n2 = points[dst]
+            painter.setPen(QPen(accent, 2))
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+        # Decorative proximity lines only between unlinked pairs.
+        linked = {e for e in self._edges}
         for idx, (x1, y1, _s1, d1, _n1) in enumerate(points):
             limit = min(idx + 4, len(points))
             for jdx in range(idx + 1, limit):
+                if (min(idx, jdx), max(idx, jdx)) in linked:
+                    continue
                 x2, y2, _s2, d2, _n2 = points[jdx]
                 alpha = int(30 + 70 * ((d1 + d2) * 0.5))
                 painter.setPen(QPen(QColor(*base_rgb, alpha), 1))
                 painter.drawLine(int(x1), int(y1), int(x2), int(y2))
 
-        accent = QColor(p["ACCENT"])
         for x, y, size, depth, node in points:
             dh = int(node.get("hue") or 0)
             glow = QColor(

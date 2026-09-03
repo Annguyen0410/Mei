@@ -2304,7 +2304,8 @@ class SearchWindow(QMainWindow):
             self.add_new_tab(QUrl(url), browser.title() or "Incognito", is_active=True, is_incognito=True)
             self._flash_status("Opened in incognito")
 
-    def _copy_page_address(self):        browser = self.current_browser()
+    def _copy_page_address(self):
+        browser = self.current_browser()
         if browser is None:
             return
         url = browser.url().toString()

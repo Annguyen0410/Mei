@@ -660,9 +660,36 @@ class SettingsPage(QWidget):
         self.cmb_density = QComboBox()
         self.cmb_density.addItems(["compact", "comfortable", "tablet"])
         self.cmb_theme = QComboBox()
-        self.cmb_theme.addItems(sorted(theme.PALETTES.keys()))
+        # Pretty display names + a live color swatch per entry (a bare key
+        # list like 'sand-day' told users nothing about the vibe).
+        self._theme_ids = []
+        for mode_id in sorted(theme.PALETTES.keys()):
+            pal = theme._palette(mode_id, None)
+            self.cmb_theme.addItem(theme.theme_display_name(mode_id))
+            self._theme_ids.append(mode_id)
+            pixmap = QPixmap(34, 18)
+            pixmap.fill(QColor(pal["CARD_BG"]))
+            painter = QPainter(pixmap)
+            painter.setPen(QPen(QColor(pal["BORDER_SOFT"]), 1))
+            painter.drawRect(0, 0, 33, 17)
+            painter.setBrush(QColor(pal["ACCENT"]))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(3, 4, 12, 10, 2, 2)
+            painter.setBrush(QColor(pal["MAIN_BG_ALT"]))
+            painter.drawRoundedRect(18, 4, 12, 10, 2, 2)
+            painter.end()
+            self.cmb_theme.setItemIcon(self.cmb_theme.count() - 1, QIcon(pixmap))
         self.cmb_accent = QComboBox()
-        self.cmb_accent.addItems(sorted(theme.ACCENTS.keys()))
+        for accent_id in sorted(theme.ACCENTS.keys()):
+            self.cmb_accent.addItem(theme.accent_display_name(accent_id))
+            pixmap = QPixmap(24, 18)
+            pixmap.fill(QColor("transparent"))
+            painter = QPainter(pixmap)
+            painter.setPen(QPen(QColor(pal["INPUT_BORDER"]), 1))
+            painter.setBrush(QColor(theme.ACCENTS[accent_id][0]))
+            painter.drawRoundedRect(3, 3, 18, 12, 4, 4)
+            painter.end()
+            self.cmb_accent.setItemIcon(self.cmb_accent.count() - 1, QIcon(pixmap))
         self.spin_max_live_tabs = QSpinBox()
         self.spin_max_live_tabs.setRange(1, 32)
         self.spin_max_live_tabs.setToolTip("Fewer live tabs = lighter RAM/CPU when hundreds of tabs are open.")
@@ -920,12 +947,19 @@ class SettingsPage(QWidget):
         idx = self.cmb_density.findText(density)
         if idx >= 0:
             self.cmb_density.setCurrentIndex(idx)
-        idx = self.cmb_theme.findText(theme_name)
-        if idx >= 0:
-            self.cmb_theme.setCurrentIndex(idx)
-        idx = self.cmb_accent.findText(accent)
-        if idx >= 0:
-            self.cmb_accent.setCurrentIndex(idx)
+        # Theme/accent combos store pretty labels; map back through ids.
+        try:
+            theme_idx = self._theme_ids.index(theme_name)
+            self.cmb_theme.setCurrentIndex(theme_idx)
+        except (ValueError, AttributeError):
+            pass
+        accent_id = accent if accent in theme.ACCENTS else "brass"
+        accent_idx = next(
+            (i for i in range(self.cmb_accent.count()) if self.cmb_accent.itemText(i) == theme.accent_display_name(accent_id)),
+            -1,
+        )
+        if accent_idx >= 0:
+            self.cmb_accent.setCurrentIndex(accent_idx)
         self.spin_max_live_tabs.setValue(prefs.get_max_live_tabs(self.shell.profile_dir))
         self.chk_new_tab_steam.setChecked(prefs.get_new_tab_steam(self.shell.profile_dir))
         self.chk_new_tab_greeting.setChecked(prefs.get_new_tab_greeting(self.shell.profile_dir))
@@ -1056,8 +1090,18 @@ class SettingsPage(QWidget):
         QMessageBox.information(self, "Sync", msg if ok else msg)
 
     def save_ui(self):
-        prefs.set_shell_theme(self.shell.profile_dir, self.cmb_theme.currentText())
-        prefs.set_accent(self.shell.profile_dir, self.cmb_accent.currentText())
+        # Combos carry display labels; map back to stable theme/accent ids.
+        try:
+            theme_id = self._theme_ids[self.cmb_theme.currentIndex()]
+        except (AttributeError, IndexError):
+            theme_id = theme.DEFAULT_THEME
+        selected_label = self.cmb_accent.currentText()
+        accent_id = next(
+            (key for key in theme.ACCENTS if theme.accent_display_name(key) == selected_label),
+            "brass",
+        )
+        prefs.set_shell_theme(self.shell.profile_dir, theme_id)
+        prefs.set_accent(self.shell.profile_dir, accent_id)
         prefs.set_max_live_tabs(self.shell.profile_dir, self.spin_max_live_tabs.value())
         prefs.set_new_tab_steam(self.shell.profile_dir, self.chk_new_tab_steam.isChecked())
         prefs.set_new_tab_greeting(self.shell.profile_dir, self.chk_new_tab_greeting.isChecked())

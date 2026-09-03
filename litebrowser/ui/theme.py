@@ -310,6 +310,30 @@ PALETTES = {
 # Theme shown when a profile has never picked one (and for unknown names).
 DEFAULT_THEME = "minimal"
 
+# Display names for the picker: the keys stay stable IDs, the labels tell the
+# story ("Sakura Café" beats "rose-day" in a menu).
+THEME_LABELS = {
+    "minimal": "Latte Cream · all-day default",
+    "latte": "Honey Crème · golden & warm",
+    "rose-day": "Sakura Café · soft rose",
+    "dawn": "Café Dawn · peachy first light",
+    "matcha-day": "Matcha Latte · green & fresh",
+    "sand-day": "Morning Crème · neutral office",
+    "cafe-night": "Espresso House · amber lamps",
+    "minimal-night": "Midnight Mocha · latte-foam gold",
+    "ocean-night": "Café Azul · deep teal night",
+    "forest-night": "Matcha Night · pine & moss",
+    "midnight-ember": "Ember Night · fireplace glow",
+}
+
+
+def theme_display_name(mode: str) -> str:
+    return THEME_LABELS.get(mode, mode)
+
+
+def accent_display_name(accent: str) -> str:
+    return accent.capitalize()
+
 DEFAULTS = {
     "TEXT_DIM": "#8a7a63",
     "RADIUS": "10px",

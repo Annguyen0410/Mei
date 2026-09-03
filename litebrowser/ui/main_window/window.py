@@ -736,6 +736,22 @@ class SearchWindow(QMainWindow):
         self.btn_rail_ai.clicked.connect(self.toggle_ai_sidebar)
         rail_layout.addWidget(self.btn_rail_panels)
         rail_layout.addWidget(self.btn_rail_ai)
+        # Mini media player: appears when a tab is audible — play/pause and
+        # mute without hunting for the tab (Edge/Opera-style).
+        self.btn_media_play = QToolButton()
+        self.btn_media_play.setObjectName("SidebarPanelBtn")
+        self.btn_media_play.setText("⏸")
+        self.btn_media_play.setToolTip("Play / pause the audible tab")
+        self.btn_media_play.clicked.connect(self._toggle_media_playback)
+        self.btn_media_play.hide()
+        self.btn_media_mute = QToolButton()
+        self.btn_media_mute.setObjectName("SidebarPanelBtn")
+        self.btn_media_mute.setText("🔇")
+        self.btn_media_mute.setToolTip("Mute / unmute the audible tab")
+        self.btn_media_mute.clicked.connect(self._toggle_media_mute)
+        self.btn_media_mute.hide()
+        rail_layout.addWidget(self.btn_media_play)
+        rail_layout.addWidget(self.btn_media_mute)
         rail_layout.addStretch(1)
         self.dock_rail.setFixedWidth(34)
         self.panel_split.addWidget(self.dock_rail)
@@ -2451,6 +2467,60 @@ class SearchWindow(QMainWindow):
         preview.move(8, self.content_widget.height() - preview.height() - 4)
         preview.show()
         preview.raise_()
+
+    def _first_audible_browser(self):
+        for browser in self.browsers:
+            if browser is None:
+                continue
+            try:
+                if browser.page().recentlyAudible():
+                    return browser
+            except Exception:
+                continue
+        return None
+
+    def on_audible_changed(self, audible: bool, browser=None):
+        """Show/hide the mini-player; the flag also drives the row chip."""
+        try:
+            if browser is not None:
+                browser.setProperty("audible", bool(audible))
+        except Exception:
+            pass
+        has_audio = audible or self._first_audible_browser() is not None
+        self.btn_media_play.setVisible(has_audio)
+        self.btn_media_mute.setVisible(has_audio)
+        if browser is not None:
+            self.tab_manager.refresh_row_state_labels()
+
+    def _toggle_media_playback(self):
+        browser = self._first_audible_browser()
+        if browser is None:
+            return
+        # Qt5's QWebEnginePage lacks a PlayOrPause action; toggle every media
+        # element on the page (works for YouTube/Spotify embeds and players).
+        js = (
+            "(function(){var els=document.querySelectorAll('video,audio');"
+            "if(!els.length)return 'no media';"
+            "var any=false;"
+            "for(var i=0;i<els.length;i++){var e=els[i];"
+            "if(!e.paused){e.pause();any=true;}else if(any){continue;}else{e.play().catch(function(){});any=true;}}"
+            "return 'toggled';})()"
+        )
+
+        def _done(result):
+            self._flash_status("Media play/pause" if result == "toggled" else "No media element found")
+
+        browser.page().runJavaScript(js, _done)
+
+    def _toggle_media_mute(self):
+        browser = self._first_audible_browser()
+        if browser is None:
+            return
+        page = browser.page()
+        muted = not page.isAudioMuted()
+        page.setAudioMuted(muted)
+        self.btn_media_mute.setText("🔊" if muted else "🔇")
+        self._flash_status("Media muted" if muted else "Media unmuted")
 
     def on_load_progress(self, progress, browser=None):
         """Drive the thin load bar from the *current* tab only."""

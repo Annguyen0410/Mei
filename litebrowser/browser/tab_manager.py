@@ -425,6 +425,12 @@ class TabManager:
         browser.page().linkHovered.connect(
             lambda url, b=browser: self.window.on_link_hovered(url, b)
         )
+        # Signal-based audible tracking (replaces the v6.5 5s poll): the rail
+        # mini-player appears the moment a tab starts playing.
+        if hasattr(browser.page(), "recentlyAudibleChanged"):
+            browser.page().recentlyAudibleChanged.connect(
+                lambda audible, b=browser: self.window.on_audible_changed(bool(audible), b)
+            )
         # Renderer crash recovery: a dead renderer used to leave a white tab
         # with no way back (v6.4 had no renderProcessTerminated handler).
         browser.renderProcessTerminated.connect(

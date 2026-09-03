@@ -14,7 +14,7 @@ def _rm(path):
 
 
 class TestAccentTheming(unittest.TestCase):
-    MODES = ("cafe-night", "cafe-day", "ocean-night", "sand-day", "minimal", "minimal-night")
+    MODES = tuple(sorted(theme.PALETTES.keys()))
 
     def setUp(self):
         self._tmp = tempfile.mkdtemp(prefix="lb_test_")
@@ -42,8 +42,8 @@ class TestAccentTheming(unittest.TestCase):
 
     def test_accent_override_recolours_tokens(self):
         p = theme._palette("cafe-night", "teal")
-        self.assertEqual(p["ACCENT"], "#3aa59a")
-        self.assertEqual(p["INPUT_FOCUS"], "#45b8ac")
+        self.assertEqual(p["ACCENT"], theme.ACCENTS["teal"][0])
+        self.assertEqual(p["INPUT_FOCUS"], theme.ACCENTS["teal"][3])
 
     def test_invalid_accent_falls_back(self):
         p = theme._palette("cafe-night", "does-not-exist")

@@ -17,7 +17,6 @@ from PyQt5.QtCore import (
     QTimer,
     QUrl,
     QVariantAnimation,
-    pyqtSignal,
 )
 from PyQt5.QtGui import QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPainter, QPen
 from PyQt5.QtNetwork import QNetworkProxy

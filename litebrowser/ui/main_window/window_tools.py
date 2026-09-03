@@ -3,7 +3,7 @@
 # Extracted from window.py so each concern stays reviewable; the methods only
 # touch SearchWindow-owned attributes (browsers, tab_manager, base_dir, ...).
 
-from PyQt5.QtCore import QObject, Qt, QUrl, pyqtSignal
+from PyQt5.QtCore import QObject, Qt, pyqtSignal
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
     QFileDialog,
@@ -15,8 +15,6 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QShortcut,
     QToolButton,
-    QVBoxLayout,
-    QWidget,
 )
 
 from litebrowser.core import prefs

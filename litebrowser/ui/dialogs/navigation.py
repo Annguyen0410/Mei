@@ -105,6 +105,8 @@ def show_quick_switcher(parent):
         ("/group-tabs", "Group tabs by domain"),
         ("/save-page", "Save page to Library"),
         ("/status", "Focus timer status"),
+        ("/template daily", "Daily plan note (tasks, events, focus)"),
+        ("/template weekly", "Weekly review note"),
         ("/theme", "Switch theme (e.g. /theme matcha-day)"),
         ("/accent", "Switch accent color (e.g. /accent matcha)"),
     )

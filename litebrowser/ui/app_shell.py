@@ -169,6 +169,7 @@ class AppShell(QMainWindow):
             "/save-tabs": "Save current tabs as a named set · /save-tabs Research",
             "/theme": "Switch theme instantly · /theme matcha-day",
             "/accent": "Switch accent color · /accent matcha",
+            "/template daily": "Daily plan note · /template weekly for a review",
             "/summarize": "Summarize the active browser page with AI",
             "/brief": "Show your local Morning Brief (history + tasks + focus)",
             "/agent": "Agent actions · /agent summary · /agent tasks a | b",
@@ -1076,12 +1077,31 @@ class AppShell(QMainWindow):
                     "Welcome to the café.\n/focus 25 — start a 25 min pour\n/status — check the timer\nRecent pours: %d" % len(focus_service.focus_journal(self.profile_dir)),
                 )
             return
+        if self._match_cmd(lowered, "/template"):
+            from litebrowser.services import note_templates
+
+            arg = text[len("/template"):].strip().lower()
+            if arg in ("daily", "day"):
+                note = note_templates.create_daily_note(self.profile_dir)
+            elif arg in ("weekly", "review"):
+                note = note_templates.create_weekly_review(self.profile_dir)
+            else:
+                QMessageBox.information(
+                    self, "Templates",
+                    "Usage: /template daily   — today's plan (tasks, events, top sites)\n"
+                    "/template weekly   — last-7-days review",
+                )
+                return
+            self._insight_cache = None
+            self.refresh_shell()
+            self.switch_workspace("personal")
+            self.personal_page.select_note(note["id"])
+            return
         if lowered == "/focus" or lowered.startswith("/focus "):
             from litebrowser.services import focus_service
             raw = text[len("/focus"):].strip()
             minutes = 25
-            label = ""
-            for token in raw.split():
+            label = ""            for token in raw.split():
                 if token.isdigit():
                     minutes = int(token)
                 else:

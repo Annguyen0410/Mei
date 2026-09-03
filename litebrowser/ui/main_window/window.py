@@ -66,6 +66,7 @@ from litebrowser.browser.browser_page import (
     ensure_webgl_disable_script,
 )
 from litebrowser.browser.tab_manager import (
+    TAB_GROUP_COLLAPSED_ROLE,
     TAB_GROUP_COLORS,
     TAB_GROUP_COLOR_ROLE,
     TAB_GROUP_ROLE,
@@ -1511,6 +1512,7 @@ class SearchWindow(QMainWindow):
         query = self.tab_filter.text().strip().lower() if hasattr(self, "tab_filter") else ""
         current_ws = self.current_workspace_id
         visible_rows = []
+        # First pass: workspace + filter, as before.
         for i in range(self.tab_list.count()):
             item = self.tab_list.item(i)
             tab_ws = item.data(ws_role) if item else None
@@ -1520,6 +1522,24 @@ class SearchWindow(QMainWindow):
             item.setHidden(not visible)
             if visible:
                 visible_rows.append(i)
+        # Second pass: folded groups hide their member rows (the currently
+        # selected tab of a folded group stays visible — Chrome keeps the
+        # active tab on screen too).
+        collapsed_members = {}
+        for i in visible_rows:
+            item = self.tab_list.item(i)
+            if item is None:
+                continue
+            group = item.data(TAB_GROUP_ROLE) or ""
+            if group and bool(item.data(TAB_GROUP_COLLAPSED_ROLE)):
+                if item is self.tab_list.currentItem():
+                    continue  # active member of a folded group stays visible
+                collapsed_members.setdefault(group, []).append(i)
+        for group, rows in collapsed_members.items():
+            for i in rows:
+                self.tab_list.item(i).setHidden(True)
+                if i in visible_rows:
+                    visible_rows.remove(i)
         current_row = self.tab_list.currentRow()
         if visible_rows and (current_row not in visible_rows):
             # Only auto-switch when the current tab was hidden by a *workspace*
@@ -2162,6 +2182,9 @@ class SearchWindow(QMainWindow):
             group_actions[g_act] = (g_name, g_color)
         remove_group_action = group_menu.addAction("Remove group")
         remove_group_action.setEnabled(bool(current_group))
+        if current_group:
+            group_collapsed = bool(item.data(TAB_GROUP_COLLAPSED_ROLE))
+            toggle_fold_action = group_menu.addAction("Expand group" if group_collapsed else "Collapse group")
         move_menu = menu.addMenu("Move to workspace")
         workspace_actions = {}
         for workspace in workspace_manager.get_workspaces_list(self.base_dir):
@@ -2232,6 +2255,8 @@ class SearchWindow(QMainWindow):
         elif action == remove_group_action:
             self.tab_manager.set_tab_group(row, "", "")
             self._flash_status("Group removed")
+        elif current_group and action == toggle_fold_action:
+            self.tab_manager.toggle_group_collapse(current_group)
         elif action == dup_action:
             self.tab_manager.duplicate_tab_at_row(row)
         elif action == close_action:

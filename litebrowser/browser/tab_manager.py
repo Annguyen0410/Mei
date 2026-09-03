@@ -25,6 +25,7 @@ TAB_PINNED_ROLE = Qt.UserRole + 1
 TAB_META_ROLE = Qt.UserRole + 10
 TAB_GROUP_ROLE = Qt.UserRole + 11  # group name ("" = no group)
 TAB_GROUP_COLOR_ROLE = Qt.UserRole + 12  # hex color or ""
+TAB_GROUP_COLLAPSED_ROLE = Qt.UserRole + 13  # bool: group folded on the desk
 
 # Chrome-style tab group palette: saturated but theme-agnostic accent chips.
 TAB_GROUP_COLORS = (
@@ -824,6 +825,36 @@ class TabManager:
         color = item.data(TAB_GROUP_COLOR_ROLE) or ""
         if name:
             self.set_tab_group(i, name, color)
+
+    def toggle_group_collapse(self, group_name: str):
+        """Fold/unfold a colored group on the desk.
+
+        Collapsed hides every member row except the currently-selected one;
+        expanding shows them all. Per-window, non-persistent by design."""
+        if not group_name:
+            return
+        ws_role = Qt.UserRole + workspace_manager.WORKSPACE_ROLE
+        current_ws = getattr(self.window, "current_workspace_id", workspace_manager.PRIMARY_WORKSPACE_ID)
+        members = []
+        collapsed_now = False
+        for i in range(self.tab_list.count()):
+            item = self.tab_list.item(i)
+            if item is None or (item.data(TAB_GROUP_ROLE) or "") != group_name:
+                continue
+            members.append(item)
+            collapsed_now = bool(item.data(TAB_GROUP_COLLAPSED_ROLE))
+        new_state = not collapsed_now
+        for item in members:
+            item.setData(TAB_GROUP_COLLAPSED_ROLE, new_state)
+        # Re-run the visibility pass so hidden/show applies immediately.
+        apply_visibility = getattr(self.window, "_apply_tab_list_visibility", None)
+        if apply_visibility is not None:
+            apply_visibility()
+        self.update_tab_count()
+        state_lbl = "folded" if new_state else "unfolded"
+        flash = getattr(self.window, "_flash_status", None)
+        if flash is not None:
+            flash(f"Group '{group_name}' {state_lbl}")
 
     def set_tab_pinned(self, i, pinned):
         """Toggle pin state for row ``i``; keeps visuals in sync.

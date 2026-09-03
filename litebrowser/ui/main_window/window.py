@@ -726,6 +726,13 @@ class SearchWindow(QMainWindow):
         self.panel_split.addWidget(self.dock_rail)
         self.panel_split.setStretchFactor(2, 0)
         self.content_layout.addWidget(self.panel_split, 1)
+        # Chrome-style link-hover preview: the target URL shows in a slim strip
+        # at the bottom-left while hovering links (never blocks the page — it
+        # is transparent for mouse events).
+        self.link_preview = QLabel(self.content_widget)
+        self.link_preview.setObjectName("LinkPreview")
+        self.link_preview.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.link_preview.hide()
         self.main_splitter.addWidget(self.content_widget)
         initial_sidebar = self._sidebar_expanded_nominal_width()
         self.main_splitter.setSizes([initial_sidebar, max(420, (1216 if self.embedded else 1228) - initial_sidebar)])
@@ -855,6 +862,10 @@ class SearchWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._apply_responsive_layout()
+        # Keep the hover-preview strip pinned to the bottom edge.
+        preview = getattr(self, "link_preview", None)
+        if preview is not None and preview.isVisible():
+            preview.move(8, self.content_widget.height() - preview.height() - 4)
 
     def _sidebar_expanded_nominal_width(self):
         """Preferred sidebar width when expanded (not collapsed rail)."""
@@ -2229,6 +2240,23 @@ class SearchWindow(QMainWindow):
         self.sidebarWidget.hide()
         self.topbar.hide()
         self._flash_status("Zen mode — Ctrl+Shift+Z to exit")
+
+    def on_link_hovered(self, url, browser=None):
+        """Chrome-style bottom-left strip: the link target while hovering."""
+        if browser is not None and browser is not self.current_browser():
+            return
+        preview = getattr(self, "link_preview", None)
+        if preview is None:
+            return
+        url = (url or "").strip()
+        if not url:
+            preview.hide()
+            return
+        preview.setText(url[:160])
+        preview.adjustSize()
+        preview.move(8, self.content_widget.height() - preview.height() - 4)
+        preview.show()
+        preview.raise_()
 
     def on_load_progress(self, progress, browser=None):
         """Drive the thin load bar from the *current* tab only."""

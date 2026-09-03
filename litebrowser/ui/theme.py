@@ -1460,6 +1460,15 @@ QToolTip {
     background-color: %(SIDEBAR_BG)s;
     border-left: 1px solid %(BORDER_SOFT)s;
 }
+/* Chrome-style link-hover target strip. */
+#LinkPreview {
+    background-color: %(CARD_BG)s;
+    color: %(TEXT_MUTED)s;
+    border: 1px solid %(BORDER_SOFT)s;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 11px;
+}
 """ % p
 
 

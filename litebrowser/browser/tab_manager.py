@@ -420,6 +420,10 @@ class TabManager:
         browser.loadProgress.connect(
             lambda progress, b=browser: self.window.on_load_progress(progress, b)
         )
+        # Chrome-style hover preview: show link targets in the bottom strip.
+        browser.page().linkHovered.connect(
+            lambda url, b=browser: self.window.on_link_hovered(url, b)
+        )
         # Renderer crash recovery: a dead renderer used to leave a white tab
         # with no way back (v6.4 had no renderProcessTerminated handler).
         browser.renderProcessTerminated.connect(

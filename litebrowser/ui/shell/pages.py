@@ -735,9 +735,11 @@ class SettingsPage(QWidget):
         self.chk_new_tab_steam = QCheckBox("Animated steam on the new-tab café cup")
         self.chk_new_tab_greeting = QCheckBox("Café time-greeting on the new-tab hero")
         self.chk_show_brief = QCheckBox("Show Morning Brief card on Home")
+        self.chk_shield = QCheckBox("🛡 Distraction Shield — always block social/autoplay hosts (also auto-on during focus pours)")
         extras_layout.addWidget(self.chk_new_tab_steam)
         extras_layout.addWidget(self.chk_new_tab_greeting)
         extras_layout.addWidget(self.chk_show_brief)
+        extras_layout.addWidget(self.chk_shield)
         content_layout.addWidget(extras_card)
 
         sync_card = QFrame()
@@ -969,6 +971,7 @@ class SettingsPage(QWidget):
         self.chk_new_tab_steam.setChecked(prefs.get_new_tab_steam(self.shell.profile_dir))
         self.chk_new_tab_greeting.setChecked(prefs.get_new_tab_greeting(self.shell.profile_dir))
         self.chk_show_brief.setChecked(prefs.get_show_morning_brief(self.shell.profile_dir))
+        self.chk_shield.setChecked(prefs.get_pref(self.shell.profile_dir, "shield_always_on", False))
         self.chk_auto_theme.setChecked(prefs.get_auto_theme(self.shell.profile_dir))
         self.chk_sync_enabled.setChecked(prefs.get_sync_enabled(self.shell.profile_dir))
         self.ed_sync_endpoint.setText(prefs.get_sync_endpoint(self.shell.profile_dir))
@@ -1112,6 +1115,7 @@ class SettingsPage(QWidget):
         prefs.set_new_tab_steam(self.shell.profile_dir, self.chk_new_tab_steam.isChecked())
         prefs.set_new_tab_greeting(self.shell.profile_dir, self.chk_new_tab_greeting.isChecked())
         prefs.set_show_morning_brief(self.shell.profile_dir, self.chk_show_brief.isChecked())
+        prefs.save_pref(self.shell.profile_dir, "shield_always_on", self.chk_shield.isChecked())
         prefs.set_auto_theme(self.shell.profile_dir, self.chk_auto_theme.isChecked())
         # Keep the shell's auto-theme watcher in sync with the new setting.
         if hasattr(self.shell, "_sync_auto_theme_timer"):

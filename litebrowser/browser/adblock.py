@@ -5,6 +5,15 @@ import re
 from PyQt5.QtCore import QUrl
 from PyQt5.QtWebEngineCore import QWebEngineUrlRequestInterceptor
 
+from litebrowser.services import focus_service
+
+# Distraction Shield defaults: the loud corners of the internet. Custom hosts
+# join these via prefs (shield_custom_hosts).
+_DISTRACTION_HOSTS = (
+    "facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com",
+    "reddit.com", "9gag.com", "netflix.com", "web.whatsapp.com", "messenger.com",
+)
+
 _CACHED_CHROME_VERSION: str | None = None
 _CACHED_CHROME_FULL_VERSION: str | None = None
 _DOMAIN_RE = re.compile(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", re.IGNORECASE)
@@ -220,9 +229,13 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
         self._blocked_domains = frozenset(_default_blocked_domains())
         self._filter_file_domains = set()
         self._all_blocked_domains = self._blocked_domains
+        self.shield_always = False
+        self.shield_active = False
+        self._shield_custom = set()
         if base_dir:
             self.reload_filter_file()
             self._reload_privacy_prefs()
+            self._reload_shield_state()
 
     def reload_filter_file(self):
         if not self._base_dir:
@@ -242,8 +255,27 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
             from litebrowser.core import prefs
             self.strict_referrer = bool(prefs.get_strict_referrer(self._base_dir))
             self.strip_client_hints = bool(prefs.get_strip_client_hints(self._base_dir))
+            self.shield_always = bool(prefs.get_pref(self._base_dir, "shield_always_on", False))
+            self._shield_custom = set(prefs.get_pref(self._base_dir, "shield_custom_hosts", []) or [])
         except Exception:
             pass
+
+    def _reload_shield_state(self):
+        """Shield is on when 'always' is set OR a focus pour is running —
+        the quiet café kicks distractions out while you work."""
+        self.shield_active = bool(
+            getattr(self, "shield_always", False) or focus_service.focus_status(self._base_dir).get("running")
+        )
+
+    def _is_shielded_host(self, host: str) -> bool:
+        if not self.shield_active:
+            return False
+        if host in self._shield_custom:
+            return True
+        for domain in _DISTRACTION_HOSTS:
+            if host == domain or host.endswith("." + domain):
+                return True
+        return False
 
     def _all_blocked(self):
         return self._all_blocked_domains
@@ -345,6 +377,11 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
                     return
 
         if is_challenge:
+            return
+        # Distraction Shield: silent-block social/autoplay while a pour runs
+        # (or when 'always on'). Checked after compat hosts so test pages work.
+        if self.shield_active and self._is_shielded_host(host):
+            info.block(True)
             return
         if self._is_blocked_host(host):
             info.block(True)

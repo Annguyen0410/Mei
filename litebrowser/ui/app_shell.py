@@ -435,6 +435,9 @@ class AppShell(QMainWindow):
             self.lbl_status_context.setText("Web search — press Enter")
 
     def refresh_shell(self, force_deep: bool = False):
+        # Distraction Shield follows the focus session; refresh_shell runs on
+        # every command + the auto-theme tick, so the shield flips within ~5 min.
+        self._refresh_shield_state()
         # Auto theme: the café flips day/night palettes with the clock when on.
         theme_name = prefs.resolved_auto_theme(self.profile_dir)
         # Re-polishing 8 top-level widgets reparses a ~790-line QSS sheet and
@@ -846,6 +849,17 @@ class AppShell(QMainWindow):
         self.lbl_status_context.setText(f"Last sync: {time.strftime('%H:%M:%S')}")
         QMessageBox.information(self, "Sync", msg)
 
+    def _refresh_shield_state(self):
+        """Push the current shield (focus running / always-on) into every
+        TrackingBlocker instance in this shell."""
+        for page in (self.browser_page,):
+            for interceptor in [getattr(page, "interceptor", None)] + list(getattr(page, "_incognito_interceptors", []) or []):
+                if interceptor is not None:
+                    try:
+                        interceptor._reload_shield_state()
+                    except Exception:
+                        pass
+
     def _flash_status(self, message: str):
         """Transient status-line feedback (mirrors SearchWindow's toast but
         lands in the shell's status strip instead)."""
@@ -1124,6 +1138,7 @@ class AppShell(QMainWindow):
                 else:
                     label = (label + " " + token).strip()
             session = focus_service.start_focus(self.profile_dir, minutes=minutes, label=label)
+            self._refresh_shield_state()
             self._insight_cache = None
             self.refresh_shell()
             QMessageBox.information(

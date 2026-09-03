@@ -12,6 +12,7 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 > - **Mei identity, louder** — Copilot-style AI sidebar chatting with the visible page, Dashboard 2.0 with a 7-day activity chart, Command palette (quick switcher now launches all 17 slash commands), GX Control Center with a live RAM graph and tab limiter.
 > - **Denser, calmer chrome** — 32px slim tab rows with group color dots, Zen mode (Ctrl+Shift+Z) hides every chrome surface for pure reading, slimmer stat tiles.
 > - **QoL round** — **16 themes** total (Lavender Latte/Dusk, Hot Cocoa/Mint Mocha, Blueberry Night join); Chrome-style **link-hover URL preview**; **hard reload** (Ctrl+Shift+R); **middle-click paste & go** on the URL bar; **copy page address** in the page menu; **download completion toasts**; **crash-safe session autosave** every 5 minutes; searchable hotkeys hub now lists every mouse gesture and shortcut.
+> - **Tab management round** — colored groups **fold/unfold** on the desk (Chrome parity, active tab of a folded group stays visible); playing tabs get a **speaker chip** in the row state slot (replacing the old "[Sound]" title prefix); **reopen in incognito** from tab and page menus; **middle-click opens bookmarks/history/reading rows in background tabs**; clicking the zoom label resets zoom; the reading list confirms with a toast.
 
 > ## What's new in 6.5
 >

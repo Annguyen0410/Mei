@@ -45,6 +45,8 @@ HOTKEYS = (
     ("Middle-click tab", "Mouse", "Close tab"),
     ("Double-click tab desk", "Mouse", "New tab"),
     ("Middle-click URL bar", "Mouse", "Paste & go"),
+    ("Middle-click bookmark/history/reading", "Mouse", "Open in a background tab"),
+    ("Click zoom label", "Mouse", "Reset page zoom"),
     ("Ctrl+0", "Zoom", "Reset page zoom"),
     ("Ctrl+= / Ctrl+-", "Zoom", "Zoom in / out"),
     ("Ctrl+K", "Shell", "Focus the omnibar"),

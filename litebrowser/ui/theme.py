@@ -1438,6 +1438,11 @@ QToolTip {
     background-color: %(CARD_BG)s;
     border-left: 1px solid %(BORDER_SOFT)s;
 }
+/* Vivaldi/Arc-style split view dock (left side). */
+#SplitDock {
+    background-color: %(CARD_BG)s;
+    border-right: 1px solid %(BORDER_SOFT)s;
+}
 #WebPanelHeader {
     background-color: %(MAIN_BG_ALT)s;
     border-bottom: 1px solid %(BORDER_SOFT)s;

@@ -655,9 +655,13 @@ class SearchWindow(QMainWindow):
         # dock frame is built here; its view is created lazily because the
         # QWebEngineProfile does not exist yet at this point.
         self._build_web_panel_dock()
+        # Vivaldi/Arc-style split view: a LEFT dock holding a second live view
+        # so two pages sit side by side in one workspace.
+        self._build_split_dock()
         self.panel_split = QSplitter(Qt.Horizontal)
         self.panel_split.setChildrenCollapsible(False)
         self.panel_split.setHandleWidth(2)
+        self.panel_split.addWidget(self.split_dock)
         self.panel_split.addWidget(self.web_container)
         self.panel_split.addWidget(self.panel_dock)
         self.panel_split.setStretchFactor(0, 1)
@@ -2171,6 +2175,8 @@ class SearchWindow(QMainWindow):
         is_pinned = bool(item.data(TAB_PINNED_ROLE))
         menu = QMenu()
         copy_url_action = menu.addAction("Copy tab URL")
+        split_action = menu.addAction("Show beside (split view)")
+        split_action.setEnabled(browser is not None)
         reopen_incognito_action = menu.addAction("Reopen in incognito")
         suspend_action = menu.addAction("Suspend tab")
         suspend_action.setEnabled(browser is not None and not is_current and not is_pinned)
@@ -2213,6 +2219,15 @@ class SearchWindow(QMainWindow):
                     url = ""
             if url:
                 QApplication.clipboard().setText(url)
+        elif action == split_action:
+            url = metadata.get("url", "")
+            if not url and browser is not None:
+                try:
+                    url = browser.url().toString()
+                except Exception:
+                    url = ""
+            if url:
+                self.open_split_view(url, metadata.get("title") or "Split")
         elif action == reopen_incognito_action:
             url = metadata.get("url", "")
             if not url and browser is not None:
@@ -2562,6 +2577,91 @@ class SearchWindow(QMainWindow):
         ("Instagram", "◍", "https://www.instagram.com/"),
         ("Gmail", "✉", "https://mail.google.com/"),
     )
+
+    def _build_split_dock(self):
+        """Left dock for split view (two pages side by side in one workspace)."""
+        self.split_dock = QFrame()
+        self.split_dock.setObjectName("SplitDock")
+        dock_layout = QVBoxLayout(self.split_dock)
+        dock_layout.setContentsMargins(0, 0, 0, 0)
+        dock_layout.setSpacing(0)
+        header = QFrame()
+        header.setObjectName("WebPanelHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 3, 6, 3)
+        header_layout.setSpacing(4)
+        self.lbl_split_title = QLabel("Split")
+        self.lbl_split_title.setObjectName("PageTitle")
+        f = self.lbl_split_title.font()
+        f.setPointSize(9)
+        f.setBold(True)
+        self.lbl_split_title.setFont(f)
+        header_layout.addWidget(self.lbl_split_title, 1)
+        self.btn_split_reload = QToolButton()
+        self.btn_split_reload.setObjectName("TopIconButton")
+        self.btn_split_reload.setText("⟳")
+        self.btn_split_reload.setToolTip("Reload split pane")
+        self.btn_split_reload.clicked.connect(lambda: self._ensure_split_view().reload())
+        self.btn_split_open_tab = QToolButton()
+        self.btn_split_open_tab.setObjectName("TopIconButton")
+        self.btn_split_open_tab.setText("⇤")
+        self.btn_split_open_tab.setToolTip("Move split page into a full tab")
+        self.btn_split_open_tab.clicked.connect(self._split_to_tab)
+        self.btn_split_close = QToolButton()
+        self.btn_split_close.setObjectName("TopIconButton")
+        self.btn_split_close.setText("✕")
+        self.btn_split_close.setToolTip("Close split view")
+        self.btn_split_close.clicked.connect(self.close_split_view)
+        for b in (self.btn_split_reload, self.btn_split_open_tab, self.btn_split_close):
+            header_layout.addWidget(b)
+        dock_layout.addWidget(header, 0)
+        self.split_view = None
+        self._split_url = ""
+        self.split_body = QWidget()
+        self.split_body_layout = QVBoxLayout(self.split_body)
+        self.split_body_layout.setContentsMargins(0, 0, 0, 0)
+        dock_layout.addWidget(self.split_body, 1)
+        self.split_dock.setMinimumWidth(300)
+        self.split_dock.setMaximumWidth(900)
+        self.split_dock.hide()
+
+    def _ensure_split_view(self):
+        if getattr(self, "split_view", None) is not None:
+            return self.split_view
+        self.split_view = QWebEngineView(self.split_dock)
+        self.split_view.setObjectName("WebPanelView")
+        try:
+            self.split_view.setPage(browser_page.BrowserPage(self.profile, self.split_view, self.base_dir, host=self))
+        except Exception:
+            pass
+        self.split_view.setZoomFactor(0.95)
+        self.split_body_layout.addWidget(self.split_view)
+        return self.split_view
+
+    def open_split_view(self, url: str, title: str = "Split"):
+        """Show a second live page beside the main one."""
+        url = (url or "").strip()
+        if not url or url in ("about:blank", "about:newtab"):
+            self._flash_status("Split view needs a real page URL")
+            return
+        view = self._ensure_split_view()
+        self.lbl_split_title.setText((title or "Split")[:40])
+        self._split_url = url
+        was_hidden = not self.split_dock.isVisible()
+        self.split_dock.show()
+        if was_hidden:
+            total = max(700, self.panel_split.width())
+            self.panel_split.setSizes([max(340, total // 3), total - max(340, total // 3)])
+        view.setUrl(QUrl(url))
+        self._flash_status("Split view — two pages side by side")
+
+    def close_split_view(self):
+        self.split_dock.hide()
+
+    def _split_to_tab(self):
+        if self._split_url:
+            self.tab_manager.add_tab(QUrl(self._split_url), self.lbl_split_title.text() or "Split", is_active=True)
+            self.close_split_view()
 
     def _build_web_panel_dock(self):
         from litebrowser.ui import theme as _th

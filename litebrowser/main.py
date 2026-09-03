@@ -206,6 +206,19 @@ def main(app_dir=None):
     app.setWindowIcon(QIcon(os.path.join(app_dir, "icon.png")))
     profile_dir = _get_profile_dir(app_dir)
     prefs.set_default_base_dir(profile_dir)
+    # VPN auto-connect: re-enable the last proxy before Chromium flags are
+    # finalized, so an auto-connected session protects every tab from launch.
+    smart_restart = os.environ.pop("MEI_SMART_RESTART", "").strip() == "1"
+    restart_reason = os.environ.pop("MEI_RESTART_REASON", "")
+    if prefs.get_auto_connect_vpn(profile_dir) and not bool(prefs.get_proxy_config(profile_dir).get("enabled")):
+        last = prefs.get_last_vpn_proxy(profile_dir)
+        if last.get("host") and int(last.get("port") or 0) > 0:
+            prefs.set_proxy_config(profile_dir, last)
+    proxy_flag = _saved_proxy_chromium_flag(app_dir)
+    if proxy_flag:
+        existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
+        if proxy_flag not in existing:
+            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (existing + " " + proxy_flag).strip()
     workspace_manager.ensure_dual_workspaces(profile_dir)
     _register_bundled_personal_sites(profile_dir, app_dir)
     _cleanup_webengine_cache(
@@ -228,6 +241,10 @@ def main(app_dir=None):
     ]
     for window in windows:
         window.show()
+    if smart_restart:
+        # Session restored from the previous instance; surface why we bounced.
+        note = restart_reason or "Mei restarted to apply new settings"
+        windows[0].browser_page._flash_status(f"⟳ {note}")
     android_bridge_service.start_from_prefs(profile_dir)
     app.aboutToQuit.connect(android_bridge_service.stop)
     sys.exit(app.exec_())

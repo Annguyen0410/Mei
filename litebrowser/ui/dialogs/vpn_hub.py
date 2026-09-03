@@ -135,20 +135,79 @@ def _fetch_public_https_proxies(max_lines: int = 30) -> list[str]:
     return out
 
 
+def _fetch_ip_info(timeout: float = 8.0) -> dict:
+    """Free IP intelligence (no key): ipleak.net JSON — ip, country, isp."""
+    req = urllib.request.Request("https://ipleak.net/json/", headers={"User-Agent": "Mei/6 VPN-hub"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+    if not isinstance(data, dict):
+        return {}
+    return {
+        "ip": str(data.get("ip") or ""),
+        "country": str(data.get("country_name") or ""),
+        "isp": str(data.get("isp") or data.get("as_number") or ""),
+    }
+
+
 def show_vpn_hub(parent) -> None:
     base_dir = parent.base_dir
     dlg = QDialog(parent)
-    dlg.setWindowTitle("VPN / Proxy — one click")
-    dlg.resize(520, 520)
+    dlg.setWindowTitle("VPN / Proxy — Mei Shield")
+    dlg.resize(560, 640)
     dlg.setStyleSheet(_stylesheet(parent))
     layout = QVBoxLayout(dlg)
-    warn = QLabel(
+
+    # --- Status card: are we protected right now, and what does the world see? ---
+    cfg_now = prefs.get_proxy_config(base_dir)
+    active = bool(cfg_now.get("enabled"))
+    status_card = QLabel()
+    status_card.setObjectName("SectionCard")
+    status_card.setWordWrap(True)
+    status_card.setTextFormat(Qt.RichText)
+    status_card.setContentsMargins(14, 10, 14, 10)
+    layout.addWidget(status_card)
+
+    def _paint_status(ip_info: dict | None = None, err: str = ""):
+        if active:
+            route = "%s:%s (%s)" % (cfg_now.get("host"), cfg_now.get("port"), str(cfg_now.get("type") or "").upper())
+            head = f"🛡 <b>Protected</b> — routing via {route}"
+        else:
+            head = "⚪ <b>Unprotected</b> — direct connection"
+        if ip_info:
+            tail = f"Visible IP: <b>{ip_info.get('ip', '?')}</b> · {ip_info.get('country', '?')} · {ip_info.get('isp', '?')}"
+        elif err:
+            tail = f"Visible IP: <i>lookup failed ({err})</i>"
+        else:
+            tail = "<i>Looking up your visible IP…</i>"
+        status_card.setText(head + "<br>" + tail)
+
+    _paint_status()
+    layout.addWidget(QLabel(
         "Free public proxies are usually <b>slow / unreliable</b> and may read your HTTP traffic. "
         "For testing only; real VPNs (WireGuard/OpenVPN) need separate software."
-    )
-    warn.setWordWrap(True)
-    warn.setTextFormat(Qt.RichText)
+    ))
+    warn = QLabel("")
+    warn.hide()
+    # (kept label variable name for layout clarity below)
     layout.addWidget(warn)
+    warn.hide()
+
+    from PyQt5.QtCore import QThread, pyqtSignal as _sig
+
+    class _IpProbe(QThread):
+        done = _sig(dict)
+        failed = _sig(str)
+
+        def run(self):
+            try:
+                self.done.emit(_fetch_ip_info())
+            except Exception as exc:
+                self.failed.emit(str(exc))
+
+    probe = _IpProbe(dlg)
+    probe.done.connect(lambda info: _paint_status(info))
+    probe.failed.connect(lambda err: _paint_status(None, err[:80]))
+    probe.start()
 
     list_w = QListWidget()
     list_w.setMinimumHeight(220)
@@ -181,6 +240,13 @@ def show_vpn_hub(parent) -> None:
     fetch_row.addWidget(chk_risk, 1)
     fetch_row.addWidget(fetch_btn)
     layout.addLayout(fetch_row)
+
+    chk_auto = QCheckBox("Auto-connect this proxy every time Mei starts")
+    chk_auto.setChecked(prefs.get_auto_connect_vpn(base_dir))
+    layout.addWidget(chk_auto)
+
+    def _persist_auto():
+        prefs.set_auto_connect_vpn(base_dir, chk_auto.isChecked())
 
     seen_public: set[str] = set()
 
@@ -262,9 +328,9 @@ def show_vpn_hub(parent) -> None:
     btn_test.clicked.connect(on_test)
 
     def apply_cfg(cfg: dict[str, Any]) -> None:
-        cfg_path = prefs.proxy_config_path(base_dir)
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
+        prefs.set_proxy_config(base_dir, cfg)
+        if cfg.get("enabled"):
+            prefs.set_last_vpn_proxy(base_dir, cfg)
         parent._set_proxy_from_config(cfg)
 
     def on_connect():
@@ -313,30 +379,38 @@ def show_vpn_hub(parent) -> None:
             "password": None,
         }
         apply_cfg(cfg)
-        QMessageBox.information(
-            dlg,
-            "VPN hub",
-            f"Proxy enabled: {host}:{port} ({norm.upper()})\n\n"
-            "NOTE: web tabs (Chromium) only read the proxy at startup.\n"
-            "→ Restart Mei so all tabs route through the proxy.",
-        )
+        _persist_auto()
+        # Smart restart: session was already saved by the launcher; relaunching
+        # applies the Chromium flag with tabs intact (~2 s, no manual steps).
+        relaunch = getattr(parent, "smart_restart", None)
         dlg.accept()
+        if relaunch is not None:
+            relaunch(reason=f"VPN connected: {host}:{port}")
+        else:
+            QMessageBox.information(
+                dlg,
+                "VPN hub",
+                f"Proxy enabled: {host}:{port} ({norm.upper()})\n\nRestart Mei to route all tabs through it.",
+            )
 
     def on_disconnect():
-        cfg_path = prefs.proxy_config_path(base_dir)
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump({"enabled": False}, f, indent=2)
+        prefs.set_proxy_config(base_dir, {"enabled": False})
+        prefs.set_auto_connect_vpn(base_dir, False)
         QNetworkProxy.setApplicationProxy(QNetworkProxy(QNetworkProxy.NoProxy))
         existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(
             tok for tok in existing.split() if not tok.startswith("--proxy-server=")
         ).strip()
-        QMessageBox.information(
-            dlg,
-            "VPN hub",
-            "Proxy disabled.\nRestart Mei so web tabs no longer route through the proxy.",
-        )
+        relaunch = getattr(parent, "smart_restart", None)
         dlg.accept()
+        if relaunch is not None:
+            relaunch(reason="VPN disconnected")
+        else:
+            QMessageBox.information(
+                dlg,
+                "VPN hub",
+                "Proxy disabled.\nRestart Mei so web tabs no longer route through the proxy.",
+            )
 
     btn_connect.clicked.connect(on_connect)
     btn_disconnect.clicked.connect(on_disconnect)

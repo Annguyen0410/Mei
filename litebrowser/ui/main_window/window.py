@@ -3,6 +3,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -2324,6 +2325,39 @@ class SearchWindow(QMainWindow):
         title = item.text(0) or url[:40]
         self.tab_manager.add_tab(QUrl(url), title[:40], is_active=False)
         self._flash_status("Opened bookmark in a background tab")
+
+    def smart_restart(self, reason: str = ""):
+        """Relaunch Mei without losing the session.
+
+        The 5-minute autosave and closeEvent already persist tabs; setting the
+        restart marker tells the launcher this exit is intentional so it comes
+        straight back up. Used by VPN connect/disconnect and profile switching
+        (Chromium reads proxy flags only at process start)."""
+        try:
+            os.environ["MEI_SMART_RESTART"] = "1"
+            state = prefs.session_state_load(self.base_dir)
+            current = self.current_browser()
+            tabs = []
+            for i, browser in enumerate(self.browsers):
+                payload = self._tab_state_payload(i, browser, current)
+                if payload:
+                    tabs.append(payload)
+            state["tabs"] = tabs
+            prefs.session_state_save(self.base_dir, state)
+        except Exception:
+            pass
+        try:
+            if getattr(sys, "frozen", False):
+                exe = sys.executable
+                args = [exe]
+            else:
+                args = [sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "browser.py")]
+            subprocess.Popen(args, close_fds=True)
+        except Exception:
+            os.environ.pop("MEI_SMART_RESTART", None)
+            QMessageBox.warning(self, "Restart", "Could not relaunch Mei automatically. Please start it again manually.")
+            return
+        QApplication.instance().quit()
 
     def toggle_fullscreen(self):
         if self.isFullScreen():

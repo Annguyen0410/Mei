@@ -39,6 +39,38 @@ def proxy_config_path(base_dir):
     return os.path.join(base_dir, "proxy_config.json")
 
 
+def get_proxy_config(base_dir) -> dict:
+    data = read_json(proxy_config_path(base_dir), {"enabled": False})
+    return data if isinstance(data, dict) else {"enabled": False}
+
+
+def set_proxy_config(base_dir, cfg: dict):
+    write_json(proxy_config_path(base_dir), cfg if isinstance(cfg, dict) else {"enabled": False})
+
+
+def get_auto_connect_vpn(base_dir) -> bool:
+    return bool(load_prefs(base_dir).get("vpn_auto_connect", False))
+
+
+def set_auto_connect_vpn(base_dir, value):
+    data = load_prefs(base_dir)
+    data["vpn_auto_connect"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def get_last_vpn_proxy(base_dir) -> dict:
+    """The last proxy the user connected with (kept even after disconnect so
+    auto-connect can re-enable it on the next launch)."""
+    data = load_prefs(base_dir).get("vpn_last_proxy", {})
+    return data if isinstance(data, dict) else {}
+
+
+def set_last_vpn_proxy(base_dir, cfg: dict):
+    data = load_prefs(base_dir)
+    data["vpn_last_proxy"] = cfg if isinstance(cfg, dict) else {}
+    save_prefs(base_dir, data)
+
+
 def permissions_path(base_dir):
     return os.path.join(base_dir, "permissions.json")
 

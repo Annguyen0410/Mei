@@ -1093,7 +1093,8 @@ class AppShell(QMainWindow):
             self.switch_workspace("personal")
             self.personal_page._switch_page("review")
             return
-        if self._match_cmd(lowered, "/template"):            from litebrowser.services import note_templates
+        if self._match_cmd(lowered, "/template"):
+            from litebrowser.services import note_templates
 
             arg = text[len("/template"):].strip().lower()
             if arg in ("daily", "day"):

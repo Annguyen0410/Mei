@@ -74,21 +74,49 @@ def show_quick_switcher(parent):
     from PyQt5.QtWidgets import QShortcut
     base_dir = parent.base_dir
     dialog = QDialog(parent)
-    dialog.setWindowTitle("Quick Switcher — Ctrl+Shift+K")
+    dialog.setWindowTitle("Command Palette & Quick Switcher — Ctrl+Shift+K")
     dialog.setMinimumSize(500, 400)
     dialog.setStyleSheet(_stylesheet(parent))
     layout = QVBoxLayout(dialog)
     search_edit = QLineEdit()
-    search_edit.setPlaceholderText("Type to find tabs, bookmarks, history...")
+    search_edit.setPlaceholderText("Search commands (⚡), tabs, bookmarks, history...")
     search_edit.setMinimumHeight(36)
     layout.addWidget(search_edit)
     list_widget = QListWidget()
     layout.addWidget(list_widget)
     results = []
 
+    # Slash-command registry: the switcher doubles as a command palette.
+    COMMANDS = (
+        ("/task ", "Create a task"),
+        ("/note ", "Create a note"),
+        ("/board ", "Create a board"),
+        ("/focus 25", "Start a café pour"),
+        ("/brief", "Morning brief"),
+        ("/agent summary", "Digest open tabs"),
+        ("/sync", "Push + pull snapshot"),
+        ("/hub", "Project Hub"),
+        ("/cql", "Cục Quản Lý"),
+        ("/mas", "MAS"),
+        ("/bimat", "Bí Mật"),
+        ("/boitoan", "Bói Toán"),
+        ("/leaderboard", "World Leaderboard"),
+        ("/freeze", "Freeze background tabs"),
+        ("/group-tabs", "Group tabs by domain"),
+        ("/save-page", "Save page to Library"),
+        ("/status", "Focus timer status"),
+    )
+
     def build_results():
         q = search_edit.text().strip().lower()
         results.clear()
+        list_widget.clear()
+        # Commands first: typing '/' or any query matches both names and
+        # descriptions, so the palette doubles as a command launcher.
+        if q:
+            for cmd, desc in COMMANDS:
+                if q in cmd.lower() or q in desc.lower():
+                    results.append(("command", None, f"{cmd} — {desc}", cmd))
         if hasattr(parent, "tab_manager") and hasattr(parent, "browsers"):
             for i in range(len(parent.browsers)):
                 item = parent.tab_list.item(i) if i < parent.tab_list.count() else None
@@ -114,9 +142,10 @@ def show_quick_switcher(parent):
             short = url.replace("https://", "").replace("http://", "")[:50]
             if not q or q in url.lower() or q in short.lower():
                 results.append(("history", None, short, url))
-        list_widget.clear()
         for kind, idx, title, url in results[:50]:
-            if kind == "tab":
+            if kind == "command":
+                list_widget.addItem("⚡ %s" % (title[:70],))
+            elif kind == "tab":
                 list_widget.addItem("📑 %s" % (title[:60] or url[:40]))
             elif kind == "bookmark":
                 list_widget.addItem("⭐ %s" % (title[:60] or url[:40]))
@@ -132,13 +161,23 @@ def show_quick_switcher(parent):
             return
         r = results[row]
         kind, idx, title, url = r[0], r[1], r[2], r[3]
+        dialog.accept()
+        if kind == "command":
+            # Commands that take an argument prefill the omnibar and wait for
+            # the user's input; self-contained commands run immediately.
+            if url.endswith(" ") or url.startswith("/agent "):
+                parent.omnibar.setText(url)
+                parent.omnibar.setFocus()
+                parent.omnibar.setCursorPosition(len(url))
+                return
+            parent.omnibar.setText(url)
+            parent.handle_omnibar()
+            return
         if kind == "tab" and idx is not None:
             parent.tab_list.setCurrentRow(idx)
-            dialog.accept()
             return
         if url:
             parent.tab_manager.add_tab(QUrl(url), (title or url)[:40], is_active=True)
-        dialog.accept()
 
     # Debounce the rebuild: build_results parses the entire history file;
     # v6.4 did that on every keystroke.

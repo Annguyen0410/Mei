@@ -4,6 +4,14 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 > **Run & build the desktop app**: see the dedicated **`RUN_AND_BUILD.md`** — app testing checklist, how to use `.venv`, common run errors, and the full PyInstaller command (`--collect-all PyQt6.QtWebEngine*`) to produce the `.exe`.
 
+> ## What's new in 6.8 — four new layers on top of browser + personal space
+>
+> - **🧠 Learning layer** — **Flashcards with SM-2 spaced repetition** (Again/Hard/Good/Easy, ease clamped, 10-min retries) on a new Review page in the Personal Hub, `/review` command, and "⇄ Make flashcard" from selected note text; **Highlight clippings** — page-menu action appends the browser selection to a dated Clippings note with source title/URL; **Reading progress** — saved pages track scroll-% automatically, rows show badges, "▶" marks the furthest-along unfinished page.
+> - **🛡 Wellbeing layer** — **Distraction Shield** blocks social/autoplay hosts while a café pour runs (or "always on" in Settings), riding the existing adblock interceptor; **system tray** with quick actions (quick note, 25-min pour, VPN status) and **native Windows toasts** for downloads/focus; **20-20-20 eye-break nudges** inside long pours; **wellbeing chart** — top domains of the week with distraction domains tinted honestly.
+> - **⚙️ Automation layer** — **Routines**: daily jobs (e.g. 07:30 Mon–Fri → `/template daily` + open the school timetable) fired by a 30 s scheduler with native toasts, `/routines` editor; **Page monitor** — "Monitor this page" toasts when a watched page changes (15-min raw-HTML checks); **global hotkey Ctrl+Alt+M** captures a quick note from anywhere in Windows (graceful fallback if the OS refuses).
+> - **📤 Interop layer** — **Export center** (`/export`): notes → Markdown zip bundle or a themed static HTML mini-site; **Calendar ICS** import/export (stdlib parser, no cloud); **RSS mini-reader** (RSS2 + Atom) under the web-panel menu with items opening as tabs; **Clipboard history** — last 20 entries, Ctrl+Shift+V to restore or paste & go.
+> - **Under the hood** — window.py split into reviewable mixins (DockingMixin, WindowToolsMixin); a full Ruff F401/F841/F811 sweep; dead handlers removed.
+
 > ## What's new in 6.7
 >
 > - **VPN / Shield 2.0** — a status card showing Protected/Unprotected with your visible IP, country and ISP (free ipleak.net lookup, no key); **auto-connect** re-enables the last proxy on every launch; **smart restart** applies proxy changes in ~2 s with tabs restored (no manual restart); **seamless proxy auth** answers Chromium's credential challenge from the saved config; a **leak test** compares the OS path with the browser path and warns on partial routing; **PAC URL** support.

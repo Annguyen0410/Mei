@@ -946,6 +946,35 @@ class PersonalWindow(QMainWindow):
         if self.overview_timeline_list.count() == 0:
             self.overview_timeline_list.addItem(components.hint_list_item("No calendar events yet", "○"))
 
+    def _import_ics(self):
+        from litebrowser.services import ics_service
+
+        path, _ = QFileDialog.getOpenFileName(self, "Import ICS calendar", "", "iCalendar (*.ics);;All files (*)")
+        if not path:
+            return
+        try:
+            count = ics_service.import_ics_file(self.base_dir, path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Calendar", f"Import failed: {exc}")
+            return
+        self._refresh_calendar()
+        self._refresh_overview()
+        QMessageBox.information(self, "Calendar", f"Imported {count} events from the .ics file.")
+
+    def _export_ics(self):
+        from litebrowser.services import ics_service
+
+        default = os.path.join(self.base_dir, "mei-calendar-" + time.strftime("%Y%m%d") + ".ics")
+        path, _ = QFileDialog.getSaveFileName(self, "Export calendar", default, "iCalendar (*.ics)")
+        if not path:
+            return
+        try:
+            count = ics_service.export_ics_file(self.base_dir, path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Calendar", f"Export failed: {exc}")
+            return
+        QMessageBox.information(self, "Calendar", f"Exported {count} events to:\n{path}")
+
     def _build_notes_page(self):
         w = QWidget()
         l = QVBoxLayout(w)
@@ -1883,9 +1912,13 @@ class PersonalWindow(QMainWindow):
         self.btn_add_event = QPushButton("Add event")
         self.btn_remove_event = QPushButton("Delete")
         self.btn_today = QPushButton("Today")
+        self.btn_ics_import = QPushButton("⇩ Import .ics")
+        self.btn_ics_export = QPushButton("⇧ Export .ics")
         row.addWidget(self.btn_add_event)
         row.addWidget(self.btn_remove_event)
         row.addWidget(self.btn_today)
+        row.addWidget(self.btn_ics_import)
+        row.addWidget(self.btn_ics_export)
         row.addStretch(1)
         l.addLayout(row)
         body = QHBoxLayout()
@@ -1924,6 +1957,8 @@ class PersonalWindow(QMainWindow):
         self.btn_add_event.clicked.connect(self._add_event)
         self.btn_remove_event.clicked.connect(self._remove_event)
         self.btn_today.clicked.connect(self._jump_calendar_today)
+        self.btn_ics_import.clicked.connect(self._import_ics)
+        self.btn_ics_export.clicked.connect(self._export_ics)
         self.calendar_widget.selectionChanged.connect(self._refresh_calendar)
         return w
 

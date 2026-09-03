@@ -8,10 +8,12 @@ import time
 from PyQt5.QtCore import (
     QDate,
     QFileSystemWatcher,
+    QPoint,
     QPointF,
     Qt,
     QTimer,
     QUrl,
+    QStringListModel,
     pyqtSignal,
 )
 from PyQt5.QtGui import (
@@ -23,6 +25,7 @@ from PyQt5.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
 )
@@ -39,6 +42,7 @@ from PyQt5.QtWidgets import (
     QCalendarWidget,
     QCheckBox,
     QComboBox,
+    QCompleter,
     QFileDialog,
     QFrame,
     QGraphicsPathItem,
@@ -487,6 +491,28 @@ class CategoryDropList(QListWidget):
             event.ignore()
 
 
+WIKILINK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+
+
+class WikiLinkHighlighter(QSyntaxHighlighter):
+    """Paints [[wiki-links]] in the accent color and underlines them, so the
+    Obsidian-style linking is visible while writing. Pure regex over the block
+    text; no per-char cost beyond the matched spans."""
+
+    def __init__(self, document, palette_getter):
+        super().__init__(document)
+        self._palette_getter = palette_getter
+
+    def highlightBlock(self, text):
+        pal = self._palette_getter() or {}
+        accent = QColor(pal.get("ACCENT", "#A66A2E"))
+        fmt = QTextCharFormat()
+        fmt.setForeground(accent)
+        fmt.setFontUnderline(True)
+        for match in WIKILINK_RE.finditer(text):
+            self.setFormat(match.start(), match.end() - match.start(), fmt)
+
+
 class PersonalWindow(QMainWindow):
     def __init__(self, base_dir: str, app_dir: str = None, embedded: bool = False):
         super().__init__()
@@ -867,11 +893,31 @@ class PersonalWindow(QMainWindow):
         self.btn_open_note_image.hide()
         editor_layout.addWidget(self.btn_open_note_image)
         self.note_editor = QPlainTextEdit()
-        self.note_editor.setPlaceholderText("Longform notes, clipped notes, study notes...")
+        self.note_editor.setPlaceholderText("Longform notes, clipped notes, study notes...\n\nTip: type [[ to link another note — Obsidian-style, with autocomplete.")
         editor_layout.addWidget(self.note_editor, 1)
+        # Wiki-links: accent-highlight [[targets]] + completion from note titles.
+        self._wiki_highlighter = WikiLinkHighlighter(self.note_editor.document(), lambda: theme.palette())
+        self._wiki_completer = QCompleter(self)
+        try:
+            self._wiki_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        except AttributeError:
+            self._wiki_completer.setCaseSensitivity(Qt.CaseInsensitive if hasattr(Qt, "CaseInsensitive") else False)
+        self._wiki_completer.setCompletionMode(
+            QCompleter.CompletionMode.PopupCompletion if hasattr(QCompleter, "CompletionMode") else QCompleter.PopupCompletion
+        )
+        self._wiki_completer.activated.connect(self._insert_wiki_link)
+        self._wiki_start = -1
         self.lbl_note_stats = QLabel("0 words · 0 characters")
         self.lbl_note_stats.setObjectName("MutedLabel")
         editor_layout.addWidget(self.lbl_note_stats)
+        self.lbl_backlinks = QLabel("")
+        self.lbl_backlinks.setObjectName("MutedLabel")
+        self.lbl_backlinks.setWordWrap(True)
+        self.lbl_backlinks.setTextFormat(Qt.RichText)
+        self.lbl_backlinks.hide()
+        editor_layout.addWidget(self.lbl_backlinks)
+        # Click a [[wiki-link]] in the editor (Ctrl+click safer than plain):
+        self.note_editor.mousePressEvent = self._note_mouse_press  # type: ignore[assignment]
         split.addWidget(editor_wrap)
         split.setChildrenCollapsible(True)
         split.setStretchFactor(0, 0)
@@ -941,6 +987,46 @@ class PersonalWindow(QMainWindow):
             return
         self._note_dirty = True
         self._note_idle_timer.start()
+        self._maybe_wiki_autocomplete()
+
+    def _maybe_wiki_autocomplete(self):
+        """When the user just typed '[[', offer note titles as completions."""
+        editor = self.note_editor
+        pos = editor.textCursor().position()
+        text = editor.toPlainText()
+        start = text.rfind("[[", 0, pos)
+        if start < 0:
+            return
+        between = text[start + 2:pos]
+        if "]]" in between or "\n" in between or len(between) > 80:
+            return
+        titles = sorted({n["title"] for n in personal_service.list_notes(self.base_dir)})
+        model = self._wiki_completer.model()
+        from PyQt5.QtCore import QStringListModel
+
+        if model is None or not isinstance(model, QStringListModel):
+            model = QStringListModel(titles, self._wiki_completer)
+            self._wiki_completer.setModel(model)
+        else:
+            model.setStringList(titles)
+        self._wiki_start = start
+        self._wiki_completer.setCompletionPrefix(between)
+        if between and self._wiki_completer.currentRow() < 0:
+            return  # no candidates; stay quiet instead of popping an empty box
+        rect = editor.cursorRect()
+        self._wiki_completer.complete(rect.adjusted(0, 18, 140, 18))
+
+    def _insert_wiki_link(self, choice: str):
+        editor = self.note_editor
+        pos = editor.textCursor().position()
+        start = getattr(self, "_wiki_start", -1)
+        if start < 0 or start > pos:
+            return
+        cursor = editor.textCursor()
+        cursor.setPosition(start, QTextCursor.MoveAnchor)
+        cursor.setPosition(pos, QTextCursor.KeepAnchor)
+        cursor.insertText(f"[[{choice}]]")
+        self._wiki_start = -1
 
     def _on_note_edit_idle(self):
         """Autosave debounced: persist edits 250 ms after typing stops."""
@@ -1099,7 +1185,74 @@ class PersonalWindow(QMainWindow):
         # The category combo is a *filter* only. Do not change it here, or the
         # note's own category would leak into the filter and hide every other note.
         self.lbl_note_title.setText(f"{note['title']}  |  {self.current_note_category}")
+        self._refresh_backlinks(note)
         self._find_in_note()
+
+    def _refresh_backlinks(self, note):
+        """'Linked mentions' — every note whose content references this one."""
+        if not hasattr(self, "lbl_backlinks"):
+            return
+        target = note.get("title", "")
+        if not target:
+            self.lbl_backlinks.hide()
+            return
+        needle = f"[[{target}]]"
+        links = []
+        for other in personal_service.list_notes(self.base_dir):
+            if other["id"] == note["id"]:
+                continue
+            if needle in (other.get("content") or ""):
+                links.append(other)
+        if links:
+            names = ", ".join(other["title"] for other in links[:6])
+            more = f" (+{len(links) - 6})" if len(links) > 6 else ""
+            self.lbl_backlinks.setText(f"🔗 Linked from: {names}{more}")
+            self.lbl_backlinks.setToolTip("\n".join(other["title"] for other in links))
+            self.lbl_backlinks.show()
+        else:
+            self.lbl_backlinks.hide()
+
+    def _note_mouse_press(self, event):
+        """Ctrl+click on a [[wiki-link]] opens that note (creates it if missing)."""
+        from PyQt5.QtCore import QEvent
+
+        if not (event.modifiers() & Qt.ControlModifier) or event.button() != Qt.LeftButton:
+            QPlainTextEdit.mousePressEvent(self.note_editor, event)
+            return
+        cursor = self.note_editor.cursorForPosition(event.pos())
+        pos = cursor.position()
+        text = self.note_editor.toPlainText()
+        match = None
+        for m in WIKILINK_RE.finditer(text):
+            if m.start() <= pos <= m.end():
+                match = m
+                break
+        if match is None:
+            QPlainTextEdit.mousePressEvent(self.note_editor, event)
+            return
+        target = match.group(1).strip()
+        if not target:
+            return
+        self._flush_note_edits()
+        for note in personal_service.list_notes(self.base_dir):
+            if note["title"].lower() == target.lower():
+                self.select_note(note["id"])
+                self._flash(f"Opened [[{target}]]")
+                return
+        # Missing link → create a stub note (Obsidian behavior).
+        note = personal_service.create_note(self.base_dir, target, f"# {target}\n\n", category=self.current_note_category or "General")
+        self._refresh_notes()
+        self.select_note(note["id"])
+        self._flash(f"Created [[{target}]]")
+
+    def _flush_note_edits(self):
+        if getattr(self, "_note_dirty", False) and self.current_note_id:
+            personal_service.save_note(self.base_dir, self.current_note_id, self.note_editor.toPlainText())
+            self._note_dirty = False
+
+    def _flash(self, message: str):
+        if hasattr(self, "lbl_note_title"):
+            self.lbl_note_title.setText(message)
 
     def _back_to_all_notes(self):
         """Return to the full note list: clear any category filter + selection."""

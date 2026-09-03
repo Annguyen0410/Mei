@@ -167,6 +167,8 @@ class AppShell(QMainWindow):
             "/cafe": "Open café Focus journal / controls",
             "/freeze": "Suspend all background tabs to free memory",
             "/save-tabs": "Save current tabs as a named set · /save-tabs Research",
+            "/theme": "Switch theme instantly · /theme matcha-day",
+            "/accent": "Switch accent color · /accent matcha",
             "/summarize": "Summarize the active browser page with AI",
             "/brief": "Show your local Morning Brief (history + tasks + focus)",
             "/agent": "Agent actions · /agent summary · /agent tasks a | b",
@@ -815,6 +817,16 @@ class AppShell(QMainWindow):
         self.lbl_status_context.setText(f"Last sync: {time.strftime('%H:%M:%S')}")
         QMessageBox.information(self, "Sync", msg)
 
+    def _flash_status(self, message: str):
+        """Transient status-line feedback (mirrors SearchWindow's toast but
+        lands in the shell's status strip instead)."""
+        self.lbl_status.setText(f"● {message}")
+        if getattr(self, "_status_restore_timer", None) is None:
+            self._status_restore_timer = QTimer(self)
+            self._status_restore_timer.setSingleShot(True)
+            self._status_restore_timer.timeout.connect(lambda: self.lbl_status.setText(f"● Theme: {prefs.get_shell_theme(self.profile_dir)}"))
+        self._status_restore_timer.start(3000)
+
     def _match_cmd(self, lowered: str, cmd: str) -> bool:
         """Exact command or command-with-argument; never a prefix of a longer
         command (v6.4: ``/brief`` also matched ``/briefcase``, ``/sync`` ate
@@ -1004,6 +1016,34 @@ class AppShell(QMainWindow):
             from litebrowser.services import focus_service
             status = focus_service.focus_status(self.profile_dir)
             self._announce_focus(status)
+            return
+        if self._match_cmd(lowered, "/theme"):
+            arg = text[len("/theme"):].strip().lower()
+            if not arg:
+                themes = ", ".join(sorted(theme.PALETTES.keys()))
+                QMessageBox.information(self, "Themes", f"Available themes:\n{themes}\n\nUsage: /theme matcha-day")
+                return
+            if arg in theme.PALETTES:
+                prefs.set_shell_theme(self.profile_dir, arg)
+                self._qss_key = None  # force the QSS re-polish
+                self.refresh_shell()
+                self._flash_status(f"Theme: {theme.theme_display_name(arg)}")
+            else:
+                QMessageBox.warning(self, "Themes", f"Unknown theme '{arg}'.\n\nAvailable: {', '.join(sorted(theme.PALETTES.keys()))}")
+            return
+        if self._match_cmd(lowered, "/accent"):
+            arg = text[len("/accent"):].strip().lower()
+            if not arg:
+                accents = ", ".join(sorted(theme.ACCENTS.keys()))
+                QMessageBox.information(self, "Accents", f"Available accents:\n{accents}\n\nUsage: /accent matcha")
+                return
+            if arg in theme.ACCENTS:
+                prefs.set_accent(self.profile_dir, arg)
+                self._qss_key = None
+                self.refresh_shell()
+                self._flash_status(f"Accent: {theme.accent_display_name(arg)}")
+            else:
+                QMessageBox.warning(self, "Accents", f"Unknown accent '{arg}'.\n\nAvailable: {', '.join(sorted(theme.ACCENTS.keys()))}")
             return
         if self._match_cmd(lowered, "/cafe"):
             from litebrowser.services import focus_service

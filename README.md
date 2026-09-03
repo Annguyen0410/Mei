@@ -6,6 +6,7 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 > ## What's new in 6.6
 >
+> - **Theme system redesigned** — 11 harmonious café palettes replacing the old muddy set: **Latte Cream, Honey Crème, Sakura Café, Café Dawn, Matcha Latte, Morning Crème** for day; **Espresso House, Midnight Mocha, Café Azul, Matcha Night, Ember Night** for night. Every TEXT/MUTED/ACCENT pair is WCAG contrast-audited; accents rebalanced with new **Caramel** and **Matcha** presets; the Settings picker shows display names with live color swatches; `/theme <id>` and `/accent <id>` switch instantly from the omnibar; and **Auto day/night** flips each theme to its sibling with the clock (Sakura ↔ Ember Night at 6:00/18:00).
 > - **Opera GX web panels** — ◫ opens Telegram/WhatsApp/Discord/Messenger/Spotify/YT Music/Instagram/Gmail or any URL in a slim right dock sharing the main profile (logins persist), with a slim icon rail toggling panels + AI.
 > - **Chrome parity features** — colored tab groups (session-persistent), save-password prompt after logins, site permissions manager, searchable hotkeys hub, thin load-progress bar, URL security pill.
 > - **Mei identity, louder** — Copilot-style AI sidebar chatting with the visible page, Dashboard 2.0 with a 7-day activity chart, Command palette (quick switcher now launches all 17 slash commands), GX Control Center with a live RAM graph and tab limiter.

@@ -4,7 +4,7 @@ import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt5.QtCore import QRect, Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QUrl, QRect, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeySequence
 from PyQt5.QtWidgets import (
     QApplication,
@@ -171,6 +171,7 @@ class AppShell(QMainWindow):
             "/accent": "Switch accent color · /accent matcha",
             "/template daily": "Daily plan note · /template weekly for a review",
             "/review": "Flashcard review queue",
+            "/routines": "Schedule daily automations",
             "/summarize": "Summarize the active browser page with AI",
             "/brief": "Show your local Morning Brief (history + tasks + focus)",
             "/agent": "Agent actions · /agent summary · /agent tasks a | b",
@@ -495,6 +496,28 @@ class AppShell(QMainWindow):
                 QTimer.singleShot(900, lambda: self._safe_onboarding())
             self._init_tray()
             self._init_break_reminders()
+            self._init_routines_timer()
+
+    def _init_routines_timer(self):
+        """30s scheduler tick — fires due routines once per day each."""
+        self._routines_timer = QTimer(self)
+        self._routines_timer.setInterval(30 * 1000)
+        self._routines_timer.timeout.connect(self._tick_routines)
+        self._routines_timer.start()
+
+    def _tick_routines(self):
+        from litebrowser.services import routines_service
+
+        for routine in routines_service.due_routines(self.profile_dir):
+            routines_service.mark_fired(self.profile_dir, routine["id"], time.strftime("%Y-%m-%d"))
+            self.system_notify("Routine: " + routine["name"], " · ".join(routine["actions"][:3]))
+            for action in routine["actions"]:
+                if action.startswith("/"):
+                    self.omnibar.setText(action)
+                    self.handle_omnibar()
+                elif " " not in action and "." in action:
+                    url = action if action.startswith("http") else "https://" + action
+                    self.browser_page.add_new_tab(QUrl(url), routine["name"], is_active=False)
 
     def _init_tray(self):
         """System tray (primary shell only): quick actions + native toasts."""
@@ -1153,6 +1176,9 @@ class AppShell(QMainWindow):
         if self._match_cmd(lowered, "/review"):
             self.switch_workspace("personal")
             self.personal_page._switch_page("review")
+            return
+        if self._match_cmd(lowered, "/routines"):
+            dialogs.show_routines_dialog(self)
             return
         if self._match_cmd(lowered, "/template"):
             from litebrowser.services import note_templates

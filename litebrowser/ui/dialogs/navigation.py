@@ -106,6 +106,7 @@ def show_quick_switcher(parent):
         ("/save-page", "Save page to Library"),
         ("/status", "Focus timer status"),
         ("/review", "Flashcard review queue"),
+        ("/routines", "Schedule daily automations"),
         ("/template daily", "Daily plan note (tasks, events, focus)"),
         ("/template weekly", "Weekly review note"),
         ("/theme", "Switch theme (e.g. /theme matcha-day)"),
@@ -196,6 +197,77 @@ def show_quick_switcher(parent):
     QShortcut(QKeySequence(Qt.Key_Enter), dialog).activated.connect(on_accept)
     build_results()
     search_edit.setFocus()
+    dialog.exec_()
+
+
+def show_routines_dialog(parent):
+    """Create/remove daily routines: time + weekdays + omnibar/URL actions."""
+    from litebrowser.services import routines_service
+
+    base_dir = parent.base_dir
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Routines — automate your café")
+    dialog.resize(600, 480)
+    dialog.setStyleSheet(_stylesheet(parent))
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(QLabel(
+        "Actions starting with / run as omnibar commands (e.g. /template daily); "
+        "anything URL-like opens a background tab. Days: 0=Mon .. 6=Sun."
+    ))
+    list_widget = QListWidget()
+    layout.addWidget(list_widget, 1)
+
+    def refresh():
+        list_widget.clear()
+        routines = routines_service.load_routines(base_dir)
+        if not routines:
+            hint = QListWidgetItem("No routines yet — add one below (e.g. 07:30 · Mon-Fri · /template daily)")
+            hint.setFlags(Qt.NoItemFlags)
+            list_widget.addItem(hint)
+            return
+        for r in routines:
+            days = ",".join(str(d) for d in r["days"]) or "every day"
+            mark = "☑" if r["enabled"] else "☐"
+            list_widget.addItem(f"{mark} {r['time']} · {r['name']} · [{days}] · {' | '.join(r['actions'])}")
+            list_widget.item(list_widget.count() - 1).setData(Qt.UserRole, r["id"])
+
+    def add_routine():
+        name, ok = QInputDialog.getText(dialog, "New routine", "Name:")
+        if not ok or not name.strip():
+            return
+        clock, ok = QInputDialog.getText(dialog, "Time", "Fire at (HH:MM):", text="07:30")
+        if not ok:
+            return
+        days, ok = QInputDialog.getText(dialog, "Days", "Weekdays (0=Mon..6=Sun, comma-separated, empty = daily):", text="0,1,2,3,4")
+        if not ok:
+            return
+        actions, ok = QInputDialog.getText(dialog, "Actions", "Actions separated by | (e.g. /template daily | school.edu):")
+        if not ok:
+            return
+        day_list = [int(d) for d in days.replace(" ", "").split(",") if d.isdigit()]
+        routines_service.add_routine(base_dir, name, clock, day_list, [a.strip() for a in actions.split("|")])
+        refresh()
+
+    def remove_routine():
+        item = list_widget.currentItem()
+        if not item or not item.data(Qt.UserRole):
+            return
+        routines_service.delete_routine(base_dir, item.data(Qt.UserRole))
+        refresh()
+
+    btn_row = QHBoxLayout()
+    btn_add = QPushButton("Add routine")
+    btn_add.clicked.connect(add_routine)
+    btn_del = QPushButton("Remove selected")
+    btn_del.clicked.connect(remove_routine)
+    btn_close = QPushButton("Close")
+    btn_close.clicked.connect(dialog.accept)
+    btn_row.addWidget(btn_add)
+    btn_row.addWidget(btn_del)
+    btn_row.addStretch()
+    btn_row.addWidget(btn_close)
+    layout.addLayout(btn_row)
+    refresh()
     dialog.exec_()
 
 

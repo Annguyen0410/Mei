@@ -469,10 +469,25 @@ class AppShell(QMainWindow):
         if self.stack.currentIndex() == self.workspace_index["personal"]:
             self.personal_page.refresh_all()
 
+    def _sync_auto_theme_timer(self):
+        """Start/stop the auto-theme watcher to match the saved preference."""
+        if prefs.get_auto_theme(self.profile_dir):
+            if getattr(self, "_auto_theme_timer", None) is None or not self._auto_theme_timer.isActive():
+                self._auto_theme_timer = QTimer(self)
+                self._auto_theme_timer.setInterval(5 * 60 * 1000)
+                self._auto_theme_timer.timeout.connect(self.refresh_shell)
+                self._auto_theme_timer.start()
+        elif getattr(self, "_auto_theme_timer", None) is not None:
+            self._auto_theme_timer.stop()
+        self.refresh_shell()
+
     def _deferred_init(self):
         self.refresh_shell()
         if self.window_slot == "primary":
             QTimer.singleShot(1500, self._startup_update_check)
+        # Auto theme watch: refresh_shell re-evaluates resolved_auto_theme; a
+        # cheap no-op when the palette is unchanged (signature-keyed re-polish).
+        self._sync_auto_theme_timer()
 
     def _startup_update_check(self):
         self.run_update_check(manual=False)

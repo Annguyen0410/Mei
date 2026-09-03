@@ -1114,6 +1114,9 @@ class SettingsPage(QWidget):
         prefs.set_new_tab_greeting(self.shell.profile_dir, self.chk_new_tab_greeting.isChecked())
         prefs.set_show_morning_brief(self.shell.profile_dir, self.chk_show_brief.isChecked())
         prefs.set_auto_theme(self.shell.profile_dir, self.chk_auto_theme.isChecked())
+        # Keep the shell's auto-theme watcher in sync with the new setting.
+        if hasattr(self.shell, "_sync_auto_theme_timer"):
+            self.shell._sync_auto_theme_timer()
         data = prefs.load_prefs(self.shell.profile_dir)
         data["shell_density"] = self.cmb_density.currentText()
         prefs.save_prefs(self.shell.profile_dir, data)

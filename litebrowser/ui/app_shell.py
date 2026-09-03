@@ -568,6 +568,53 @@ class AppShell(QMainWindow):
             self.tray = MeiTray(self)
         except Exception:
             self.tray = None
+        self._init_global_hotkey()
+
+    def _init_global_hotkey(self):
+        """Ctrl+Alt+M anywhere in Windows opens the quick-note overlay.
+
+        Uses RegisterHotKey via ctypes; if the OS refuses (already taken,
+        restricted session) we degrade to tray-only — no crash, no nag."""
+        if not sys.platform.startswith("win"):
+            return
+        try:
+            import ctypes
+
+            self._hotkey_msg_id = 0xB00B  # app-local WM_HOTKEY identifier
+            MOD_CONTROL, MOD_ALT = 0x0002, 0x0001
+            if not ctypes.windll.user32.RegisterHotKey(None, self._hotkey_msg_id, MOD_CONTROL | MOD_ALT, ord("M")):
+                self._hotkey_msg_id = None
+                return
+            # Poll-based check is heavier than a nativeEventFilter, but ctypes
+            # callbacks into a Qt app need a message window; a 1s PeekMessage
+            # loop on a timer thread is the pragmatic free route.
+            self._hotkey_timer = QTimer(self)
+            self._hotkey_timer.setInterval(400)
+
+            def _poll():
+                msg = ctypes.wintypes.MSG()
+                while ctypes.windll.user32.PeekMessageW(
+                    ctypes.byref(msg), None, 0x0312, 0x0312, 0x0001
+                ):  # PM_REMOVE, WM_HOTKEY range
+                    if msg.message == 0x0312 and msg.wParam == self._hotkey_msg_id:
+                        self._open_quick_note_overlay()
+
+            self._hotkey_timer.timeout.connect(_poll)
+            self._hotkey_timer.start()
+        except Exception:
+            self._hotkey_msg_id = None
+
+    def _open_quick_note_overlay(self):
+        """Global quick capture: focus Mei, jump to a fresh note box."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self.switch_workspace("personal")
+        page = self.personal_page
+        if hasattr(page, "_switch_page"):
+            page._switch_page("notes")
+        if hasattr(page, "note_editor"):
+            page.note_editor.setFocus()
 
     def system_notify(self, title: str, message: str):
         """Native toast via the tray when available; in-app toast otherwise."""

@@ -3945,6 +3945,13 @@ class SearchWindow(QMainWindow):
             download_mgr.update_status(self.base_dir, download_id, status)
             self._finalized_downloads.add(download_id)
             self._load_downloads_panel()
+            if status == "completed":
+                fname = (download.suggestedFileName() or "").strip() or "file"
+                self._flash_status(f"✓ Downloaded {fname}")
+            elif status == "interrupted":
+                self._flash_status("⚠ Download interrupted")
+            elif status == "cancelled":
+                self._flash_status("Download cancelled")
         except Exception:
             pass
 

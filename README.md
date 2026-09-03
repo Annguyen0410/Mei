@@ -4,6 +4,13 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 > **Run & build the desktop app**: see the dedicated **`RUN_AND_BUILD.md`** — app testing checklist, how to use `.venv`, common run errors, and the full PyInstaller command (`--collect-all PyQt6.QtWebEngine*`) to produce the `.exe`.
 
+> ## What's new in 6.6
+>
+> - **Opera GX web panels** — ◫ opens Telegram/WhatsApp/Discord/Messenger/Spotify/YT Music/Instagram/Gmail or any URL in a slim right dock sharing the main profile (logins persist), with a slim icon rail toggling panels + AI.
+> - **Chrome parity features** — colored tab groups (session-persistent), save-password prompt after logins, site permissions manager, searchable hotkeys hub, thin load-progress bar, URL security pill.
+> - **Mei identity, louder** — Copilot-style AI sidebar chatting with the visible page, Dashboard 2.0 with a 7-day activity chart, Command palette (quick switcher now launches all 17 slash commands), GX Control Center with a live RAM graph and tab limiter.
+> - **Denser, calmer chrome** — 32px slim tab rows with group color dots, Zen mode (Ctrl+Shift+Z) hides every chrome surface for pure reading, slimmer stat tiles.
+
 > ## What's new in 6.5
 >
 > - **Notes are safe to type in** — a deep data-loss fix round for the Personal Hub: searching or filtering no longer wipes the open note, saving keeps your selection, moving a note to another category keeps following it, and edits now autosave 250 ms after you stop typing. Deleting notes/boards/events/sites asks for confirmation, and failed saves are reported instead of silently swallowed.

@@ -879,14 +879,14 @@ QLabel {
 }
 #SectionCard:hover, #StatCard:hover { border-color: %(INPUT_BORDER)s; }
 #StatTile {
-    min-height: 68px;
+    min-height: 56px;
     background-color: %(CARD_BG)s;
     border: 1px solid %(BORDER_SOFT)s;
     border-radius: 14px;
 }
 #StatTile:hover { border-color: %(ACCENT)s; background-color: %(ITEM_HOVER)s; }
-#StatValue { color: %(ACCENT_HOVER)s; font-size: 21px; font-weight: 800; }
-#StatLabel { color: %(TEXT_MUTED)s; font-size: 10px; }
+#StatValue { color: %(ACCENT_HOVER)s; font-size: 19px; font-weight: 800; }
+#StatLabel { color: %(TEXT_MUTED)s; font-size: 9px; }
 
 #ActionTile {
     min-height: 88px;

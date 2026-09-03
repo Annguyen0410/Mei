@@ -806,6 +806,30 @@ class SearchWindow(QMainWindow):
         self._open_request_timer = QTimer(self)
         self._open_request_timer.timeout.connect(self._drain_open_requests)
         self._open_request_timer.start(2500)
+        # Crash-safe session autosave: tabs survive a power loss / crash, not
+        # just a clean quit. Cheap: reuses the same payload as closeEvent.
+        self._session_autosave_timer = QTimer(self)
+        self._session_autosave_timer.timeout.connect(self._autosave_session)
+        self._session_autosave_timer.start(5 * 60 * 1000)
+
+    def _autosave_session(self):
+        if getattr(self, "_closing", False):
+            self._session_autosave_timer.stop()
+            return
+        try:
+            current = self.current_browser()
+            tabs = []
+            for i, browser in enumerate(self.browsers):
+                payload = self._tab_state_payload(i, browser, current)
+                if payload:
+                    tabs.append(payload)
+            if not tabs:
+                return
+            state = prefs.session_state_load(self.base_dir)
+            state["tabs"] = tabs
+            prefs.session_state_save(self.base_dir, state)
+        except Exception:
+            pass
         if start_tabs:
             # Start from saved tab set (listtab)
             self.tab_manager.begin_batch()

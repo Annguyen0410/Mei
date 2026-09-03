@@ -3,6 +3,7 @@ from litebrowser.ui.dialogs.help_hub import show_browser_control_center
 from litebrowser.ui.dialogs.hotkeys import show_hotkeys_hub
 from litebrowser.ui.dialogs.navigation import (
     show_downloads_dialog,
+    show_export_dialog,
     show_quick_switcher,
     show_routines_dialog,
     show_workspace_dialog,
@@ -30,6 +31,7 @@ __all__ = [
     "show_bookmarks_dialog",
     "show_browser_control_center",
     "show_downloads_dialog",
+    "show_export_dialog",
     "show_extensions_dialog",
     "show_hibernate_pref_dialog",
     "show_history_dialog",

@@ -172,6 +172,7 @@ class AppShell(QMainWindow):
             "/template daily": "Daily plan note · /template weekly for a review",
             "/review": "Flashcard review queue",
             "/routines": "Schedule daily automations",
+            "/export": "Export notes as MD zip or HTML site",
             "/summarize": "Summarize the active browser page with AI",
             "/brief": "Show your local Morning Brief (history + tasks + focus)",
             "/agent": "Agent actions · /agent summary · /agent tasks a | b",
@@ -1263,6 +1264,9 @@ class AppShell(QMainWindow):
             return
         if self._match_cmd(lowered, "/routines"):
             dialogs.show_routines_dialog(self)
+            return
+        if self._match_cmd(lowered, "/export"):
+            dialogs.show_export_dialog(self)
             return
         if self._match_cmd(lowered, "/template"):
             from litebrowser.services import note_templates

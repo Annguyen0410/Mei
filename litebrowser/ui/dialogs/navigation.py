@@ -107,6 +107,7 @@ def show_quick_switcher(parent):
         ("/status", "Focus timer status"),
         ("/review", "Flashcard review queue"),
         ("/routines", "Schedule daily automations"),
+        ("/export", "Export notes as MD zip or HTML site"),
         ("/template daily", "Daily plan note (tasks, events, focus)"),
         ("/template weekly", "Weekly review note"),
         ("/theme", "Switch theme (e.g. /theme matcha-day)"),
@@ -268,6 +269,54 @@ def show_routines_dialog(parent):
     btn_row.addWidget(btn_close)
     layout.addLayout(btn_row)
     refresh()
+    dialog.exec_()
+
+
+def show_export_dialog(parent):
+    """Export center: notes -> Markdown zip or static HTML mini-site."""
+    from litebrowser.services import export_service
+
+    base_dir = parent.base_dir
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Export center")
+    dialog.resize(480, 240)
+    dialog.setStyleSheet(_stylesheet(parent))
+    layout = QVBoxLayout(dialog)
+    info = QLabel(
+        "Bundle your SafeVault notes to share or archive.\n"
+        "Both formats include every category; HTML is styled with your theme."
+    )
+    info.setObjectName("MutedLabel")
+    info.setWordWrap(True)
+    layout.addWidget(info)
+    btn_md = QPushButton("Export Markdown bundle (.zip)")
+    btn_html = QPushButton("Export HTML mini-site (.zip)")
+    layout.addWidget(btn_md)
+    layout.addWidget(btn_html)
+    row = QHBoxLayout()
+    row.addStretch()
+    btn_close = QPushButton("Close")
+    btn_close.clicked.connect(dialog.accept)
+    row.addWidget(btn_close)
+    layout.addLayout(row)
+
+    def _do(kind: str):
+        default = os.path.join(base_dir, f"mei-export-{kind}-{time.strftime('%Y%m%d')}.zip")
+        path, _ = QFileDialog.getSaveFileName(dialog, "Export notes", default, "Zip (*.zip)")
+        if not path:
+            return
+        try:
+            if kind == "md":
+                count = export_service.export_notes_md_zip(base_dir, path)
+            else:
+                count = export_service.export_notes_html(base_dir, path)
+        except Exception as exc:
+            QMessageBox.warning(dialog, "Export", f"Export failed: {exc}")
+            return
+        QMessageBox.information(dialog, "Export", f"Exported {count} notes to:\n{path}")
+
+    btn_md.clicked.connect(lambda: _do("md"))
+    btn_html.clicked.connect(lambda: _do("html"))
     dialog.exec_()
 
 

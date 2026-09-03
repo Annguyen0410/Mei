@@ -1185,6 +1185,7 @@ class SearchWindow(QMainWindow):
     def _build_page_menu(self):
         menu = QMenu(self)
         menu.addAction("Home").triggered.connect(self._go_home)
+        menu.addAction("Open in incognito tab").triggered.connect(self.open_current_in_incognito)
         menu.addAction("Copy page address").triggered.connect(self._copy_page_address)
         menu.addAction("Bookmark page").triggered.connect(lambda: self.save_bookmark(None))
         menu.addAction("Save to reading list").triggered.connect(self._add_to_reading_list)
@@ -2164,6 +2165,7 @@ class SearchWindow(QMainWindow):
         is_pinned = bool(item.data(TAB_PINNED_ROLE))
         menu = QMenu()
         copy_url_action = menu.addAction("Copy tab URL")
+        reopen_incognito_action = menu.addAction("Reopen in incognito")
         suspend_action = menu.addAction("Suspend tab")
         suspend_action.setEnabled(browser is not None and not is_current and not is_pinned)
         mute_action = menu.addAction("Mute / Unmute")
@@ -2205,6 +2207,16 @@ class SearchWindow(QMainWindow):
                     url = ""
             if url:
                 QApplication.clipboard().setText(url)
+        elif action == reopen_incognito_action:
+            url = metadata.get("url", "")
+            if not url and browser is not None:
+                try:
+                    url = browser.url().toString()
+                except Exception:
+                    url = ""
+            if url and url.startswith("http"):
+                self.add_new_tab(QUrl(url), metadata.get("title") or "Incognito", is_active=True, is_incognito=True)
+                self._flash_status("Reopened in incognito")
         elif action == suspend_action:
             if browser is not None:
                 self.tab_manager.hibernate_tab(browser, item)
@@ -2283,8 +2295,16 @@ class SearchWindow(QMainWindow):
         else:
             self.showFullScreen()
 
-    def _copy_page_address(self):
+    def open_current_in_incognito(self):
         browser = self.current_browser()
+        if browser is None:
+            return
+        url = browser.url().toString()
+        if url.startswith("http"):
+            self.add_new_tab(QUrl(url), browser.title() or "Incognito", is_active=True, is_incognito=True)
+            self._flash_status("Opened in incognito")
+
+    def _copy_page_address(self):        browser = self.current_browser()
         if browser is None:
             return
         url = browser.url().toString()

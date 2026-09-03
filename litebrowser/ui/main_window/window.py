@@ -1540,15 +1540,23 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
     def _load_reading_list(self):
         self.reading_list.clear()
         pages = life_service.load_saved_pages(self.base_dir)
+        cont = life_service.continue_reading_page(self.base_dir)
         for p in pages:
             title = (p.get("title") or p.get("url", ""))[:50]
-            self.reading_list.addItem(title)
+            pct = int(p.get("read_percent", 0) or 0)
+            label = f"({pct}%) {title}" if pct else title
+            if cont is not None and p.get("url") == cont.get("url"):
+                label = "▶ " + label
+            self.reading_list.addItem(label)
             self.reading_list.item(self.reading_list.count() - 1).setData(Qt.UserRole, p.get("url", ""))
+        if not pages:
+            self.reading_list.addItem("No saved pages yet. Use Page menu > Save to reading list.")
 
     def _on_reading_clicked(self, item):
         url = item.data(Qt.UserRole)
         if url:
-            self.tab_manager.add_tab(QUrl(url), is_active=True)
+            self.tab_manager.add_tab(QUrl(url), item.text()[:40].lstrip("▶ (0123456789%) "), is_active=True)
+            self._load_reading_list()
 
     def _add_to_reading_list(self):
         browser = self.current_browser()
@@ -2410,6 +2418,28 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
         preview.show()
         preview.raise_()
 
+    def _track_reading_progress(self, browser):
+        """Record scroll % for pages saved to the reading list (auto, silent)."""
+        url = browser.url().toString()
+        if not url or not url.startswith("http"):
+            return
+        known = any(p.get("url") == url for p in life_service.load_saved_pages(self.base_dir))
+        if not known:
+            return
+
+        def _store(pct):
+            try:
+                life_service.set_reading_progress(self.base_dir, url, int(pct or 0))
+            except Exception:
+                pass
+
+        browser.page().runJavaScript(
+            "(function(){var d=document.documentElement;"
+            "var max=d.scrollHeight-d.clientHeight;if(max<=0)return 0;"
+            "return Math.round((d.scrollTop||0)/max*100);})();",
+            _store,
+        )
+
     def on_load_progress(self, progress, browser=None):
         """Drive the thin load bar from the *current* tab only."""
         if browser is not None and browser is not self.current_browser():
@@ -2619,6 +2649,7 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
                     ) == QMessageBox.Yes:
                         self.open_url_in_external_browser(browser.url().toString())
         self._maybe_local_workspace_perf_hints(browser)
+        self._track_reading_progress(browser)
 
     def _browser_compat_patch_js(self):
         return """

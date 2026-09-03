@@ -367,6 +367,35 @@ def add_saved_page(base_dir: str, title: str, url: str, summary: str = ""):
         return item
 
 
+def set_reading_progress(base_dir: str, url: str, percent: int) -> dict | None:
+    """Store reading progress (0-100) for a saved page; 'Continue reading'
+    surfaces the furthest-along unfinished entry."""
+    url = (url or "").strip()
+    if not url:
+        return None
+    percent = max(0, min(100, int(percent or 0)))
+    with profile_locked(base_dir):
+        items = _read_list(saved_pages_path(base_dir))
+        for item in items:
+            if item.get("url") == url:
+                item["read_percent"] = percent
+                item["updated_at"] = _now()
+                _write_list(saved_pages_path(base_dir), items)
+                return item
+    return None
+
+
+def continue_reading_page(base_dir: str) -> dict | None:
+    """The saved page furthest along but not finished (5-95%)."""
+    best = None
+    for item in load_saved_pages(base_dir):
+        pct = int(item.get("read_percent", 0) or 0)
+        if 5 <= pct < 95:
+            if best is None or pct > int(best.get("read_percent", 0) or 0):
+                best = item
+    return best
+
+
 def load_sync_state(base_dir: str):
     with profile_locked(base_dir):
         data = read_json(sync_state_path(base_dir), None)

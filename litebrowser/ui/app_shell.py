@@ -1449,4 +1449,11 @@ class AppShell(QMainWindow):
             self._executor.shutdown(wait=False, cancel_futures=True)
         except Exception:
             pass
+        # Hide the tray icon promptly so quitting does not leave a ghost entry.
+        tray = getattr(self, "tray", None)
+        if tray is not None:
+            try:
+                tray.hide()
+            except Exception:
+                pass
         event.accept()

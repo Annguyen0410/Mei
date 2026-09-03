@@ -4,7 +4,7 @@ import socket
 import time
 
 from PyQt5.QtCore import QSize, Qt, QTimer, QUrl
-from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QImage, QPainter, QPen, QPixmap
+from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QImage, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,

@@ -6,6 +6,7 @@
 # profile, base_dir, ...) - no import cycles back into window.py.
 
 from PyQt5.QtCore import QUrl
+from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,

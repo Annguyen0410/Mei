@@ -1,13 +1,19 @@
 """Dialog helpers for browser and shell."""
 import os
 
+import time
+
 from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtWidgets import (
+    QApplication,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QInputDialog,
+    QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QVBoxLayout,

@@ -48,6 +48,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QShortcut,
     QSizePolicy,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QStyle,
@@ -72,6 +73,7 @@ from litebrowser.browser.tab_manager import (
     TAB_GROUP_ROLE,
     TAB_META_ROLE,
     TAB_PINNED_ROLE,
+    TAB_WIDGET_ROLE,
 )
 from litebrowser.core import app_paths, app_version, prefs
 from litebrowser.services import (
@@ -209,14 +211,6 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
         QShortcut(QKeySequence("Ctrl+Shift+V"), self).activated.connect(self.show_clipboard_history)
         # Esc exits Zen mode first (then closes the find bar if that was open).
         QShortcut(QKeySequence(Qt.Key_Escape), self).activated.connect(self._escape_in_browser)
-
-    def _escape_in_browser(self):
-        if getattr(self, "_zen_mode", False):
-            self.toggle_zen_mode()
-            return
-        bar = getattr(self, "_find_bar", None)
-        if bar is not None and bar.isVisible():
-            self._close_find_bar()
 
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
@@ -783,25 +777,6 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
         self._session_autosave_timer = QTimer(self)
         self._session_autosave_timer.timeout.connect(self._autosave_session)
         self._session_autosave_timer.start(5 * 60 * 1000)
-
-    def _autosave_session(self):
-        if getattr(self, "_closing", False):
-            self._session_autosave_timer.stop()
-            return
-        try:
-            current = self.current_browser()
-            tabs = []
-            for i, browser in enumerate(self.browsers):
-                payload = self._tab_state_payload(i, browser, current)
-                if payload:
-                    tabs.append(payload)
-            if not tabs:
-                return
-            state = prefs.session_state_load(self.base_dir)
-            state["tabs"] = tabs
-            prefs.session_state_save(self.base_dir, state)
-        except Exception:
-            pass
         if start_tabs:
             # Start from saved tab set (listtab)
             self.tab_manager.begin_batch()
@@ -849,6 +824,33 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
                     self.add_new_tab(QUrl(home_url or "https://google.com"), "Home")
 
         self._check_bootstrap_import_payload()
+
+    def _escape_in_browser(self):
+        if getattr(self, "_zen_mode", False):
+            self.toggle_zen_mode()
+            return
+        bar = getattr(self, "_find_bar", None)
+        if bar is not None and bar.isVisible():
+            self._close_find_bar()
+
+    def _autosave_session(self):
+        if getattr(self, "_closing", False):
+            self._session_autosave_timer.stop()
+            return
+        try:
+            current = self.current_browser()
+            tabs = []
+            for i, browser in enumerate(self.browsers):
+                payload = self._tab_state_payload(i, browser, current)
+                if payload:
+                    tabs.append(payload)
+            if not tabs:
+                return
+            state = prefs.session_state_load(self.base_dir)
+            state["tabs"] = tabs
+            prefs.session_state_save(self.base_dir, state)
+        except Exception:
+            pass
 
     def set_workspace_id(self, workspace_id, persist=False):
         if not workspace_id:

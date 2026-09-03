@@ -2,7 +2,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QCheckBox,

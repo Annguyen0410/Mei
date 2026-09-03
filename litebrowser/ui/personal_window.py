@@ -1688,8 +1688,6 @@ class PersonalWindow(QMainWindow):
 
     def _build_review_page(self):
         """Flashcard review: card flip with Again/Hard/Good/Easy grading."""
-        from litebrowser.services import flashcard_service
-
         w = QWidget()
         l = QVBoxLayout(w)
         l.setContentsMargins(12, 10, 12, 12)
@@ -1775,8 +1773,6 @@ class PersonalWindow(QMainWindow):
         self._show_next_review_card()
 
     def _show_next_review_card(self):
-        from litebrowser.services import flashcard_service
-
         if not self._review_queue:
             self.review_card.hide()
             self.review_empty.show()

@@ -293,6 +293,9 @@ class WindowToolsMixin:
             if status == "completed":
                 fname = (download.suggestedFileName() or "").strip() or "file"
                 self._flash_status(f"✓ Downloaded {fname}")
+                shell = self._host_shell()
+                if shell is not None and hasattr(shell, "system_notify"):
+                    shell.system_notify("Download complete", fname)
             elif status == "interrupted":
                 self._flash_status("⚠ Download interrupted")
             elif status == "cancelled":

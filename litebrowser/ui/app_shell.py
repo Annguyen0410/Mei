@@ -493,6 +493,53 @@ class AppShell(QMainWindow):
             # First-run wizard: once per profile, skippable at every step.
             if not prefs.get_pref(self.profile_dir, "onboarding_done", False):
                 QTimer.singleShot(900, lambda: self._safe_onboarding())
+            self._init_tray()
+            self._init_break_reminders()
+
+    def _init_tray(self):
+        """System tray (primary shell only): quick actions + native toasts."""
+        try:
+            from PyQt5.QtWidgets import QSystemTrayIcon
+
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                return
+            from litebrowser.ui.tray import MeiTray
+
+            self.tray = MeiTray(self)
+        except Exception:
+            self.tray = None
+
+    def system_notify(self, title: str, message: str):
+        """Native toast via the tray when available; in-app toast otherwise."""
+        tray = getattr(self, "tray", None)
+        if tray is not None and tray.isVisible():
+            tray.notify(title, message)
+        else:
+            self._flash_status(f"{title} — {message}")
+
+    def _init_break_reminders(self):
+        """20-20-20 eye rest + a nudge when a focus pour ends (30s check)."""
+        self._break_timer = QTimer(self)
+        self._break_timer.setInterval(30 * 1000)
+        self._break_timer.timeout.connect(self._check_breaks)
+        self._break_timer.start()
+        self._last_break_nudge = 0
+
+    def _check_breaks(self):
+        from litebrowser.services import focus_service
+
+        now = time.time()
+        session = focus_service.focus_status(self.profile_dir)
+        if session.get("running"):
+            remaining = int(session.get("remaining", 0) or 0)
+            # A 20-20-20 nudge every 20 minutes inside a long pour.
+            if 0 < remaining and (remaining % 1200) < 30 and now - self._last_break_nudge > 300:
+                self._last_break_nudge = now
+                self.system_notify("Eye break ☕", "Look 20 feet away for 20 seconds.")
+        # Pour just finished → celebrate + suggest a stand-up break.
+        if getattr(self, "_pour_was_running", False) and not session.get("running"):
+            self.system_notify("Pour finished ☕", "Stand up, stretch, refill your cup.")
+        self._pour_was_running = bool(session.get("running"))
 
     def _safe_onboarding(self):
         try:

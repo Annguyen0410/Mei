@@ -51,14 +51,26 @@ def show_profiles_dialog(parent, app_dir):
         row = list_widget.currentRow()
         if row >= 0:
             name = list_widget.item(row).text()
+            current = prefs.get_last_profile(app_dir)
             prefs.set_last_profile(app_dir, name)
-            QMessageBox.information(dialog, "Selected", "Profile \"%s\" set. Close the browser and reopen it to use." % name)
-        dialog.accept()
+            dialog.accept()
+            if name == current:
+                return  # already running it
+            # Runtime switch: persist the session and smart-restart into the
+            # chosen profile (tabs restore under the new profile on boot).
+            relaunch = getattr(parent, "smart_restart", None) if parent is not None else None
+            if relaunch is not None:
+                relaunch(reason=f"Switched to profile: {name}")
+            else:
+                QMessageBox.information(dialog, "Selected", "Profile \"%s\" set. Restart Mei to use it." % name)
+        else:
+            dialog.accept()
     btn_add = QPushButton("Create profile")
     btn_add.clicked.connect(add_profile)
     btn_del = QPushButton("Delete selected")
     btn_del.clicked.connect(delete_profile)
     btn_use = QPushButton("Use this profile")
+    btn_use.setObjectName("TopAccentButton")
     btn_use.clicked.connect(use_selected)
     btn_row.addWidget(btn_add)
     btn_row.addWidget(btn_del)

@@ -693,6 +693,11 @@ class SettingsPage(QWidget):
         self.spin_max_live_tabs = QSpinBox()
         self.spin_max_live_tabs.setRange(1, 32)
         self.spin_max_live_tabs.setToolTip("Fewer live tabs = lighter RAM/CPU when hundreds of tabs are open.")
+        self.chk_auto_theme = QCheckBox("Auto day / night (flips the café palette with the clock)")
+        self.chk_auto_theme.setToolTip(
+            "On: day palettes from 6:00 to 18:00, their night siblings otherwise.\n"
+            "Pairs: Latte Cream ↔ Midnight Mocha, Sakura ↔ Ember Night, Matcha ↔ Matcha Night..."
+        )
         controls_grid = QGridLayout()
         controls_grid.setContentsMargins(0, 0, 0, 0)
         controls_grid.setHorizontalSpacing(10)
@@ -716,6 +721,7 @@ class SettingsPage(QWidget):
             controls_grid.addWidget(field, 0, column)
             controls_grid.setColumnStretch(column, 1)
         ui_layout.addLayout(controls_grid)
+        ui_layout.addWidget(self.chk_auto_theme)
         self.btn_save_ui = QPushButton("Apply UI preferences")
         self.btn_save_ui.setObjectName("TopAccentButton")
         ui_layout.addWidget(self.btn_save_ui, 0, Qt.AlignLeft)
@@ -964,6 +970,7 @@ class SettingsPage(QWidget):
         self.chk_new_tab_steam.setChecked(prefs.get_new_tab_steam(self.shell.profile_dir))
         self.chk_new_tab_greeting.setChecked(prefs.get_new_tab_greeting(self.shell.profile_dir))
         self.chk_show_brief.setChecked(prefs.get_show_morning_brief(self.shell.profile_dir))
+        self.chk_auto_theme.setChecked(prefs.get_auto_theme(self.shell.profile_dir))
         self.chk_sync_enabled.setChecked(prefs.get_sync_enabled(self.shell.profile_dir))
         self.ed_sync_endpoint.setText(prefs.get_sync_endpoint(self.shell.profile_dir))
         self.ed_sync_token.setText(prefs.get_sync_token(self.shell.profile_dir))
@@ -1106,6 +1113,7 @@ class SettingsPage(QWidget):
         prefs.set_new_tab_steam(self.shell.profile_dir, self.chk_new_tab_steam.isChecked())
         prefs.set_new_tab_greeting(self.shell.profile_dir, self.chk_new_tab_greeting.isChecked())
         prefs.set_show_morning_brief(self.shell.profile_dir, self.chk_show_brief.isChecked())
+        prefs.set_auto_theme(self.shell.profile_dir, self.chk_auto_theme.isChecked())
         data = prefs.load_prefs(self.shell.profile_dir)
         data["shell_density"] = self.cmb_density.currentText()
         prefs.save_prefs(self.shell.profile_dir, data)

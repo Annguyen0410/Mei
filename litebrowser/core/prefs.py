@@ -233,6 +233,38 @@ def get_shell_theme(base_dir):
     return name if name in _theme_mod.PALETTES else _theme_mod.DEFAULT_THEME
 
 
+def get_auto_theme(base_dir) -> bool:
+    """When on, the café flips between day and night palettes with the clock."""
+    return bool(load_prefs(base_dir).get("auto_theme", False))
+
+
+def set_auto_theme(base_dir, value):
+    data = load_prefs(base_dir)
+    data["auto_theme"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+def resolved_auto_theme(base_dir):
+    """Effective theme id honoring auto day/night: day palettes 6-18h, night
+    otherwise. Pairs each user theme with its sibling (minimal <-> minimal-night
+    etc.); unknown pairs resolve to the plain default."""
+    theme_id = get_shell_theme(base_dir)
+    if not get_auto_theme(base_dir):
+        return theme_id
+    hour = time.localtime().tm_hour
+    day_mode = 6 <= hour < 18
+    pairs = {
+        "minimal": ("minimal", "minimal-night"),
+        "latte": ("latte", "minimal-night"),
+        "rose-day": ("rose-day", "midnight-ember"),
+        "dawn": ("dawn", "cafe-night"),
+        "matcha-day": ("matcha-day", "forest-night"),
+        "sand-day": ("sand-day", "ocean-night"),
+    }
+    day, night = pairs.get(theme_id, (theme.DEFAULT_THEME, "cafe-night"))
+    return day if day_mode else night
+
+
 DEFAULT_BASE_DIR = ""
 
 

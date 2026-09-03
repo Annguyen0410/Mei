@@ -433,7 +433,8 @@ class AppShell(QMainWindow):
             self.lbl_status_context.setText("Web search — press Enter")
 
     def refresh_shell(self, force_deep: bool = False):
-        theme_name = prefs.get_shell_theme(self.profile_dir)
+        # Auto theme: the café flips day/night palettes with the clock when on.
+        theme_name = prefs.resolved_auto_theme(self.profile_dir)
         # Re-polishing 8 top-level widgets reparses a ~790-line QSS sheet and
         # repaints every child. Only do it when the theme/accent actually
         # changed (v6.4 did it for every omnibar command — visible lag).

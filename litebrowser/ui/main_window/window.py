@@ -2872,6 +2872,12 @@ class SearchWindow(QMainWindow):
         return "var el = document.getElementById('lite-dark-mode'); if (el) el.parentNode.removeChild(el);"
 
     def _update_audio_indicators(self):
+        """Mark playing tabs with a 🔊 badge in the state slot.
+
+        v6.4 prefixed the tab title with '[Sound] ' (persisting into saved
+        sessions and reading a role nothing set); the state column is the
+        right home — Pin/Zz live there too."""
+        changed = False
         for i in range(len(self.browsers)):
             browser = self.browsers[i]
             if browser is None:
@@ -2879,24 +2885,25 @@ class SearchWindow(QMainWindow):
             item = self.tab_list.item(i)
             if not item:
                 continue
-            widget = item.data(Qt.UserRole)
+            widget = item.data(TAB_WIDGET_ROLE)
             if not widget:
                 continue
             try:
                 page = browser.page()
                 if not page or not hasattr(page, "recentlyAudible"):
                     continue
+                audible = bool(page.recentlyAudible())
+                # Clean any legacy '[Sound] ' prefix left in titles by old builds.
                 text = widget.lbl_title.text()
-                sound_prefix = "[Sound] "
-                base = text.removeprefix(sound_prefix)
-                if page.recentlyAudible():
-                    if not text.startswith(sound_prefix):
-                        widget.lbl_title.setText(sound_prefix + base)
-                else:
-                    if text.startswith(sound_prefix):
-                        widget.lbl_title.setText(base)
+                if text.startswith("[Sound] "):
+                    widget.lbl_title.setText(text.removeprefix("[Sound] "))
+                if bool(browser.property("audible")) != audible:
+                    browser.setProperty("audible", audible)
+                    changed = True
             except Exception:
                 pass
+        if changed:
+            self.tab_manager.refresh_row_state_labels()
 
     def _go_home(self):
         _, home_url = prefs.get_startup_prefs(self.base_dir)

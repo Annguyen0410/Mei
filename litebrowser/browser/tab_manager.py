@@ -632,6 +632,40 @@ class TabManager:
         else:
             widget.set_icon("")
 
+    def row_state_text(self, i):
+        """Priority order for the per-row state chip: hibernated > pinned >
+        audible. Collapsed-group counts live in the same slot when applied by
+        the window's visibility pass."""
+        item = self.tab_list.item(i)
+        if item is None:
+            return ""
+        browser = self.browsers[i] if i < len(self.browsers) else None
+        try:
+            if browser is None or browser.property("hibernated"):
+                return "Zz"
+        except Exception:
+            pass
+        if item.data(TAB_PINNED_ROLE):
+            return "Pin"
+        if browser is not None:
+            try:
+                if bool(browser.property("audible")):
+                    return "🔊"
+            except Exception:
+                pass
+        return ""
+
+    def refresh_row_state_labels(self):
+        """Recompute every row's state chip from current facts."""
+        for i in range(self.tab_list.count()):
+            item = self.tab_list.item(i)
+            if item is None:
+                continue
+            widget = self._widget_for_item(item)
+            if widget is None:
+                continue
+            widget.lbl_state.setText(self.row_state_text(i))
+
     def update_tab_count(self):
         if self._batch_depth:
             self._tab_stats_dirty = True
@@ -656,6 +690,7 @@ class TabManager:
             else:
                 active += 1
         self.lbl_tab_count.setText(f"{active} Live · {sleeping} Sleeping")
+        self.refresh_row_state_labels()
         if hasattr(self.window, "refresh_insight_summary"):
             self.window.refresh_insight_summary()
 
@@ -698,7 +733,8 @@ class TabManager:
         metadata = dict(item.data(TAB_META_ROLE) or {})
         metadata["hibernated"] = True
         item.setData(TAB_META_ROLE, metadata)
-        widget.lbl_state.setText("Pin" if item.data(TAB_PINNED_ROLE) else "Zz")
+        row = self.tab_list.row(item)
+        widget.lbl_state.setText("Zz" if row < 0 else self.row_state_text(row))
         widget.lbl_title.setStyleSheet(
             f"color: {self._pal['TEXT_MUTED']}; font-size: 11px; font-weight: 600; background: transparent;"
         )
@@ -710,7 +746,8 @@ class TabManager:
         metadata = dict(item.data(TAB_META_ROLE) or {})
         metadata["hibernated"] = False
         item.setData(TAB_META_ROLE, metadata)
-        widget.lbl_state.setText("Pin" if item.data(TAB_PINNED_ROLE) else "")
+        row = self.tab_list.row(item)
+        widget.lbl_state.setText(self.row_state_text(row) if row >= 0 else "")
         widget.lbl_title.setStyleSheet(
             (
                 f"color: {self._pal['ACCENT_HOVER']}; font-size: 11px; font-weight: 700; background: transparent;"

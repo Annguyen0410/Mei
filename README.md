@@ -4,6 +4,14 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 > **Run & build the desktop app**: see the dedicated **`RUN_AND_BUILD.md`** — app testing checklist, how to use `.venv`, common run errors, and the full PyInstaller command (`--collect-all PyQt6.QtWebEngine*`) to produce the `.exe`.
 
+> ## What's new in 6.7
+>
+> - **VPN / Shield 2.0** — a status card showing Protected/Unprotected with your visible IP, country and ISP (free ipleak.net lookup, no key); **auto-connect** re-enables the last proxy on every launch; **smart restart** applies proxy changes in ~2 s with tabs restored (no manual restart); **seamless proxy auth** answers Chromium's credential challenge from the saved config; a **leak test** compares the OS path with the browser path and warns on partial routing; **PAC URL** support.
+> - **Browser engine parity** — real **split view** (two live pages side by side via "Show beside"); **media mini-player** on the dock rail (play/pause + mute for the audible tab, signal-driven); **runtime profile switching** (persist session, relaunch into the chosen profile).
+> - **Personal Space 2.0** — Obsidian-style **[[wiki-links]]** with autocomplete, Ctrl+click to open/create, and a backlinks panel; the notes graph draws **real edges** from wiki-links; **/template daily** and **/template weekly** compose plan/review notes from your actual data; a Duolingo-style **focus streak heatmap** (12 weeks) on Personal Overview.
+> - **First run & install** — a 3-step **onboarding wizard** (theme with live preview, import pointer, bridge toggle, skippable, once per profile); refreshed **Inno Setup installer** (taskbar pin, uninstall shortcut, explicit data-preservation note).
+> - **Also in 6.7** — colored tab groups **fold/unfold** on the desk; speaker chip for playing tabs (replacing the "[Sound]" title hack); reopen in incognito; middle-click opens bookmarks/history/reading in background tabs; zoom-label click resets; download toasts; crash-safe session autosave every 5 minutes; **16 WCAG-audited café themes** with auto day/night pairing.
+
 > ## What's new in 6.6
 >
 > - **Theme system redesigned** — 11 harmonious café palettes replacing the old muddy set: **Latte Cream, Honey Crème, Sakura Café, Café Dawn, Matcha Latte, Morning Crème** for day; **Espresso House, Midnight Mocha, Café Azul, Matcha Night, Ember Night** for night. Every TEXT/MUTED/ACCENT pair is WCAG contrast-audited; accents rebalanced with new **Caramel** and **Matcha** presets; the Settings picker shows display names with live color swatches; `/theme <id>` and `/accent <id>` switch instantly from the omnibar; and **Auto day/night** flips each theme to its sibling with the clock (Sakura ↔ Ember Night at 6:00/18:00).

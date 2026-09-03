@@ -1,7 +1,7 @@
 import os
 
 APP_NAME = "Mei"
-APP_VERSION = "6.6.0"
+APP_VERSION = "6.7.0"
 
 # Auto-update channel: the app fetches this JSON to know when a new build exists.
 # Host the file `update.json` (see litebrowser-update/ beside the project) at this

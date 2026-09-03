@@ -64,6 +64,10 @@ def _saved_proxy_chromium_flag(app_dir: str) -> str:
             os.environ["MEI_PROXY_AUTH_WARNING"] = (
                 "SOCKS5 with username/password is not supported by Chromium; connect an HTTP proxy for authenticated use."
             )
+        # PAC (proxy auto-config) beats a static proxy when present.
+        pac_url = str(cfg.get("pac_url") or "").strip()
+        if pac_url:
+            return f"--proxy-pac-url={pac_url}"
         return "--proxy-server=%s://%s:%d" % (scheme, host, port)
     except Exception:
         return ""

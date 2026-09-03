@@ -11,8 +11,9 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QUrl
 from PyQt5.QtNetwork import QNetworkProxy
+from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -149,6 +150,63 @@ def _fetch_ip_info(timeout: float = 8.0) -> dict:
     }
 
 
+def run_leak_test(parent, base_dir) -> None:
+    """DNS-leak style audit, free: the visible IP is fetched via the OS
+    resolver; a WebEngine tab (Chromium path) fetches it again. If the two
+    differ, DNS/traffic is partially bypassing the proxy."""
+    QApplication.setOverrideCursor(Qt.WaitCursor)
+    os_ip, browser_ip, errors = "", "", []
+    try:
+        os_ip = _fetch_ip_info().get("ip", "")
+    except Exception as exc:
+        errors.append(f"OS path: {exc}")
+    browser_path_ip = {"v": ""}
+
+    done = {"remaining": 1}
+
+    def _finish():
+        QApplication.restoreOverrideCursor()
+        protected = bool(prefs.get_proxy_config(base_dir).get("enabled"))
+        if errors and not browser_ip:
+            body = ("Could not complete the leak test:\n" + "\n".join(errors[:2]) +
+                    "\n\n(Check your connection and try again.)")
+            QMessageBox.warning(parent, "VPN leak test", body)
+            return
+        if protected and browser_ip and os_ip and browser_ip == os_ip:
+            verdict = ("⚠ <b>Possible leak:</b> the browser's visible IP matches the direct path while a proxy is enabled. "
+                       "The proxy may not be covering all traffic.")
+        elif protected and browser_ip:
+            verdict = f"🛡 <b>No obvious leak.</b> Browser exits via {browser_ip}; direct path was {os_ip or 'unknown'}."
+        else:
+            verdict = f"ℹ No proxy enabled. Browser IP: <b>{browser_ip or '?'}</b> · direct: {os_ip or '?'}"
+        box = QMessageBox(parent)
+        box.setWindowTitle("VPN leak test")
+        box.setTextFormat(Qt.RichText)
+        box.setText(verdict)
+        box.exec_()
+
+    from litebrowser.browser import new_tab_page  # noqa: F401  (ensures WebEngine import)
+
+    probe_view = QWebEngineView(parent)
+
+    def _on_load(ok):
+        if not ok:
+            errors.append("browser path: page load failed")
+            _finish()
+            return
+
+        def _grab(text):
+            m = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", text or "")
+            browser_path_ip["v"] = m.group(1) if m else ""
+            probe_view.deleteLater()
+            _finish()
+
+        probe_view.page().toPlainText(_grab)
+
+    probe_view.loadFinished.connect(_on_load)
+    probe_view.load(QUrl("https://ipv4.ipleak.net/json/"))
+
+
 def show_vpn_hub(parent) -> None:
     base_dir = parent.base_dir
     dlg = QDialog(parent)
@@ -279,11 +337,13 @@ def show_vpn_hub(parent) -> None:
 
     btn_row = QHBoxLayout()
     btn_test = QPushButton("Test connection")
+    btn_leak = QPushButton("Run leak test")
     btn_connect = QPushButton("Connect (select 1 line)")
     btn_disconnect = QPushButton("Disconnect proxy")
     btn_manual = QPushButton("Detailed form…")
     btn_close = QPushButton("Close")
     btn_row.addWidget(btn_test)
+    btn_row.addWidget(btn_leak)
     btn_row.addWidget(btn_connect)
     btn_row.addWidget(btn_disconnect)
     btn_row.addWidget(btn_manual)
@@ -326,6 +386,7 @@ def show_vpn_hub(parent) -> None:
             QMessageBox.warning(dlg, title, body)
 
     btn_test.clicked.connect(on_test)
+    btn_leak.clicked.connect(lambda: run_leak_test(parent, base_dir))
 
     def apply_cfg(cfg: dict[str, Any]) -> None:
         prefs.set_proxy_config(base_dir, cfg)

@@ -67,6 +67,11 @@ def show_vpn_dialog(parent):
     pass_input.setEchoMode(QLineEdit.Password)
     form_layout.addWidget(lbl_pass, 4, 0)
     form_layout.addWidget(pass_input, 4, 1)
+    lbl_pac = QLabel("PAC URL (optional):")
+    pac_input = QLineEdit()
+    pac_input.setPlaceholderText("https://example.com/proxy.pac — overrides host/port")
+    form_layout.addWidget(lbl_pac, 5, 0)
+    form_layout.addWidget(pac_input, 5, 1)
     layout.addWidget(form, alignment=Qt.AlignCenter)
     _cfg = prefs.get_proxy_config(base_dir)
     if _cfg:
@@ -75,6 +80,7 @@ def show_vpn_dialog(parent):
         port_input.setText(str(_cfg.get("port", "")))
         user_input.setText(str(_cfg.get("user") or ""))
         pass_input.setText(str(_cfg.get("password") or ""))
+        pac_input.setText(str(_cfg.get("pac_url") or ""))
     btn_row = QHBoxLayout()
     btn_row.setSpacing(12)
     btn_apply = QPushButton("Enable Proxy")
@@ -113,6 +119,7 @@ def show_vpn_dialog(parent):
             "port": port_n,
             "user": user_input.text().strip() or None,
             "password": pass_input.text().strip() or None,
+            "pac_url": pac_input.text().strip() or None,
         }
         prefs.set_proxy_config(base_dir, cfg)
         prefs.set_last_vpn_proxy(base_dir, cfg)

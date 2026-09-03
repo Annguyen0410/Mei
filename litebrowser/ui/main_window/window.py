@@ -700,6 +700,31 @@ class SearchWindow(QMainWindow):
         self.ai_dock.setMaximumWidth(560)
         self.panel_split.addWidget(self.ai_dock)
         self.ai_dock.hide()
+        # Slim vertical strip: the GX-way of docking controls without eating
+        # horizontal space — two icon toggles manage both docks from one place.
+        self.dock_rail = QFrame()
+        self.dock_rail.setObjectName("DockRail")
+        rail_layout = QVBoxLayout(self.dock_rail)
+        rail_layout.setContentsMargins(3, 6, 3, 6)
+        rail_layout.setSpacing(4)
+        self.btn_rail_panels = QToolButton()
+        self.btn_rail_panels.setObjectName("SidebarPanelBtn")
+        self.btn_rail_panels.setText("◫")
+        self.btn_rail_panels.setToolTip("Toggle web panel (Telegram, Discord, ...)")
+        self.btn_rail_panels.setCheckable(True)
+        self.btn_rail_panels.clicked.connect(lambda: self.show_web_panel_menu())
+        self.btn_rail_ai = QToolButton()
+        self.btn_rail_ai.setObjectName("SidebarPanelBtn")
+        self.btn_rail_ai.setText("✦")
+        self.btn_rail_ai.setToolTip("Toggle AI sidebar (chat with this page)")
+        self.btn_rail_ai.setCheckable(True)
+        self.btn_rail_ai.clicked.connect(self.toggle_ai_sidebar)
+        rail_layout.addWidget(self.btn_rail_panels)
+        rail_layout.addWidget(self.btn_rail_ai)
+        rail_layout.addStretch(1)
+        self.dock_rail.setFixedWidth(34)
+        self.panel_split.addWidget(self.dock_rail)
+        self.panel_split.setStretchFactor(2, 0)
         self.content_layout.addWidget(self.panel_split, 1)
         self.main_splitter.addWidget(self.content_widget)
         initial_sidebar = self._sidebar_expanded_nominal_width()
@@ -2418,14 +2443,17 @@ class SearchWindow(QMainWindow):
 
     def close_web_panel(self):
         self.panel_dock.hide()
+        self.btn_rail_panels.setChecked(False)
         prefs.set_web_panel_visible(self.base_dir, False)
 
     def toggle_ai_sidebar(self):
         """Edge-Copilot-style: dock the page-aware assistant beside the web."""
         if self.ai_dock.isVisible():
             self.ai_dock.hide()
+            self.btn_rail_ai.setChecked(False)
             return
         self.ai_dock.show()
+        self.btn_rail_ai.setChecked(True)
         total = max(600, self.panel_split.width())
         self.panel_split.setSizes([max(420, total - 360), 360])
         self.inline_ai_input.setFocus()

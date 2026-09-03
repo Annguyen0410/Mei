@@ -1226,6 +1226,11 @@ QToolTip {
     background-color: %(CARD_BG)s;
     border-left: 1px solid %(BORDER_SOFT)s;
 }
+/* Slim right dock rail (panel + AI toggles). */
+#DockRail {
+    background-color: %(SIDEBAR_BG)s;
+    border-left: 1px solid %(BORDER_SOFT)s;
+}
 """ % p
 
 

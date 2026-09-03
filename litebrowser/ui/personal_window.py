@@ -545,6 +545,98 @@ class WikiLinkHighlighter(QSyntaxHighlighter):
             self.setFormat(match.start(), match.end() - match.start(), fmt)
 
 
+class _FocusHeatmap(QWidget):
+    """Duolingo-style 12-week streak grid from focus_sessions.json.
+
+    One small rounded cell per day; intensity follows minutes focused.
+    Pure theme painting, no chart dependency."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._minutes = {}  # day-key -> minutes
+        self._streak = 0
+        self._longest = 0
+        self.setToolTip("Focus minutes per day — keep the chain alive")
+        self.setMinimumHeight(58)
+
+    def refresh(self, base_dir: str):
+        import datetime as _dt
+
+        sessions = focus_service.focus_journal(base_dir, limit=200)
+        per_day = {}
+        for s in sessions:
+            if s.get("status") == "abandoned":
+                continue
+            started = int(s.get("started_at", 0) or 0)
+            ended = int(s.get("ended_at", 0) or started)
+            planned = int(s.get("minutes", 0) or 0) * 60
+            spent = max(0, min(ended - started, planned)) if ended else min(planned, 0)
+            key = time.strftime("%Y-%m-%d", time.localtime(started))
+            per_day[key] = per_day.get(key, 0) + spent // 60
+        self._minutes = per_day
+        # Streak: consecutive days (ending today or yesterday) with >= 1 min.
+        today = _dt.date.today()
+        streak = 0
+        for offset in range(0, 120):
+            key = (today - _dt.timedelta(days=offset)).isoformat()
+            if per_day.get(key, 0) >= 1:
+                streak += 1
+            elif offset == 0:
+                continue  # today may not have started yet
+            else:
+                break
+        self._streak = streak
+        longest = 0
+        run = 0
+        for offset in range(119, -1, -1):
+            key = (today - _dt.timedelta(days=offset)).isoformat()
+            if per_day.get(key, 0) >= 1:
+                run += 1
+                longest = max(longest, run)
+            else:
+                run = 0
+        self._longest = longest
+        self.update()
+
+    def paintEvent(self, _event):
+        import datetime as _dt
+
+        painter = QPainter(self)
+        p = theme.palette()
+        painter.fillRect(self.rect(), QColor(p["CARD_BG"]))
+        cell = 11
+        gap = 3
+        cols = 12
+        rows = 7
+        left, top = 8, 8
+        today = _dt.date.today()
+        painter.setPen(QColor(p["TEXT_MUTED"]))
+        painter.drawText(left, top + 8, f"🔥 Focus streak: {self._streak} days · longest {self._longest}")
+        gy = top + 16
+        max_minutes = max([1] + list(self._minutes.values()))
+        for col in range(cols):
+            for row in range(rows):
+                days_back = (cols - 1 - col) * rows + (rows - 1 - row)
+                day = today - _dt.timedelta(days=days_back)
+                key = day.isoformat()
+                minutes = self._minutes.get(key, 0)
+                if minutes <= 0:
+                    color = QColor(p["MAIN_BG_ALT"])
+                else:
+                    t = min(1.0, minutes / max_minutes)
+                    base = QColor(p["ACCENT"])
+                    soft = QColor(p["MAIN_BG_ALT"])
+                    color = QColor(
+                        int(soft.red() + (base.red() - soft.red()) * t),
+                        int(soft.green() + (base.green() - soft.green()) * t),
+                        int(soft.blue() + (base.blue() - soft.blue()) * t),
+                    )
+                painter.setPen(QPen(QColor(p["BORDER_SOFT"]), 1))
+                painter.setBrush(color)
+                painter.drawRoundedRect(left + col * (cell + gap), gy + row * (cell + gap), cell, cell, 3, 3)
+        painter.end()
+
+
 class PersonalWindow(QMainWindow):
     def __init__(self, base_dir: str, app_dir: str = None, embedded: bool = False):
         super().__init__()
@@ -799,6 +891,15 @@ class PersonalWindow(QMainWindow):
         stats_row.addWidget(components.stat_row(tiles), 1)
         l.addLayout(stats_row)
 
+        # Focus streak heatmap (12 weeks, Duolingo-style) — visible motivation.
+        self.focus_heatmap = _FocusHeatmap()
+        heatmap_card = QFrame()
+        heatmap_card.setObjectName("SectionCard")
+        heatmap_layout = QVBoxLayout(heatmap_card)
+        heatmap_layout.setContentsMargins(12, 10, 12, 10)
+        heatmap_layout.addWidget(self.focus_heatmap)
+        l.addWidget(heatmap_card)
+
         body = QHBoxLayout()
         self.overview_focus_list = QListWidget()
         self.overview_focus_list.setObjectName("CafeList")
@@ -826,6 +927,8 @@ class PersonalWindow(QMainWindow):
         self.lbl_overview_notes.setText(f"{len(personal_service.list_notes(self.base_dir))}")
         minutes = focus_service.today_focus_seconds(self.base_dir) // 60
         self.lbl_overview_focus.setText(f"{minutes}")
+        if getattr(self, "focus_heatmap", None) is not None:
+            self.focus_heatmap.refresh(self.base_dir)
         self.overview_focus_list.clear()
         for item in [task for task in life_service.load_tasks(self.base_dir) if not task.get("completed")] [:8]:
             self.overview_focus_list.addItem(f"{item.get('title', '')} · {item.get('bucket', '')}")

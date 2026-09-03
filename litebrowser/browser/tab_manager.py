@@ -549,7 +549,8 @@ class TabManager:
             if row_now >= 0:
                 self.set_tab_group(row_now, group_name, group_color)
 
-        browser = None        if should_defer:
+        browser = None
+        if should_defer:
             dormant = self._make_dormant_view(session_data.get("title") or label, target_url)
             self.browsers.append(None)
             self.stack.addWidget(dormant)

@@ -90,6 +90,72 @@ def _activity_item(kind: str, title: str, detail: str = "", meta: str = "") -> Q
 
 
 
+class _DomainWeekChart(QWidget):
+    """Top domains this week as horizontal theme bars — the wellbeing view.
+
+    Distraction domains tint with DANGER so the balance is honest at a glance."""
+
+    _SCARY = ("facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com", "reddit.com", "netflix.com", "youtube.com")
+
+    def __init__(self, page):
+        super().__init__()
+        self._page = page
+        self._rows = []  # (domain, count, scary?)
+        self.setMinimumHeight(96)
+
+    def refresh(self):
+        from litebrowser.core import prefs as _prefs
+        from urllib.parse import urlparse as _urlparse
+
+        entries = _prefs.load_history_entries(self._page.shell.profile_dir)
+        midnight = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+        counts = {}
+        for ts, url in entries:
+            ts = int(ts or 0)
+            if ts < midnight - 6 * 86400:
+                continue
+            host = _urlparse(url).netloc.removeprefix("www.").lower() if "://" in url else ""
+            if host:
+                counts[host] = counts.get(host, 0) + 1
+        ranked = sorted(counts.items(), key=lambda kv: -kv[1])[:6]
+        self._rows = [
+            (d, c, any(d == s or d.endswith("." + s) for s in self._SCARY))
+            for d, c in ranked
+        ]
+        self.update()
+
+    def paintEvent(self, _event):
+        from litebrowser.ui import theme as _theme
+
+        painter = QPainter(self)
+        w, h = self.width(), self.height()
+        p = _theme.palette()
+        painter.fillRect(self.rect(), QColor(p["MAIN_BG_ALT"]))
+        if not self._rows:
+            painter.setPen(QColor(p["TEXT_MUTED"]))
+            painter.drawText(self.rect(), Qt.AlignCenter, "No browsing this week yet.")
+            painter.end()
+            return
+        top = 8
+        row_h = max(18, (h - 16) // max(1, len(self._rows)))
+        max_count = max(c for _d, c, _s in self._rows) or 1
+        label_w = min(150, w * 0.4)
+        bar_x = label_w + 10
+        bar_w_max = max(30, w - bar_x - 46)
+        for i, (domain, count, scary) in enumerate(self._rows):
+            y = top + i * row_h
+            painter.setPen(QColor(p["TEXT"]))
+            painter.drawText(6, y, label_w, row_h, Qt.AlignVCenter | Qt.AlignLeft, domain[:22])
+            bar_w = int(bar_w_max * count / max_count)
+            color = QColor(p["DANGER"]) if scary else QColor(p["ACCENT"])
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(bar_x, y + (row_h - 12) // 2, max(4, bar_w), 12, 4, 4)
+            painter.setPen(QColor(p["TEXT_MUTED"]))
+            painter.drawText(bar_x + max(4, bar_w) + 6, y, 40, row_h, Qt.AlignVCenter, str(count))
+        painter.end()
+
+
 class _WeekActivityChart(QWidget):
     """A quiet 7-day bar chart of browsing counts, painted with the theme.
 
@@ -275,16 +341,21 @@ class HomeDashboardPage(QWidget):
         # Dashboard 2.0: 7-day browsing activity mini bar chart (pure paint,
         # no chart lib) driven straight from history timestamps.
         self.week_chart = _WeekActivityChart(self)
-        chart_card = QFrame()
-        chart_card.setObjectName("SectionCard")
-        chart_layout = QVBoxLayout(chart_card)
-        chart_layout.setContentsMargins(14, 12, 14, 12)
-        chart_layout.setSpacing(6)
-        chart_layout.addWidget(
-            components.section_header("Your Week", "Pages visited per day (last 7 days)")
-        )
-        chart_layout.addWidget(self.week_chart, 1)
-        layout.addWidget(chart_card, 1)
+        self.domain_chart = _DomainWeekChart(self)
+        charts_row = QHBoxLayout()
+        for title_text, subtitle, chart in (
+            ("Your Week", "Pages visited per day (last 7 days)", self.week_chart),
+            ("Where time goes", "Top domains this week — your digital wellbeing", self.domain_chart),
+        ):
+            card = QFrame()
+            card.setObjectName("SectionCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 12, 14, 12)
+            card_layout.setSpacing(6)
+            card_layout.addWidget(components.section_header(title_text, subtitle))
+            card_layout.addWidget(chart, 1)
+            charts_row.addWidget(card, 1)
+        layout.addLayout(charts_row, 1)
 
         self.btn_brief_refresh = QPushButton("↻ Refresh")
         self.btn_brief_refresh.clicked.connect(self._refresh_brief)
@@ -369,6 +440,8 @@ class HomeDashboardPage(QWidget):
         self._stat_labels["focus"].setText(f"{focus_service.today_focus_seconds(self.shell.profile_dir) // 60}")
         if getattr(self, "week_chart", None) is not None:
             self.week_chart.refresh()
+        if getattr(self, "domain_chart", None) is not None:
+            self.domain_chart.refresh()
 
         self.recent_notes.clear()
         for note in personal_service.list_notes(self.shell.profile_dir)[:8]:

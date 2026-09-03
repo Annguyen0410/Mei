@@ -127,13 +127,20 @@ class TabListItemWidget(QWidget):
         # Palette-aware colors so tabs stay readable in both cafe-night and cafe-day.
         pal = self._palette()
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 6, 4)
-        layout.setSpacing(6)
+        # Slim 32px rows: tighter margins + spacing for a denser, professional desk.
+        layout.setContentsMargins(6, 2, 3, 2)
+        layout.setSpacing(5)
 
+        self.lbl_group = QLabel("")  # Chrome-style group color dot
+        self.lbl_group.setFixedWidth(7)
+        self.lbl_group.setAlignment(Qt.AlignCenter)
+        self.lbl_group.setStyleSheet("background: transparent; border-radius: 3px;")
+        self.lbl_group.setVisible(False)
+        layout.addWidget(self.lbl_group)
         self.lbl_icon = QLabel("•")
-        self.lbl_icon.setFixedWidth(18)
+        self.lbl_icon.setFixedWidth(16)
         self.lbl_icon.setAlignment(Qt.AlignCenter)
-        self.lbl_icon.setStyleSheet(f"color: {pal['ACCENT']}; font-size: 13px; font-weight: 700; background: transparent;")
+        self.lbl_icon.setStyleSheet(f"color: {pal['ACCENT']}; font-size: 12px; font-weight: 700; background: transparent;")
         self.lbl_title = QLabel(title)
         # No native setToolTip here: native tooltips near a QWebEngine surface
         # can trigger the black-screen compositor bug on Windows. The tab
@@ -368,7 +375,7 @@ class TabManager:
     def _create_tab_item(self, label, browser):
         item = QListWidgetItem()
         widget = TabListItemWidget(self, item, label)
-        item.setSizeHint(QSize(224, 40))
+        item.setSizeHint(QSize(224, 32))
         self.tab_list.addItem(item)
         self.tab_list.setItemWidget(item, widget)
         item.setData(TAB_WIDGET_ROLE, widget)
@@ -538,9 +545,11 @@ class TabManager:
         if group_name:
             item.setData(TAB_GROUP_ROLE, group_name)
             item.setData(TAB_GROUP_COLOR_ROLE, group_color)
+            row_now = self.tab_list.row(item)
+            if row_now >= 0:
+                self.set_tab_group(row_now, group_name, group_color)
 
-        browser = None
-        if should_defer:
+        browser = None        if should_defer:
             dormant = self._make_dormant_view(session_data.get("title") or label, target_url)
             self.browsers.append(None)
             self.stack.addWidget(dormant)
@@ -703,6 +712,10 @@ class TabManager:
             if item.data(TAB_PINNED_ROLE)
             else (f"color: {self._pal['TEXT']}; font-size: 11px; font-weight: 600; background: transparent;")
         )
+        # The group dot lives outside hibernation styling — re-apply it.
+        row = self.tab_list.row(item)
+        if row >= 0:
+            self._apply_group_visual(row)
 
     def hibernate_tab(self, browser, item, refresh=True):
         if (
@@ -774,8 +787,8 @@ class TabManager:
     def set_tab_group(self, i, name: str = "", color: str = ""):
         """Assign/remove a Chrome-style colored group for row ``i``.
 
-        The group shows as a colored left bar + name prefix on the tab row.
-        Members of the same group sort together via refresh via caller."""
+        The group shows as a colored dot in the left gutter (title stays
+        clean — a text prefix wasted horizontal space in a slim desk)."""
         item = self.tab_list.item(i)
         if item is None:
             return
@@ -784,25 +797,19 @@ class TabManager:
         widget = item.data(TAB_WIDGET_ROLE)
         if widget is None:
             return
-        lbl = getattr(widget, "lbl_title", None)
-        if lbl is None:
+        dot = getattr(widget, "lbl_group", None)
+        if dot is None:
             return
-        base_text = lbl.text()
-        # Strip any existing "Group · " prefix before re-applying.
-        for _existing_name, _existing_color in TAB_GROUP_COLORS:
-            prefix = _existing_name + " · "
-            if base_text.startswith(prefix):
-                base_text = base_text[len(prefix):]
         if name:
-            lbl.setText(f"{name} · {base_text}")
-            lbl.set_title_style(
-                f"color: {color or self._pal.get('TEXT', '')}; font-weight: 800; background: transparent;"
+            dot.setStyleSheet(
+                f"background: {color or self._pal.get('ACCENT', '')}; border-radius: 3px; border: none;"
             )
+            dot.setVisible(True)
+            dot.setToolTip(f"Group: {name}")
         else:
-            lbl.setText(base_text)
-            lbl.set_title_style(
-                f"color: {self._pal.get('TEXT', '')}; font-size: 11px; font-weight: 600; background: transparent;"
-            )
+            dot.setStyleSheet("background: transparent; border-radius: 3px; border: none;")
+            dot.setVisible(False)
+            dot.setToolTip("")
 
     def _apply_group_visual(self, i):
         item = self.tab_list.item(i)

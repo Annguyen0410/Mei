@@ -1101,7 +1101,8 @@ class AppShell(QMainWindow):
             from litebrowser.services import focus_service
             raw = text[len("/focus"):].strip()
             minutes = 25
-            label = ""            for token in raw.split():
+            label = ""
+            for token in raw.split():
                 if token.isdigit():
                     minutes = int(token)
                 else:

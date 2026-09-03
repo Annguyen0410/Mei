@@ -22,6 +22,7 @@ from PyQt5.QtGui import QColor, QDesktopServices, QFont, QIcon, QKeySequence, QP
 from PyQt5.QtNetwork import QNetworkProxy
 from PyQt5.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt5.QtWebEngineWidgets import (
+    QWebEnginePage,
     QWebEngineProfile,
     QWebEngineScript,
     QWebEngineSettings,
@@ -260,6 +261,7 @@ class SearchWindow(QMainWindow):
         )
         QShortcut(QKeySequence("F12"), self).activated.connect(self.show_dev_tools)
         QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.toggle_zen_mode)
+        QShortcut(QKeySequence("Ctrl+Shift+R"), self).activated.connect(self.hard_reload)
         # Esc exits Zen mode first (then closes the find bar if that was open).
         QShortcut(QKeySequence(Qt.Key_Escape), self).activated.connect(self._escape_in_browser)
 
@@ -557,6 +559,8 @@ class SearchWindow(QMainWindow):
         self.url_clear_action.triggered.connect(self.url_bar.clear)
         self.url_clear_action.setVisible(False)
         self.url_bar.textChanged.connect(lambda text: self.url_clear_action.setVisible(bool(text)))
+        # Chrome standard: middle-click pastes the clipboard and navigates.
+        self.url_bar.installEventFilter(self)
         self.topbar_layout.addWidget(self.url_bar, 1)
         # Opera GX-style web panels: messenger/media dock beside the page.
         self.btn_panels = QToolButton()
@@ -1156,6 +1160,7 @@ class SearchWindow(QMainWindow):
     def _build_page_menu(self):
         menu = QMenu(self)
         menu.addAction("Home").triggered.connect(self._go_home)
+        menu.addAction("Copy page address").triggered.connect(self._copy_page_address)
         menu.addAction("Bookmark page").triggered.connect(lambda: self.save_bookmark(None))
         menu.addAction("Save to reading list").triggered.connect(self._add_to_reading_list)
         menu.addAction("Find in page").triggered.connect(self.find_text)
@@ -2208,11 +2213,45 @@ class SearchWindow(QMainWindow):
         elif action == close_action:
             self.tab_manager.close_tab(row)
 
+    def eventFilter(self, obj, ev):
+        # Middle-click on the URL bar: paste & go (browser standard).
+        from PyQt5.QtCore import QEvent, Qt as _Qt
+
+        if obj is getattr(self, "url_bar", None) and ev.type() == QEvent.MouseButtonRelease:
+            if ev.button() == _Qt.MiddleButton:
+                clipboard = QApplication.clipboard().text().strip()
+                if clipboard:
+                    self.url_bar.setText(clipboard)
+                    self.navigate()
+                    self._flash_status("Pasted & navigated")
+                ev.accept()
+                return True
+        return super().eventFilter(obj, ev)
+
     def toggle_fullscreen(self):
         if self.isFullScreen():
             self.showNormal()
         else:
             self.showFullScreen()
+
+    def _copy_page_address(self):
+        browser = self.current_browser()
+        if browser is None:
+            return
+        url = browser.url().toString()
+        if url:
+            QApplication.clipboard().setText(url)
+            self._flash_status("Page address copied")
+
+    def hard_reload(self):
+        browser = self.current_browser()
+        if browser is None:
+            return
+        try:
+            browser.page().triggerAction(QWebEnginePage.ReloadAndBypassCache)
+        except Exception:
+            browser.reload()
+        self._flash_status("Hard reload — cache bypassed")
 
     def toggle_zen_mode(self):
         """Zen mode: hide every chrome surface (sidebar, toolbar, shells)

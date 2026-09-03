@@ -1156,6 +1156,7 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
         menu.addAction("Copy page address").triggered.connect(self._copy_page_address)
         menu.addAction("Bookmark page").triggered.connect(lambda: self.save_bookmark(None))
         menu.addAction("Save to reading list").triggered.connect(self._add_to_reading_list)
+        menu.addAction("Save selection to SafeVault").triggered.connect(self._save_selection_to_vault)
         menu.addAction("Find in page").triggered.connect(self.find_text)
         menu.addAction("Reader mode").triggered.connect(self.toggle_reader_mode)
         menu.addSeparator()
@@ -3832,6 +3833,46 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
             layout.addWidget(btn_copy)
             dialog.exec_()
         browser.page().toPlainText(process_text)
+
+    def _save_selection_to_vault(self):
+        """Save the highlighted page text into SafeVault as a dated clipping.
+
+        Clippings live in one rolling 'Clippings' note per day, so studying a
+        topic keeps its sources (title + URL) attached to every excerpt."""
+        browser = self.current_browser()
+        if not browser:
+            return
+
+        def _grab_selection(selected):
+            text = (selected or "").strip()
+            if not text:
+                self._flash_status("Select some text on the page first")
+                return
+            title = browser.title() or browser.url().toString() or "Untitled page"
+            url = browser.url().toString()
+            day = time.strftime("%Y-%m-%d")
+            note_title = f"Clippings — {day}"
+            excerpt = f"> {text.replace(chr(10), chr(10) + '> ')}\n\n— [{title}]({url}) · {time.strftime('%H:%M')}\n\n---\n\n"
+            from litebrowser.services import personal_service
+            existing = [
+                n for n in personal_service.list_notes(self.base_dir, note_title)
+                if n["title"] == note_title and n.get("category") == "Clippings"
+            ]
+            if existing:
+                note = personal_service.read_note(self.base_dir, existing[0]["id"])
+                personal_service.update_note(
+                    self.base_dir, existing[0]["id"],
+                    (note["content"] if note else "") + "\n\n" + excerpt,
+                )
+            else:
+                personal_service.create_note(self.base_dir, note_title, "# " + note_title + "\n\n" + excerpt, category="Clippings")
+            self._flash_status("Clipped to SafeVault ✓")
+
+        browser.page().runJavaScript(
+            "(function(){var s=window.getSelection&&window.getSelection();"
+            "return s?s.toString():'';})();",
+            _grab_selection,
+        )
 
     def _tab_state_payload(self, index, browser, active_browser):
         item = self.tab_list.item(index)

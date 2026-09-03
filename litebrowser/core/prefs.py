@@ -261,7 +261,7 @@ def resolved_auto_theme(base_dir):
         "matcha-day": ("matcha-day", "forest-night"),
         "sand-day": ("sand-day", "ocean-night"),
     }
-    day, night = pairs.get(theme_id, (theme.DEFAULT_THEME, "cafe-night"))
+    day, night = pairs.get(theme_id, (_theme_mod.DEFAULT_THEME, "cafe-night"))
     return day if day_mode else night
 
 

@@ -763,6 +763,25 @@ class BrowserPage(QWebEnginePage):
             except Exception:
                 pass
         self.featurePermissionRequested.connect(self._on_permission_requested)
+        # Seamless proxy authentication: Chromium asks the page for proxy
+        # credentials at connection time; answer from the saved VPN config
+        # instead of failing every request silently (v6.5 gap — SOCKS/HTTP
+        # proxies with auth were unusable).
+        self.proxyAuthenticationRequired.connect(self._on_proxy_auth_required)
+
+    def _on_proxy_auth_required(self, url, authenticator, _proxy_host):
+        cfg = {}
+        try:
+            from litebrowser.core import prefs as _prefs
+
+            cfg = _prefs.get_proxy_config(self._base_dir) if self._base_dir else {}
+        except Exception:
+            cfg = {}
+        user = str(cfg.get("user") or "")
+        password = str(cfg.get("password") or "")
+        if user:
+            authenticator.setUser(user)
+            authenticator.setPassword(password)
 
     def createWindow(self, _window_type):
         host = self._host

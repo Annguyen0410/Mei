@@ -54,14 +54,17 @@ def _saved_proxy_chromium_flag(app_dir: str) -> str:
         if not host or port <= 0 or port > 65535:
             return ""
         scheme = "socks5" if (cfg.get("type") or "http").lower().startswith("socks") else "http"
-        # Authenticated proxies: Chromium accepts user:pass inline in the flag.
-        from urllib.parse import quote
+        # HTTP proxies: Chromium rejects inline user:pass in the flag, but the
+        # proxyAuthenticationRequired handler (browser_page.py) answers the
+        # auth challenge with the saved credentials at runtime. SOCKS5 with
+        # auth is genuinely unsupported by Chromium flags — warn loudly.
         user = (cfg.get("user") or "").strip()
         password = (cfg.get("password") or "").strip()
-        auth = ""
-        if user:
-            auth = quote(user, safe="") + (":" + quote(password, safe="") if password else "") + "@"
-        return "--proxy-server=%s://%s%s:%d" % (scheme, auth, host, port)
+        if user and scheme == "socks5":
+            os.environ["MEI_PROXY_AUTH_WARNING"] = (
+                "SOCKS5 with username/password is not supported by Chromium; connect an HTTP proxy for authenticated use."
+            )
+        return "--proxy-server=%s://%s:%d" % (scheme, host, port)
     except Exception:
         return ""
 
@@ -245,6 +248,11 @@ def main(app_dir=None):
         # Session restored from the previous instance; surface why we bounced.
         note = restart_reason or "Mei restarted to apply new settings"
         windows[0].browser_page._flash_status(f"⟳ {note}")
+    proxy_warning = os.environ.pop("MEI_PROXY_AUTH_WARNING", "")
+    if proxy_warning:
+        from PyQt5.QtWidgets import QMessageBox as _QMB
+
+        _QMB.warning(windows[0], "VPN", proxy_warning)
     android_bridge_service.start_from_prefs(profile_dir)
     app.aboutToQuit.connect(android_bridge_service.stop)
     sys.exit(app.exec_())

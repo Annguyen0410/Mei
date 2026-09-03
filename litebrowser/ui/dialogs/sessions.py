@@ -68,17 +68,13 @@ def show_vpn_dialog(parent):
     form_layout.addWidget(lbl_pass, 4, 0)
     form_layout.addWidget(pass_input, 4, 1)
     layout.addWidget(form, alignment=Qt.AlignCenter)
-    if os.path.exists(cfg_path):
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            type_combo.setCurrentIndex(1 if cfg.get("type", "").upper() == "SOCKS5" else 0)
-            host_input.setText(cfg.get("host", ""))
-            port_input.setText(str(cfg.get("port", "")))
-            user_input.setText(cfg.get("user", ""))
-            pass_input.setText(cfg.get("password", ""))
-        except Exception:
-            pass
+    _cfg = prefs.get_proxy_config(base_dir)
+    if _cfg:
+        type_combo.setCurrentIndex(1 if str(_cfg.get("type", "")).upper() == "SOCKS5" else 0)
+        host_input.setText(str(_cfg.get("host", "")))
+        port_input.setText(str(_cfg.get("port", "")))
+        user_input.setText(str(_cfg.get("user") or ""))
+        pass_input.setText(str(_cfg.get("password") or ""))
     btn_row = QHBoxLayout()
     btn_row.setSpacing(12)
     btn_apply = QPushButton("Enable Proxy")
@@ -118,23 +114,33 @@ def show_vpn_dialog(parent):
             "user": user_input.text().strip() or None,
             "password": pass_input.text().strip() or None,
         }
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
+        prefs.set_proxy_config(base_dir, cfg)
+        prefs.set_last_vpn_proxy(base_dir, cfg)
         parent._set_proxy_from_config(cfg)
-        QMessageBox.information(parent, "VPN", f"Proxy {type_combo.currentText()} enabled: {host}:{port_n}")
+        relaunch = getattr(parent, "smart_restart", None)
+        dialog.done(1)
+        if relaunch is not None:
+            relaunch(reason=f"VPN connected: {host}:{port_n}")
+        else:
+            QMessageBox.information(parent, "VPN", f"Proxy {type_combo.currentText()} enabled: {host}:{port_n}\n\nRestart Mei to route all tabs through it.")
     elif result == 2:
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump({"enabled": False}, f, indent=2)
+        prefs.set_proxy_config(base_dir, {"enabled": False})
+        prefs.set_auto_connect_vpn(base_dir, False)
         QNetworkProxy.setApplicationProxy(QNetworkProxy(QNetworkProxy.NoProxy))
         existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(
             tok for tok in existing.split() if not tok.startswith("--proxy-server=")
         ).strip()
-        QMessageBox.information(
-            parent,
-            "VPN",
-            "Proxy disabled. Restart Mei so web tabs no longer route through the proxy.",
-        )
+        relaunch = getattr(parent, "smart_restart", None)
+        dialog.done(2)
+        if relaunch is not None:
+            relaunch(reason="VPN disconnected")
+        else:
+            QMessageBox.information(
+                parent,
+                "VPN",
+                "Proxy disabled. Restart Mei so web tabs no longer route through the proxy.",
+            )
 
 
 def show_startup_dialog(parent):

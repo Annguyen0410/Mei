@@ -430,6 +430,7 @@ class SearchWindow(QMainWindow):
         self.bookmarks_tree.setHeaderHidden(True)
         self.bookmarks_tree.setDragDropMode(self.bookmarks_tree.DragDropMode.InternalMove)
         self.bookmarks_tree.itemDoubleClicked.connect(lambda item, col: self._on_bookmark_clicked(item))
+        self.bookmarks_tree.viewport().installEventFilter(self)
         self.bookmarks_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.bookmarks_tree.customContextMenuRequested.connect(self._show_bookmark_context_menu)
         self.bookmarks_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
@@ -438,6 +439,7 @@ class SearchWindow(QMainWindow):
         self.history_list = QListWidget()
         self.history_list.setObjectName("TabList")
         self.history_list.itemDoubleClicked.connect(self._on_history_clicked)
+        self.history_list.viewport().installEventFilter(self)
         self.history_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.sidebar_stack.addWidget(self.history_list)
@@ -450,6 +452,7 @@ class SearchWindow(QMainWindow):
         self.reading_list = QListWidget()
         self.reading_list.setObjectName("TabList")
         self.reading_list.itemDoubleClicked.connect(self._on_reading_clicked)
+        self.reading_list.viewport().installEventFilter(self)
         self.reading_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.reading_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.sidebar_stack.addWidget(self.reading_list)
@@ -574,7 +577,9 @@ class SearchWindow(QMainWindow):
         self.lbl_zoom.setObjectName("ZoomLabel")
         self.lbl_zoom.setMinimumWidth(42)
         self.lbl_zoom.setAlignment(Qt.AlignCenter)
-        self.lbl_zoom.setToolTip("Zoom level")
+        self.lbl_zoom.setToolTip("Zoom level — click to reset (Ctrl+0)")
+        self.lbl_zoom.setCursor(Qt.PointingHandCursor)
+        self.lbl_zoom.mousePressEvent = lambda _ev: self.zoom_reset()
         self.topbar_layout.addWidget(self.lbl_zoom)
         self.btn_ai = QToolButton()
         self.btn_ai.setObjectName("TopIconButton")
@@ -1590,7 +1595,7 @@ class SearchWindow(QMainWindow):
         title = browser.title() or url
         life_service.add_saved_page(self.base_dir, title, url)
         self._load_reading_list()
-        QMessageBox.information(self, "Saved", "Page added to your reading list.")
+        self._flash_status("Added to your reading list")
 
     def _filter_tab_list(self, text=""):
         self._apply_tab_list_visibility()
@@ -2287,7 +2292,38 @@ class SearchWindow(QMainWindow):
                     self._flash_status("Pasted & navigated")
                 ev.accept()
                 return True
+        # Middle-click a bookmark / history / reading row: open in a new tab.
+        if ev.type() == QEvent.MouseButtonRelease and ev.button() == _Qt.MiddleButton:
+            if obj is getattr(self, "bookmarks_tree", None).viewport():
+                item = self.bookmarks_tree.itemAt(ev.pos())
+                if item is not None:
+                    self._open_bookmark_in_new_tab(item)
+                    ev.accept()
+                    return True
+            elif obj is getattr(self, "history_list", None).viewport():
+                item = self.history_list.itemAt(ev.pos())
+                if item is not None and item.text() != "No history yet...":
+                    self.tab_manager.add_tab(QUrl(item.text()), item.text()[:40], is_active=False)
+                    self._flash_status("Opened history page in a background tab")
+                    ev.accept()
+                    return True
+            elif obj is getattr(self, "reading_list", None).viewport():
+                item = self.reading_list.itemAt(ev.pos())
+                if item is not None and item.data(Qt.UserRole):
+                    self.tab_manager.add_tab(QUrl(item.data(Qt.UserRole)), item.text()[:40], is_active=False)
+                    self._flash_status("Opened reading page in a background tab")
+                    ev.accept()
+                    return True
         return super().eventFilter(obj, ev)
+
+    def _open_bookmark_in_new_tab(self, item):
+        data = item.data(0, Qt.UserRole)
+        kind, url = data if isinstance(data, tuple) and len(data) == 2 else ("", data)
+        if kind == "folder" or not url:
+            return
+        title = item.text(0) or url[:40]
+        self.tab_manager.add_tab(QUrl(url), title[:40], is_active=False)
+        self._flash_status("Opened bookmark in a background tab")
 
     def toggle_fullscreen(self):
         if self.isFullScreen():

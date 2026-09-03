@@ -259,6 +259,17 @@ class SearchWindow(QMainWindow):
             lambda: getattr(self, "tab_manager", None) and self.tab_manager.optimize_memory()
         )
         QShortcut(QKeySequence("F12"), self).activated.connect(self.show_dev_tools)
+        QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.toggle_zen_mode)
+        # Esc exits Zen mode first (then closes the find bar if that was open).
+        QShortcut(QKeySequence(Qt.Key_Escape), self).activated.connect(self._escape_in_browser)
+
+    def _escape_in_browser(self):
+        if getattr(self, "_zen_mode", False):
+            self.toggle_zen_mode()
+            return
+        bar = getattr(self, "_find_bar", None)
+        if bar is not None and bar.isVisible():
+            self._close_find_bar()
 
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
@@ -2166,6 +2177,33 @@ class SearchWindow(QMainWindow):
             self.showNormal()
         else:
             self.showFullScreen()
+
+    def toggle_zen_mode(self):
+        """Zen mode: hide every chrome surface (sidebar, toolbar, shells)
+        so the page fills the window — reading/presenting without clutter.
+        Toggle again (or Esc) to restore exactly what was visible."""
+        if getattr(self, "_zen_mode", False):
+            self._zen_mode = False
+            # Restore prior visibilities captured on entry.
+            vis = getattr(self, "_zen_restore", {}) or {}
+            self.sidebarWidget.setVisible(vis.get("sidebar", True))
+            self.topbar.setVisible(vis.get("topbar", True))
+            if getattr(self, "load_progress", None) is not None:
+                self.load_progress.setVisible(vis.get("progress", False))
+            if self.inline_ai_panel.isVisible() is False and vis.get("panel_split", True):
+                pass  # panel_dock manages itself via its own toggle
+            self._apply_responsive_layout()
+            self._flash_status("Zen mode off")
+            return
+        self._zen_mode = True
+        self._zen_restore = {
+            "sidebar": self.sidebarWidget.isVisible(),
+            "topbar": self.topbar.isVisible(),
+            "progress": getattr(self, "load_progress", None) is not None and self.load_progress.isVisible(),
+        }
+        self.sidebarWidget.hide()
+        self.topbar.hide()
+        self._flash_status("Zen mode — Ctrl+Shift+Z to exit")
 
     def on_load_progress(self, progress, browser=None):
         """Drive the thin load bar from the *current* tab only."""

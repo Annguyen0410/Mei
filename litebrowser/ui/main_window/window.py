@@ -206,6 +206,7 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
         QShortcut(QKeySequence("F12"), self).activated.connect(self.show_dev_tools)
         QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.toggle_zen_mode)
         QShortcut(QKeySequence("Ctrl+Shift+R"), self).activated.connect(self.hard_reload)
+        QShortcut(QKeySequence("Ctrl+Shift+V"), self).activated.connect(self.show_clipboard_history)
         # Esc exits Zen mode first (then closes the find bar if that was open).
         QShortcut(QKeySequence(Qt.Key_Escape), self).activated.connect(self._escape_in_browser)
 
@@ -507,6 +508,9 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
         self.url_bar.textChanged.connect(lambda text: self.url_clear_action.setVisible(bool(text)))
         # Chrome standard: middle-click pastes the clipboard and navigates.
         self.url_bar.installEventFilter(self)
+        # Clipboard history: track the last 20 text entries (dedup, QoL).
+        self._clipboard_history = []
+        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
         self.topbar_layout.addWidget(self.url_bar, 1)
         # Opera GX-style web panels: messenger/media dock beside the page.
         self.btn_panels = QToolButton()
@@ -2261,6 +2265,63 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
             self.tab_manager.duplicate_tab_at_row(row)
         elif action == close_action:
             self.tab_manager.close_tab(row)
+
+    def _on_clipboard_changed(self):
+        text = QApplication.clipboard().text().strip()
+        if not text or len(text) > 4000:
+            return
+        if self._clipboard_history and self._clipboard_history[0] == text:
+            return
+        if text in self._clipboard_history:
+            self._clipboard_history.remove(text)
+        self._clipboard_history.insert(0, text)
+        self._clipboard_history = self._clipboard_history[:20]
+
+    def show_clipboard_history(self):
+        """Ctrl+Shift+V: pick one of the last 20 clipboard entries; it goes
+        back to the clipboard and (URLs) can paste&go right away."""
+        entries = list(getattr(self, "_clipboard_history", []))
+        if not entries:
+            self._flash_status("Clipboard history is empty")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Clipboard history — Ctrl+Shift+V")
+        dialog.resize(520, 420)
+        dialog.setStyleSheet(self._dialog_stylesheet())
+        layout = QVBoxLayout(dialog)
+        list_widget = QListWidget()
+        for text in entries:
+            list_widget.addItem(text.splitlines()[0][:90] if text.splitlines() else "(empty)")
+        layout.addWidget(list_widget, 1)
+        hint = QLabel("Pick an entry → it returns to the clipboard. URLs offer paste & go.")
+        hint.setObjectName("MutedLabel")
+        layout.addWidget(hint)
+        row = QHBoxLayout()
+        btn_paste = QPushButton("Paste into page")
+        btn_paste.setObjectName("TopAccentButton")
+        btn_close = QPushButton("Close")
+        row.addStretch(1)
+        row.addWidget(btn_paste)
+        row.addWidget(btn_close)
+        layout.addLayout(row)
+
+        def _restore():
+            row_ = list_widget.currentRow()
+            if row_ < 0:
+                return
+            text = entries[row_]
+            QApplication.clipboard().setText(text)
+            dialog.accept()
+            if "://" in text and " " not in text:
+                self.url_bar.setText(text)
+                self.navigate()
+            else:
+                self._flash_status("Clipboard restored")
+
+        btn_paste.clicked.connect(_restore)
+        list_widget.itemDoubleClicked.connect(lambda _i: _restore())
+        btn_close.clicked.connect(dialog.accept)
+        dialog.exec_()
 
     def eventFilter(self, obj, ev):
         # Middle-click on the URL bar: paste & go (browser standard).

@@ -320,6 +320,102 @@ def show_export_dialog(parent):
     dialog.exec_()
 
 
+def show_feeds_dialog(parent):
+    """RSS mini-reader: add/remove feeds, fetch on demand, open items in tabs."""
+    from litebrowser.services import rss_service
+
+    base_dir = parent.base_dir
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Feeds — read in the café")
+    dialog.resize(620, 500)
+    dialog.setStyleSheet(_stylesheet(parent))
+    layout = QVBoxLayout(dialog)
+    add_row = QHBoxLayout()
+    ed_feed = QLineEdit()
+    ed_feed.setPlaceholderText("Paste a feed or site URL (RSS/Atom)...")
+    btn_add = QPushButton("Subscribe")
+    add_row.addWidget(ed_feed, 1)
+    add_row.addWidget(btn_add)
+    layout.addLayout(add_row)
+    list_widget = QListWidget()
+    layout.addWidget(list_widget, 1)
+    row = QHBoxLayout()
+    btn_refresh = QPushButton("↻ Refresh all")
+    btn_remove = QPushButton("Unsubscribe")
+    btn_open = QPushButton("Open selected")
+    row.addWidget(btn_refresh)
+    row.addWidget(btn_remove)
+    row.addWidget(btn_open)
+    row.addStretch()
+    layout.addLayout(row)
+
+    def refresh():
+        list_widget.clear()
+        feeds = rss_service.load_feeds(base_dir)
+        if not feeds:
+            hint = QListWidgetItem("No feeds yet — paste a URL above and Subscribe.")
+            hint.setFlags(Qt.NoItemFlags)
+            list_widget.addItem(hint)
+            return
+        for feed in feeds:
+            head = QListWidgetItem(f"📰 {feed.get('title') or feed['url']}")
+            head.setData(Qt.UserRole, ("feed", feed["url"]))
+            head.setBackground(head.background())  # keep default
+            list_widget.addItem(head)
+            for item in feed.get("items", [])[:12]:
+                row_item = QListWidgetItem("   " + (item.get("title") or "(untitled)"))
+                row_item.setToolTip(item.get("summary", ""))
+                row_item.setData(Qt.UserRole, ("item", item.get("url", "")))
+                list_widget.addItem(row_item)
+
+    def on_add():
+        url = ed_feed.text().strip()
+        if not url:
+            return
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        rss_service.add_feed(base_dir, url)
+        ed_feed.clear()
+        refresh()
+        btn_refresh.click()
+
+    def on_refresh():
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for feed in rss_service.load_feeds(base_dir):
+                rss_service.refresh_feed(base_dir, feed["url"])
+        finally:
+            QApplication.restoreOverrideCursor()
+        refresh()
+
+    def on_open():
+        item = list_widget.currentItem()
+        if not item:
+            return
+        kind, url = item.data(Qt.UserRole) or ("", "")
+        if kind == "item" and url:
+            parent.tab_manager.add_tab(QUrl(url), item.text().strip()[:40], is_active=True)
+        elif kind == "feed":
+            parent.tab_manager.add_tab(QUrl(url), "Feed source", is_active=True)
+
+    def on_remove():
+        item = list_widget.currentItem()
+        if not item:
+            return
+        kind, url = item.data(Qt.UserRole) or ("", "")
+        if kind == "feed" and url:
+            rss_service.remove_feed(base_dir, url)
+            refresh()
+
+    btn_add.clicked.connect(on_add)
+    btn_refresh.clicked.connect(on_refresh)
+    btn_remove.clicked.connect(on_remove)
+    btn_open.clicked.connect(on_open)
+    list_widget.itemDoubleClicked.connect(lambda _i: on_open())
+    refresh()
+    dialog.exec_()
+
+
 def show_downloads_dialog(parent):
     from litebrowser.services import download_mgr
     base_dir = parent.base_dir

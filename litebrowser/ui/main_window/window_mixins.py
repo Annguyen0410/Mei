@@ -243,6 +243,8 @@ class DockingMixin:
             act = menu.addAction(f"{glyph}  {name}")
             act.triggered.connect(lambda _c=False, n=name, u=url: self.toggle_web_panel(n, u))
         menu.addSeparator()
+        feeds_act = menu.addAction("📰 Feeds — read RSS/Atom")
+        feeds_act.triggered.connect(self._open_feeds_dialog)
         custom = menu.addAction("⌨  Custom URL...")
         custom.triggered.connect(self._open_custom_panel)
         menu.addSeparator()
@@ -258,3 +260,8 @@ class DockingMixin:
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
             self.toggle_web_panel("Custom", url)
+
+    def _open_feeds_dialog(self):
+        from litebrowser.ui.dialogs import show_feeds_dialog
+
+        show_feeds_dialog(self)

@@ -4,6 +4,7 @@ from litebrowser.ui.dialogs.hotkeys import show_hotkeys_hub
 from litebrowser.ui.dialogs.navigation import (
     show_downloads_dialog,
     show_export_dialog,
+    show_feeds_dialog,
     show_quick_switcher,
     show_routines_dialog,
     show_workspace_dialog,
@@ -33,6 +34,7 @@ __all__ = [
     "show_downloads_dialog",
     "show_export_dialog",
     "show_extensions_dialog",
+    "show_feeds_dialog",
     "show_hibernate_pref_dialog",
     "show_history_dialog",
     "show_hotkeys_hub",

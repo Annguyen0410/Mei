@@ -242,11 +242,6 @@ def show_vpn_hub(parent) -> None:
         "Free public proxies are usually <b>slow / unreliable</b> and may read your HTTP traffic. "
         "For testing only; real VPNs (WireGuard/OpenVPN) need separate software."
     ))
-    warn = QLabel("")
-    warn.hide()
-    # (kept label variable name for layout clarity below)
-    layout.addWidget(warn)
-    warn.hide()
 
     from PyQt5.QtCore import QThread, pyqtSignal as _sig
 

@@ -2923,21 +2923,6 @@ class SearchWindow(QMainWindow):
                     title = ""
             history_service.log_event(self.base_dir, "browser-visit", title or url_str, url_str, {"url": url_str})
 
-    def on_title_changed(self, title, browser):
-        try:
-            i = self.browsers.index(browser)
-            if browser.property("pending_url"):
-                return
-            if title:
-                item = self.tab_list.item(i)
-                widget = item.data(TAB_WIDGET_ROLE) if item else None
-                if widget is not None:
-                    widget.setText(title)
-            if browser == self.current_browser():
-                self.setWindowTitle(f"{title} - Mei")
-        except Exception:
-            pass
-
     def _get_cached_user_extension_scripts(self):
         if self._user_extension_scripts_cache is not None:
             return self._user_extension_scripts_cache

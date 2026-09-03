@@ -1157,6 +1157,7 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
         menu.addAction("Bookmark page").triggered.connect(lambda: self.save_bookmark(None))
         menu.addAction("Save to reading list").triggered.connect(self._add_to_reading_list)
         menu.addAction("Save selection to SafeVault").triggered.connect(self._save_selection_to_vault)
+        menu.addAction("Monitor this page for changes").triggered.connect(self._monitor_current_page)
         menu.addAction("Find in page").triggered.connect(self.find_text)
         menu.addAction("Reader mode").triggered.connect(self.toggle_reader_mode)
         menu.addSeparator()
@@ -3864,6 +3865,21 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
             layout.addWidget(btn_copy)
             dialog.exec_()
         browser.page().toPlainText(process_text)
+
+    def _monitor_current_page(self):
+        browser = self.current_browser()
+        if not browser:
+            return
+        url = browser.url().toString()
+        if not url.startswith("http"):
+            self._flash_status("Monitor needs a real http(s) page")
+            return
+        from litebrowser.services import page_monitor
+
+        monitor = page_monitor.add_monitor(self.base_dir, url, browser.title() or url)
+        shell = self._host_shell()
+        if monitor and shell is not None and hasattr(shell, "system_notify"):
+            shell.system_notify("Watching page 👀", "You'll get a toast when it changes (checked ~every 15 min).")
 
     def _save_selection_to_vault(self):
         """Save the highlighted page text into SafeVault as a dated clipping.

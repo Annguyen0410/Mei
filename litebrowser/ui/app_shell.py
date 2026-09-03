@@ -497,6 +497,43 @@ class AppShell(QMainWindow):
             self._init_tray()
             self._init_break_reminders()
             self._init_routines_timer()
+            self._init_page_monitor()
+
+    def _init_page_monitor(self):
+        """Poll watched pages every 15 min on the executor (raw HTML hash)."""
+        self._monitor_timer = QTimer(self)
+        self._monitor_timer.setInterval(5 * 60 * 1000)
+        self._monitor_timer.timeout.connect(self._check_page_monitors)
+        self._monitor_timer.start()
+
+    def _check_page_monitors(self):
+        from litebrowser.services import page_monitor
+
+        due = page_monitor.due_monitors(self.profile_dir)
+        if not due:
+            return
+
+        def _run():
+            outcomes = []
+            for monitor in due:
+                content_hash = page_monitor.fetch_and_hash(monitor["url"])
+                if content_hash is None:
+                    continue
+                outcome = page_monitor.record_check(self.profile_dir, monitor["id"], content_hash)
+                outcomes.append((monitor["title"], outcome))
+            return outcomes
+
+        def _done(future):
+            try:
+                outcomes = future.result() or []
+            except Exception:
+                return
+            for title, outcome in outcomes:
+                if outcome == "changed":
+                    self.system_notify("Page changed 📄", title)
+
+        future = self._executor.submit(_run)
+        future.add_done_callback(lambda f: self._worker_relay.post(lambda: _done(f)))
 
     def _init_routines_timer(self):
         """30s scheduler tick — fires due routines once per day each."""

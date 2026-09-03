@@ -684,6 +684,7 @@ class PersonalWindow(QMainWindow):
             ("overview", "Overview", "◧"),
             ("notes", "Notes", "✎"),
             ("tasks", "Tasks", "✓"),
+            ("review", "Review", "⇄"),
             ("calendar", "Calendar", "◷"),
             ("boards", "Boards", "◌"),
             ("files", "Files", "▦"),
@@ -708,6 +709,7 @@ class PersonalWindow(QMainWindow):
             ("overview", self._build_overview_page()),
             ("notes", self._build_notes_page()),
             ("tasks", self._build_tasks_page()),
+            ("review", self._build_review_page()),
             ("calendar", self._build_calendar_page()),
             ("boards", self._build_boards_page()),
             ("files", self._build_files_page()),
@@ -844,6 +846,9 @@ class PersonalWindow(QMainWindow):
         # stops consuming CPU / network in the background; reload the cached
         # URL when returning so the user sees the same site instantly.
         self._update_site_preview_activity(key == "sites")
+        # Refresh the review queue when entering the Review page.
+        if key == "review" and getattr(self, "lbl_review_stats", None) is not None:
+            self._refresh_review()
         # The neural graph repaints at 20 FPS; stop the timer when the Notes
         # page is hidden (v6.4 kept animating behind every other page).
         if hasattr(self, "neural_graph") and hasattr(self, "chk_neural_graph"):
@@ -863,6 +868,8 @@ class PersonalWindow(QMainWindow):
         self._refresh_boards()
         self._refresh_files()
         self._refresh_sites()
+        if getattr(self, "lbl_review_stats", None) is not None:
+            self._refresh_review()
 
     def _build_overview_page(self):
         w = QWidget()
@@ -959,6 +966,8 @@ class PersonalWindow(QMainWindow):
         self.btn_delete_note = QPushButton("Delete")
         self.btn_save_note = QPushButton("Save")
         self.btn_note_ai = QPushButton("Ask AI")
+        self.btn_note_flash = QPushButton("⇄ Make flashcard")
+        self.btn_note_flash.setToolTip("Create a flashcard from the selected text (front = selection, back = prompt)")
         self.chk_neural_graph = QCheckBox("Show neural graph")
         self.chk_neural_graph.setChecked(prefs.get_show_neural_notes_graph(self.base_dir))
         self.chk_neural_graph.toggled.connect(self._on_neural_graph_toggled)
@@ -973,6 +982,7 @@ class PersonalWindow(QMainWindow):
         top_row.addWidget(self.btn_delete_note)
         top_row.addWidget(self.btn_save_note)
         top_row.addWidget(self.btn_note_ai)
+        top_row.addWidget(self.btn_note_flash)
         l.addLayout(top_row)
 
         # Find-within-note toolbar.
@@ -1071,6 +1081,7 @@ class PersonalWindow(QMainWindow):
         self.btn_delete_note.clicked.connect(self._delete_note)
         self.btn_save_note.clicked.connect(self._save_note)
         self.btn_note_ai.clicked.connect(self._ask_ai_about_note)
+        self.btn_note_flash.clicked.connect(self._make_flashcard_from_selection)
         self.note_editor.textChanged.connect(self._on_note_text_changed)
         self._note_idle_timer = QTimer(self)
         self._note_idle_timer.setSingleShot(True)
@@ -1621,6 +1632,182 @@ class PersonalWindow(QMainWindow):
         self._find_in_note()
         self._refresh_notes()
         self._refresh_overview()
+
+    def _make_flashcard_from_selection(self):
+        """Selection → flashcard: front = the selection, back = a prompt; or
+        'question ==== answer' on one line splits into both sides."""
+        if not self.current_note_id:
+            QMessageBox.information(self, "Flashcards", "Open a note first.")
+            return
+        cursor = self.note_editor.textCursor()
+        selection = cursor.selectedText().strip()
+        if not selection:
+            QMessageBox.information(self, "Flashcards", "Select the text to turn into a card first.")
+            return
+        selection = selection.replace("\u2029", "\n")
+        if "====" in selection:
+            front, _, back = selection.partition("====")
+            front, back = front.strip(), back.strip()
+        else:
+            front = selection[:200]
+            back = f"From: {self.lbl_note_title.text().split('  |  ')[0]}"
+        if not front or not back:
+            QMessageBox.information(self, "Flashcards", "Selection did not yield both sides of a card.")
+            return
+        self.make_flashcard_from_note(front, back, self.current_note_id)
+        self._switch_page("review")
+
+    def _build_review_page(self):
+        """Flashcard review: card flip with Again/Hard/Good/Easy grading."""
+        from litebrowser.services import flashcard_service
+
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.setContentsMargins(12, 10, 12, 12)
+        l.setSpacing(8)
+        header_row = QHBoxLayout()
+        header_row.addWidget(components.page_header("Review", "Spaced repetition — a little every day"))
+        header_row.addStretch(1)
+        self.lbl_review_stats = QLabel("")
+        self.lbl_review_stats.setObjectName("MutedLabel")
+        header_row.addWidget(self.lbl_review_stats)
+        l.addLayout(header_row)
+
+        # Card surface: front/back flip in one themed card.
+        self.review_card = QFrame()
+        self.review_card.setObjectName("HeroCard")
+        card_layout = QVBoxLayout(self.review_card)
+        card_layout.setContentsMargins(22, 22, 22, 22)
+        card_layout.setSpacing(10)
+        card_layout.addStretch(1)
+        self.lbl_card_front = QLabel("")
+        self.lbl_card_front.setObjectName("HeroTitle")
+        self.lbl_card_front.setWordWrap(True)
+        self.lbl_card_front.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(self.lbl_card_front)
+        self.lbl_card_hint = QLabel("Click to reveal")
+        self.lbl_card_hint.setObjectName("MutedLabel")
+        self.lbl_card_hint.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(self.lbl_card_hint)
+        self.lbl_card_back = QLabel("")
+        self.lbl_card_back.setObjectName("HeroSubtitle")
+        self.lbl_card_back.setWordWrap(True)
+        self.lbl_card_back.setAlignment(Qt.AlignCenter)
+        self.lbl_card_back.hide()
+        card_layout.addWidget(self.lbl_card_back)
+        card_layout.addStretch(1)
+        self.review_card.setCursor(Qt.PointingHandCursor)
+        self.review_card.mousePressEvent = lambda _ev: self._flip_review_card()
+        self.review_card.setMinimumHeight(200)
+        l.addWidget(self.review_card, 1)
+
+        grades_row = QHBoxLayout()
+        grades_row.addStretch(1)
+        self.btn_card_again = QPushButton("Again")
+        self.btn_card_hard = QPushButton("Hard")
+        self.btn_card_good = QPushButton("Good")
+        self.btn_card_easy = QPushButton("Easy")
+        for b in (self.btn_card_again, self.btn_card_hard, self.btn_card_good, self.btn_card_easy):
+            b.setEnabled(False)
+            grades_row.addWidget(b)
+        l.addLayout(grades_row)
+
+        add_row = QHBoxLayout()
+        self.ed_card_front = QLineEdit()
+        self.ed_card_front.setPlaceholderText("New card front (question)...")
+        self.ed_card_back = QLineEdit()
+        self.ed_card_back.setPlaceholderText("Back (answer)...")
+        self.btn_card_add = QPushButton("Add card")
+        add_row.addWidget(self.ed_card_front, 1)
+        add_row.addWidget(self.ed_card_back, 1)
+        add_row.addWidget(self.btn_card_add)
+        l.addLayout(add_row)
+
+        empty = components.empty_state("No cards due", "Add a card above, or select text in a note and make one.")
+        self.review_empty = empty
+        l.addWidget(empty)
+
+        self._review_queue: list[dict] = []
+        self._review_current = None
+        self.btn_card_again.clicked.connect(lambda: self._grade_review("again"))
+        self.btn_card_hard.clicked.connect(lambda: self._grade_review("hard"))
+        self.btn_card_good.clicked.connect(lambda: self._grade_review("good"))
+        self.btn_card_easy.clicked.connect(lambda: self._grade_review("easy"))
+        self.btn_card_add.clicked.connect(self._add_review_card)
+        return w
+
+    def _refresh_review(self):
+        from litebrowser.services import flashcard_service
+
+        stats = flashcard_service.stats(self.base_dir)
+        self.lbl_review_stats.setText(f"{stats['total']} cards · {stats['due']} due · {stats['matured']} matured")
+        self._review_queue = flashcard_service.due_cards(self.base_dir)
+        self._review_current = None
+        self._show_next_review_card()
+
+    def _show_next_review_card(self):
+        from litebrowser.services import flashcard_service
+
+        if not self._review_queue:
+            self.review_card.hide()
+            self.review_empty.show()
+            for b in (self.btn_card_again, self.btn_card_hard, self.btn_card_good, self.btn_card_easy):
+                b.setEnabled(False)
+            return
+        self.review_empty.hide()
+        self.review_card.show()
+        self._review_current = self._review_queue[0]
+        self.lbl_card_front.setText(self._review_current.get("front", ""))
+        self.lbl_card_back.setText(self._review_current.get("back", ""))
+        self.lbl_card_back.hide()
+        self.lbl_card_hint.setText("Click to reveal")
+        for b in (self.btn_card_again, self.btn_card_hard, self.btn_card_good, self.btn_card_easy):
+            b.setEnabled(False)
+
+    def _flip_review_card(self):
+        if self._review_current is None:
+            return
+        if self.lbl_card_back.isHidden():
+            self.lbl_card_back.show()
+            self.lbl_card_hint.setText("How well did you remember?")
+            for b in (self.btn_card_again, self.btn_card_hard, self.btn_card_good, self.btn_card_easy):
+                b.setEnabled(True)
+        else:
+            self.lbl_card_back.hide()
+            self.lbl_card_hint.setText("Click to reveal")
+            for b in (self.btn_card_again, self.btn_card_hard, self.btn_card_good, self.btn_card_easy):
+                b.setEnabled(False)
+
+    def _grade_review(self, grade: str):
+        from litebrowser.services import flashcard_service
+
+        if self._review_current is None:
+            return
+        flashcard_service.review_card(self.base_dir, self._review_current["id"], grade)
+        self._review_queue.pop(0)
+        self._show_next_review_card()
+        stats = flashcard_service.stats(self.base_dir)
+        self.lbl_review_stats.setText(f"{stats['total']} cards · {stats['due']} due · {stats['matured']} matured")
+
+    def _add_review_card(self):
+        from litebrowser.services import flashcard_service
+
+        front = self.ed_card_front.text().strip()
+        back = self.ed_card_back.text().strip()
+        if not front or not back:
+            QMessageBox.information(self, "Review", "Fill in both sides of the card.")
+            return
+        flashcard_service.add_card(self.base_dir, front, back)
+        self.ed_card_front.clear()
+        self.ed_card_back.clear()
+        self._refresh_review()
+
+    def make_flashcard_from_note(self, front: str, back: str, note_id: str = ""):
+        """Entry point for the notes page ('Make flashcard' on selection)."""
+        from litebrowser.services import flashcard_service
+
+        flashcard_service.add_card(self.base_dir, front, back, source_note_id=note_id)
+        self._flash(f"Card added — {stats_text(flashcard_service.stats(self.base_dir))}")
 
     def _build_tasks_page(self):
         w = QWidget()
@@ -2737,3 +2924,7 @@ def _format_ts(ts_value: int) -> str:
     if not ts_value:
         return "-"
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts_value))
+
+
+def stats_text(stats: dict) -> str:
+    return f"{stats.get('total', 0)} cards, {stats.get('due', 0)} due"

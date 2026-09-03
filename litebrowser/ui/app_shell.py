@@ -170,6 +170,7 @@ class AppShell(QMainWindow):
             "/theme": "Switch theme instantly · /theme matcha-day",
             "/accent": "Switch accent color · /accent matcha",
             "/template daily": "Daily plan note · /template weekly for a review",
+            "/review": "Flashcard review queue",
             "/summarize": "Summarize the active browser page with AI",
             "/brief": "Show your local Morning Brief (history + tasks + focus)",
             "/agent": "Agent actions · /agent summary · /agent tasks a | b",
@@ -1088,8 +1089,11 @@ class AppShell(QMainWindow):
                     "Welcome to the café.\n/focus 25 — start a 25 min pour\n/status — check the timer\nRecent pours: %d" % len(focus_service.focus_journal(self.profile_dir)),
                 )
             return
-        if self._match_cmd(lowered, "/template"):
-            from litebrowser.services import note_templates
+        if self._match_cmd(lowered, "/review"):
+            self.switch_workspace("personal")
+            self.personal_page._switch_page("review")
+            return
+        if self._match_cmd(lowered, "/template"):            from litebrowser.services import note_templates
 
             arg = text[len("/template"):].strip().lower()
             if arg in ("daily", "day"):

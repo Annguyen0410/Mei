@@ -486,6 +486,17 @@ class AppShell(QMainWindow):
         self.refresh_shell()
         if self.window_slot == "primary":
             QTimer.singleShot(1500, self._startup_update_check)
+            # First-run wizard: once per profile, skippable at every step.
+            if not prefs.get_pref(self.profile_dir, "onboarding_done", False):
+                QTimer.singleShot(900, lambda: self._safe_onboarding())
+
+    def _safe_onboarding(self):
+        try:
+            from litebrowser.ui.onboarding import show_onboarding
+
+            show_onboarding(self)
+        except Exception:
+            pass
         # Auto theme watch: refresh_shell re-evaluates resolved_auto_theme; a
         # cheap no-op when the palette is unchanged (signature-keyed re-polish).
         self._sync_auto_theme_timer()

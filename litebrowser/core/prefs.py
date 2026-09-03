@@ -265,6 +265,17 @@ def get_shell_theme(base_dir):
     return name if name in _theme_mod.PALETTES else _theme_mod.DEFAULT_THEME
 
 
+def get_pref(base_dir, key, default=None):
+    """Generic single pref read for one-off flags (onboarding, experiments)."""
+    return load_prefs(base_dir).get(key, default)
+
+
+def save_pref(base_dir, key, value):
+    data = load_prefs(base_dir)
+    data[key] = value
+    save_prefs(base_dir, data)
+
+
 def get_auto_theme(base_dir) -> bool:
     """When on, the café flips between day and night palettes with the clock."""
     return bool(load_prefs(base_dir).get("auto_theme", False))

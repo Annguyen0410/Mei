@@ -77,6 +77,7 @@ from litebrowser.browser.browser_page import (
 from litebrowser.core import app_paths, prefs
 from litebrowser.services import focus_service, life_service, personal_service, tab_sets
 from litebrowser.ui import components, theme, win_titlebar
+from litebrowser.ui.focus_heatmap import FocusHeatmap
 
 MAX_NOTE_WATCH_DIRS = 64
 NEURAL_GRAPH_MAX_NOTES = 48
@@ -546,66 +547,6 @@ class WikiLinkHighlighter(QSyntaxHighlighter):
             self.setFormat(match.start(), match.end() - match.start(), fmt)
 
 
-class _FocusHeatmap(QWidget):
-    """Duolingo-style 12-week streak grid from focus_sessions.json.
-
-    One small rounded cell per day; intensity follows minutes focused.
-    Pure theme painting, no chart dependency."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._minutes = {}  # day-key -> minutes
-        self._streak = 0
-        self._longest = 0
-        self.setToolTip("Focus minutes per day — keep the chain alive")
-        self.setMinimumHeight(58)
-
-    def refresh(self, base_dir: str):
-        sessions = focus_service.focus_journal(base_dir, limit=200)
-        # Shared pure helpers in focus_service keep the heatmap, the dashboard
-        # stat and any future consumer in perfect agreement.
-        self._minutes = focus_service.compute_daily_minutes(sessions)
-        self._streak, self._longest = focus_service.compute_streaks(self._minutes)
-        self.update()
-
-    def paintEvent(self, _event):
-        import datetime as _dt
-
-        painter = QPainter(self)
-        p = theme.palette()
-        painter.fillRect(self.rect(), QColor(p["CARD_BG"]))
-        cell = 11
-        gap = 3
-        cols = 12
-        rows = 7
-        left, top = 8, 8
-        today = _dt.date.today()
-        painter.setPen(QColor(p["TEXT_MUTED"]))
-        painter.drawText(left, top + 8, f"🔥 Focus streak: {self._streak} days · longest {self._longest}")
-        gy = top + 16
-        max_minutes = max([1] + list(self._minutes.values()))
-        for col in range(cols):
-            for row in range(rows):
-                days_back = (cols - 1 - col) * rows + (rows - 1 - row)
-                day = today - _dt.timedelta(days=days_back)
-                key = day.isoformat()
-                minutes = self._minutes.get(key, 0)
-                if minutes <= 0:
-                    color = QColor(p["MAIN_BG_ALT"])
-                else:
-                    t = min(1.0, minutes / max_minutes)
-                    base = QColor(p["ACCENT"])
-                    soft = QColor(p["MAIN_BG_ALT"])
-                    color = QColor(
-                        int(soft.red() + (base.red() - soft.red()) * t),
-                        int(soft.green() + (base.green() - soft.green()) * t),
-                        int(soft.blue() + (base.blue() - soft.blue()) * t),
-                    )
-                painter.setPen(QPen(QColor(p["BORDER_SOFT"]), 1))
-                painter.setBrush(color)
-                painter.drawRoundedRect(left + col * (cell + gap), gy + row * (cell + gap), cell, cell, 3, 3)
-        painter.end()
-
 
 class PersonalWindow(QMainWindow):
     def __init__(self, base_dir: str, app_dir: str = None, embedded: bool = False):
@@ -878,7 +819,7 @@ class PersonalWindow(QMainWindow):
         l.addLayout(stats_row)
 
         # Focus streak heatmap (12 weeks, Duolingo-style) — visible motivation.
-        self.focus_heatmap = _FocusHeatmap()
+        self.focus_heatmap = FocusHeatmap()
         heatmap_card = QFrame()
         heatmap_card.setObjectName("SectionCard")
         heatmap_layout = QVBoxLayout(heatmap_card)

@@ -148,6 +148,21 @@ def _is_compat_domain(host: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in _COMPAT_DOMAINS)
 
 
+def _domain_from_filter_line(line: str) -> str:
+    """Extract a blockable domain from one filter line ('||d^', '||d', 'd^').
+
+    Returns '' for comments, blanks and lines without a valid domain."""
+    line = line.strip()
+    if not line or line.startswith(("!", "[")):
+        return ""
+    if line.startswith("||"):
+        line = line[2:]
+    if "^" in line:
+        line = line.split("^")[0]
+    domain = line.strip()
+    return domain if _DOMAIN_RE.fullmatch(domain) else ""
+
+
 def load_domains_from_filter_file(path):
     """Parse filter file for ||domain^ or plain domain lines; return set of domain substrings to block."""
     domains = set()
@@ -156,21 +171,9 @@ def load_domains_from_filter_file(path):
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
-                line = line.strip()
-                if not line or line.startswith("!") or line.startswith("["):
-                    continue
-                if line.startswith("||") and "^" in line:
-                    domain = line[2:].split("^")[0].strip()
-                    if _DOMAIN_RE.fullmatch(domain):
-                        domains.add(domain)
-                elif line.startswith("||"):
-                    domain = line[2:].strip()
-                    if _DOMAIN_RE.fullmatch(domain):
-                        domains.add(domain)
-                elif "^" in line:
-                    domain = line.split("^")[0].strip()
-                    if _DOMAIN_RE.fullmatch(domain):
-                        domains.add(domain)
+                domain = _domain_from_filter_line(line)
+                if domain:
+                    domains.add(domain)
     except Exception:
         pass
     return domains
@@ -301,6 +304,48 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
                 return True
         return False
 
+    def _apply_compat_headers(self, info, host):
+        """Chrome-shaped Client Hints for compatibility hosts (the single
+        biggest factor in 'This browser or app may not be secure' blocks)."""
+        ver, full_ver = _detect_chrome_versions()
+        sec_ch_ua = (
+            f'"Chromium";v="{ver}", "Not(A:Brand";v="24", "Google Chrome";v="{ver}"'
+        ).encode("ascii")
+        info.setHttpHeader(b"sec-ch-ua", sec_ch_ua)
+        info.setHttpHeader(b"sec-ch-ua-mobile", b"?0")
+        info.setHttpHeader(b"sec-ch-ua-platform", b'"Windows"')
+        info.setHttpHeader(b"sec-ch-ua-platform-version", b'"15.0.0"')
+        info.setHttpHeader(b"sec-ch-ua-arch", b'"x86"')
+        info.setHttpHeader(b"sec-ch-ua-bitness", b'"64"')
+        info.setHttpHeader(b"sec-ch-ua-model", b'""')
+        info.setHttpHeader(b"sec-ch-ua-full-version", f'"{full_ver}"'.encode("ascii"))
+        info.setHttpHeader(
+            b"sec-ch-ua-full-version-list",
+            (
+                f'"Chromium";v="{full_ver}", '
+                f'"Not(A:Brand";v="24.0.0.0", '
+                f'"Google Chrome";v="{full_ver}"'
+            ).encode("ascii"),
+        )
+
+    def _apply_https_upgrade(self, info, url_str):
+        """Auto-upgrade http:// to https:// (localhost exempt). Returns True
+        when the request was redirected (caller must stop processing)."""
+        if not self.https_only or not url_str.startswith("http://"):
+            return False
+        from urllib.parse import urlparse
+
+        try:
+            hostname = (urlparse(url_str).hostname or "").lower()
+        except Exception:
+            hostname = ""
+        if not hostname or hostname in ("localhost", "127.0.0.1", "::1"):
+            return False
+        # Chrome-style auto-upgrade keeps the page working when the site
+        # supports TLS (v6.4 served a bare ERR page instead).
+        info.redirect(QUrl("https://" + url_str[len("http://"):]))
+        return True
+
     def interceptRequest(self, info):
         url_str = info.requestUrl().toString()
         host = info.requestUrl().host().lower()
@@ -308,35 +353,9 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
         is_challenge = self._is_trusted_challenge_url(host)
         if is_compat:
             # Google Gaia (and friends) refuse sign-in when requests don't carry the
-            # Client Hints headers that real Chrome sends. Qt WebEngine 6.8 has
-            # Chromium ~122 which *does* support Client Hints, but does not emit
-            # Sec-CH-UA on every nav by default. Inject a consistent Chrome 122
-            # / Windows fingerprint here; this is the single biggest factor in
-            # the "This browser or app may not be secure" block.
-            #
-            # full_ver is read from the live QWebEngineProfile UA so the
-            # spoofed Sec-CH-UA-Full-Version matches the actual Qt Chromium
-            # build (e.g. 122.0.6261.171, not a hard-coded 122.0.6261.112).
-            ver, full_ver = _detect_chrome_versions()
-            sec_ch_ua = (
-                f'"Chromium";v="{ver}", "Not(A:Brand";v="24", "Google Chrome";v="{ver}"'
-            ).encode("ascii")
-            info.setHttpHeader(b"sec-ch-ua", sec_ch_ua)
-            info.setHttpHeader(b"sec-ch-ua-mobile", b"?0")
-            info.setHttpHeader(b"sec-ch-ua-platform", b'"Windows"')
-            info.setHttpHeader(b"sec-ch-ua-platform-version", b'"15.0.0"')
-            info.setHttpHeader(b"sec-ch-ua-arch", b'"x86"')
-            info.setHttpHeader(b"sec-ch-ua-bitness", b'"64"')
-            info.setHttpHeader(b"sec-ch-ua-model", b'""')
-            info.setHttpHeader(b"sec-ch-ua-full-version", f'"{full_ver}"'.encode("ascii"))
-            info.setHttpHeader(
-                b"sec-ch-ua-full-version-list",
-                (
-                    f'"Chromium";v="{full_ver}", '
-                    f'"Not(A:Brand";v="24.0.0.0", '
-                    f'"Google Chrome";v="{full_ver}"'
-                ).encode("ascii"),
-            )
+            # Client Hints headers that real Chrome sends. Inject a consistent
+            # Chrome/Windows fingerprint matching the actual Qt Chromium build.
+            self._apply_compat_headers(info, host)
         if not is_challenge:
             info.setHttpHeader(b"DNT", b"1")
             info.setHttpHeader(b"Sec-GPC", b"1")
@@ -361,20 +380,8 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
                 ):
                     info.setHttpHeader(h, b"")
 
-        if self.https_only:
-            if url_str.startswith("http://"):
-                try:
-                    from urllib.parse import urlparse
-                    parsed = urlparse(url_str)
-                    hostname = (parsed.hostname or "").lower()
-                except Exception:
-                    hostname = ""
-                if hostname and hostname not in ("localhost", "127.0.0.1", "::1"):
-                    # Upgrade to https instead of blocking dead (v6.4 served a
-                    # bare ERR page; Chrome-style auto-upgrade keeps the page
-                    # working when the site supports TLS).
-                    info.redirect(QUrl("https://" + url_str[len("http://"):]))
-                    return
+        if self._apply_https_upgrade(info, url_str):
+            return
 
         if is_challenge:
             return

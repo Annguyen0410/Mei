@@ -34,9 +34,21 @@ def save_monitors(base_dir: str, monitors: list[dict]) -> None:
         write_json(_path(base_dir), {"version": 1, "monitors": monitors})
 
 
+def _norm_url(url: str) -> str:
+    """Trailing-slash and case-insensitive scheme/host normalization so
+    'example.com/x' and 'example.com/x/' are the same watch target."""
+    url = (url or "").strip()
+    if "://" in url:
+        scheme, rest = url.split("://", 1)
+        host, _, path = rest.partition("/")
+        url = f"{scheme.lower()}://{host.lower()}/{path.rstrip('/')}"
+    return url
+
+
 def add_monitor(base_dir: str, url: str, title: str = "") -> dict:
+    url = _norm_url(url)
     monitors = load_monitors(base_dir)
-    if any(m.get("url") == url for m in monitors):
+    if any(_norm_url(m.get("url", "")) == url for m in monitors):
         return {}
     monitor = {
         "id": os.urandom(6).hex(),

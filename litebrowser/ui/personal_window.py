@@ -841,6 +841,15 @@ class PersonalWindow(QMainWindow):
         self._refresh_sites()
         if getattr(self, "lbl_review_stats", None) is not None:
             self._refresh_review()
+            # Nav badge: due-count on the Review button so the queue is
+            # visible without opening the page.
+            from litebrowser.services import flashcard_service
+
+            due = flashcard_service.stats(self.base_dir)["due"]
+            btn = self.nav_buttons.get("review")
+            if btn is not None:
+                base_label = "Review"
+                btn.setText(f"⇄  Review ({due})" if due else f"⇄  {base_label}")
 
     def _build_overview_page(self):
         w = QWidget()

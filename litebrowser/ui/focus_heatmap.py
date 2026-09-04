@@ -4,11 +4,9 @@ FocusHeatmap paints a 12-week streak grid; ReviewMixin owns the flashcard
 review page (queue, flip, SM-2 grading, keyboard shortcuts). They only touch
 attributes PersonalWindow already owns (base_dir, nav_buttons, _flash).
 """
-import time
 
-from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainter, QPen
-from PyQt5.QtWidgets import QFrame, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QWidget
 
 from litebrowser.services import focus_service
 from litebrowser.ui import theme

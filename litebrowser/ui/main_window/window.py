@@ -68,14 +68,13 @@ from litebrowser.browser.browser_page import (
 )
 from litebrowser.browser.tab_manager import (
     TAB_GROUP_COLLAPSED_ROLE,
-    TAB_GROUP_COLORS,
     TAB_GROUP_COLOR_ROLE,
     TAB_GROUP_ROLE,
     TAB_META_ROLE,
     TAB_PINNED_ROLE,
     TAB_WIDGET_ROLE,
 )
-from litebrowser.core import app_paths, app_version, prefs
+from litebrowser.core import app_paths, prefs
 from litebrowser.services import (
     extension_bridge,
     google_auth,
@@ -1425,7 +1424,7 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
                 if item is self.tab_list.currentItem():
                     continue  # active member of a folded group stays visible
                 collapsed_members.setdefault(group, []).append(i)
-        for group, rows in collapsed_members.items():
+        for _group, rows in collapsed_members.items():
             for i in rows:
                 self.tab_list.item(i).setHidden(True)
                 if i in visible_rows:
@@ -1468,6 +1467,7 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
             label = f"({pct}%) {title}" if pct else title
             if cont is not None and p.get("url") == cont.get("url"):
                 label = "▶ " + label
+            # UserRole now carries the clean URL; row text stays display-only.
             self.reading_list.addItem(label)
             self.reading_list.item(self.reading_list.count() - 1).setData(Qt.UserRole, p.get("url", ""))
         if not pages:
@@ -1476,7 +1476,8 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
     def _on_reading_clicked(self, item):
         url = item.data(Qt.UserRole)
         if url:
-            self.tab_manager.add_tab(QUrl(url), item.text()[:40].lstrip("▶ (0123456789%) "), is_active=True)
+            title = (item.text() or url)[:40]
+            self.tab_manager.add_tab(QUrl(url), title, is_active=True)
             self._load_reading_list()
 
     def _add_to_reading_list(self):

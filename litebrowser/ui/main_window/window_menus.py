@@ -9,19 +9,14 @@ from PyQt5.QtWidgets import (
     QDialog,
     QFileDialog,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QListWidget,
-    QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
 )
 
-from litebrowser.core import prefs
 from litebrowser.ui import dialogs
 from litebrowser.services import extension_bridge, workspace_manager
 

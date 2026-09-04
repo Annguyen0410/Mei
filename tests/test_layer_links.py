@@ -84,6 +84,16 @@ class TestLayerLinks(unittest.TestCase):
         outcome = page_monitor.record_check(self.base, monitor["id"], "hash-b")
         self.assertEqual(outcome, "same")
 
+    def test_deleting_source_note_cascades_to_cards(self):
+        from litebrowser.services import personal_service
+
+        note = personal_service.create_note(self.base, "Source", "body")
+        flashcard_service.add_card(self.base, "front", "back", source_note_id=note["id"])
+        flashcard_service.add_card(self.base, "unrelated", "card")  # no source
+        removed = flashcard_service.delete_cards_for_note(self.base, note["id"])
+        self.assertEqual(removed, 1)
+        self.assertEqual(len(flashcard_service.load_cards(self.base)), 1)
+
     def test_flashcard_and_heatmap_share_focus_data(self):
         # Seed a completed 25-minute pour directly (deterministic).
         sessions = [{

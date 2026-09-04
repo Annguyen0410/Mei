@@ -69,6 +69,17 @@ def delete_card(base_dir: str, card_id: str) -> bool:
     return True
 
 
+def delete_cards_for_note(base_dir: str, note_id: str) -> int:
+    """Cascade: when a source note is deleted, its generated cards go too
+    (they would review as orphans with no context)."""
+    cards = load_cards(base_dir)
+    kept = [c for c in cards if c.get("source_note_id") != note_id]
+    removed = len(cards) - len(kept)
+    if removed:
+        save_cards(base_dir, kept)
+    return removed
+
+
 def due_cards(base_dir: str, now: int | None = None) -> list[dict]:
     now = int(now if now is not None else time.time())
     return [c for c in load_cards(base_dir) if int(c.get("due", 0) or 0) <= now]

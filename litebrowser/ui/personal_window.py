@@ -1621,6 +1621,10 @@ class PersonalWindow(QMainWindow):
         if confirm != QMessageBox.Yes:
             return
         personal_service.delete_note(self.base_dir, deleted_id)
+        # Cascade: cards generated from this note have no context without it.
+        from litebrowser.services import flashcard_service
+
+        removed_cards = flashcard_service.delete_cards_for_note(self.base_dir, deleted_id)
         prefs.set_note_order(self.base_dir, [nid for nid in prefs.get_note_order(self.base_dir) if nid != deleted_id])
         self.current_note_id = None
         self._note_dirty = False

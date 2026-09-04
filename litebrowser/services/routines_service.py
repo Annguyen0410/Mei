@@ -23,12 +23,15 @@ def _path(base_dir: str) -> str:
 
 
 def _normal_time(value) -> str:
+    """Strict HH:MM validation: malformed input falls back to 07:30 rather
+    than being silently clamped into a different time than the user typed."""
     raw = str(value or "").strip()
     parts = raw.split(":")
-    if len(parts) != 2 or not all(p.isdigit() for p in parts):
-        return "07:30"
-    hh, mm = int(parts[0]), int(parts[1])
-    return f"{max(0, min(23, hh)):02d}:{max(0, min(59, mm)):02d}"
+    if len(parts) == 2 and all(p.isdigit() and len(p) == 2 for p in parts):
+        hh, mm = int(parts[0]), int(parts[1])
+        if hh <= 23 and mm <= 59:
+            return f"{hh:02d}:{mm:02d}"
+    return "07:30"
 
 
 def load_routines(base_dir: str) -> list[dict]:

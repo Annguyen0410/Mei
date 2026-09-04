@@ -92,32 +92,20 @@ def show_quick_switcher(parent):
     layout.addWidget(list_widget)
     results = []
 
-    # Slash-command registry: the switcher doubles as a command palette.
-    COMMANDS = (
-        ("/task ", "Create a task"),
-        ("/note ", "Create a note"),
-        ("/board ", "Create a board"),
-        ("/focus 25", "Start a café pour"),
-        ("/brief", "Morning brief"),
-        ("/agent summary", "Digest open tabs"),
-        ("/sync", "Push + pull snapshot"),
-        ("/hub", "Project Hub"),
+    # Slash-command registry (single source of truth in core.commands): the
+    # palette generates entries — argument-taking commands get a trailing
+    # space so accepting one prefills the omnibar.
+    from litebrowser.core.commands import COMMANDS as _REGISTRY
+
+    COMMANDS = tuple(
+        (cmd + (" " if takes_arg else ""), desc)
+        for cmd, takes_arg, desc in _REGISTRY
+    ) + (
         ("/cql", "Cục Quản Lý"),
         ("/mas", "MAS"),
         ("/bimat", "Bí Mật"),
         ("/boitoan", "Bói Toán"),
         ("/leaderboard", "World Leaderboard"),
-        ("/freeze", "Freeze background tabs"),
-        ("/group-tabs", "Group tabs by domain"),
-        ("/save-page", "Save page to Library"),
-        ("/status", "Focus timer status"),
-        ("/review", "Flashcard review queue"),
-        ("/routines", "Schedule daily automations"),
-        ("/export", "Export notes as MD zip or HTML site"),
-        ("/template daily", "Daily plan note (tasks, events, focus)"),
-        ("/template weekly", "Weekly review note"),
-        ("/theme", "Switch theme (e.g. /theme matcha-day)"),
-        ("/accent", "Switch accent color (e.g. /accent matcha)"),
     )
 
     def build_results():

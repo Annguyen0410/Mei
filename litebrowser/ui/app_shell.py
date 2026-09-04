@@ -156,29 +156,26 @@ class AppShell(QMainWindow):
         self._top_bar = top_bar
         shell_layout.addWidget(top_bar)
 
-        self._command_hints = {
-            "/task": "Create a task · /task Prepare report",
-            "/note": "Create a note · /note Work/Brief | body",
-            "/board": "Create an idea board · /board Sprint map",
-            "/ask": "Ask with current workspace context · /ask …",
-            "/save-page": "Save the active browser page to Library",
-            "/focus": "Start a café Focus pour · /focus 25 (minutes)",
-            "/status": "Show current focus timer state",
-            "/cafe": "Open café Focus journal / controls",
-            "/freeze": "Suspend all background tabs to free memory",
-            "/save-tabs": "Save current tabs as a named set · /save-tabs Research",
-            "/theme": "Switch theme instantly · /theme matcha-day",
-            "/accent": "Switch accent color · /accent matcha",
-            "/template daily": "Daily plan note · /template weekly for a review",
-            "/review": "Flashcard review queue",
-            "/routines": "Schedule daily automations",
-            "/export": "Export notes as MD zip or HTML site",
-            "/summarize": "Summarize the active browser page with AI",
-            "/brief": "Show your local Morning Brief (history + tasks + focus)",
-            "/agent": "Agent actions · /agent summary · /agent tasks a | b",
-            "/group-tabs": "Label tabs by domain so you can filter them",
-            "/sync": "Push + pull your profile to your self-hosted endpoint",
+        # Omnibar hints from the shared registry (core.commands): descriptions
+        # stay in sync with the palette and docs automatically.
+        _hint_examples = {
+            "/task": "/task Prepare report",
+            "/note": "/note Work/Brief | body",
+            "/board": "/board Sprint map",
+            "/ask": "/ask …",
+            "/focus": "/focus 25 (minutes)",
+            "/save-tabs": "/save-tabs Research",
+            "/theme": "/theme matcha-day",
+            "/accent": "/accent matcha",
+            "/template": "/template daily",
+            "/agent": "/agent summary",
         }
+        self._command_hints = {}
+        from litebrowser.core.commands import COMMANDS as _cmd_registry
+
+        for _cmd, _takes_arg, _desc in _cmd_registry:
+            _example = _hint_examples.get(_cmd, "")
+            self._command_hints[_cmd] = f"{_desc} · {_example}" if _example else _desc
 
         self.split = QSplitter(Qt.Horizontal)
         shell_layout.addWidget(self.split, 1)

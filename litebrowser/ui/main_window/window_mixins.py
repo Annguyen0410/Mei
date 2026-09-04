@@ -101,6 +101,18 @@ class DockingMixin:
         self.split_body_layout.addWidget(self.split_view)
         return self.split_view
 
+    def _apply_dock_sizes(self):
+        """panel_split has five children (split dock, web, panel dock, AI dock,
+        rail); QSplitter.setSizes needs one entry per child, so compute them all
+        from current visibility instead of hard-coding two-element lists."""
+        total = max(700, self.panel_split.width())
+        rail = 34
+        split_w = 340 if self.split_dock.isVisible() else 0
+        panel_w = 380 if self.panel_dock.isVisible() else 0
+        ai_w = 360 if self.ai_dock.isVisible() else 0
+        web_w = max(320, total - rail - split_w - panel_w - ai_w)
+        self.panel_split.setSizes([split_w, web_w, panel_w, ai_w, rail])
+
     def open_split_view(self, url: str, title: str = "Split"):
         """Show a second live page beside the main one."""
         url = (url or "").strip()
@@ -113,13 +125,13 @@ class DockingMixin:
         was_hidden = not self.split_dock.isVisible()
         self.split_dock.show()
         if was_hidden:
-            total = max(700, self.panel_split.width())
-            self.panel_split.setSizes([max(340, total // 3), total - max(340, total // 3)])
+            self._apply_dock_sizes()
         view.setUrl(QUrl(url))
         self._flash_status("Split view — two pages side by side")
 
     def close_split_view(self):
         self.split_dock.hide()
+        self._apply_dock_sizes()
 
     def _split_to_tab(self):
         if self._split_url:
@@ -214,14 +226,14 @@ class DockingMixin:
         if not visible:
             self.panel_dock.show()
             prefs.set_web_panel_visible(self.base_dir, True)
-            total = max(600, self.panel_split.width())
-            self.panel_split.setSizes([max(420, total - 380), 380])
+            self._apply_dock_sizes()
         panel_view.setFocus()
 
     def close_web_panel(self):
         self.panel_dock.hide()
         self.btn_rail_panels.setChecked(False)
         prefs.set_web_panel_visible(self.base_dir, False)
+        self._apply_dock_sizes()
 
     def toggle_ai_sidebar(self):
         """Edge-Copilot-style: dock the page-aware assistant beside the web."""
@@ -231,8 +243,7 @@ class DockingMixin:
             return
         self.ai_dock.show()
         self.btn_rail_ai.setChecked(True)
-        total = max(600, self.panel_split.width())
-        self.panel_split.setSizes([max(420, total - 360), 360])
+        self._apply_dock_sizes()
         self.inline_ai_input.setFocus()
         if not self.inline_ai_answer.toPlainText().strip():
             self.inline_ai_answer.setPlainText(
@@ -242,6 +253,8 @@ class DockingMixin:
 
     def close_ai_sidebar(self):
         self.ai_dock.hide()
+        self.btn_rail_ai.setChecked(False)
+        self._apply_dock_sizes()
 
     def _open_panel_in_tab(self):
         url = self._panel_last_url or ""

@@ -212,6 +212,17 @@ def main(app_dir=None):
     app.setWindowIcon(QIcon(os.path.join(app_dir, "icon.png")))
     profile_dir = _get_profile_dir(app_dir)
     prefs.set_default_base_dir(profile_dir)
+    # Cross-process profile claim: a second Mei on the SAME profile would
+    # silently race every JSON store (pre-0.6.8 bug class). Claim before any
+    # data work; a friendly error beats silent corruption.
+    from litebrowser.core import profile_lock
+
+    acquired, lock_msg = profile_lock.try_acquire_process_lock(profile_dir)
+    if not acquired:
+        from PyQt5.QtWidgets import QMessageBox as _QMB
+
+        _QMB.warning(None, "Mei — profile in use", lock_msg)
+        sys.exit(2)
     # VPN auto-connect: re-enable the last proxy before Chromium flags are
     # finalized, so an auto-connected session protects every tab from launch.
     smart_restart = os.environ.pop("MEI_SMART_RESTART", "").strip() == "1"

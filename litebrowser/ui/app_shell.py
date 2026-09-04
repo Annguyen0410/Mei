@@ -51,6 +51,7 @@ class AppShell(QMainWindow):
     update_checked = pyqtSignal(object, bool)
     update_downloaded = pyqtSignal(object, object)
     sync_finished = pyqtSignal(bool, str)
+    monitor_checked = pyqtSignal(object)
 
     def __init__(self, profile_dir: str, app_dir: str = None, window_slot: str = "primary", browser_workspace_id: str | None = None):
         super().__init__()
@@ -71,6 +72,7 @@ class AppShell(QMainWindow):
         self.update_checked.connect(self._finish_update_check)
         self.update_downloaded.connect(self._finish_downloaded_update)
         self.sync_finished.connect(self._show_sync_result)
+        self.monitor_checked.connect(self._on_monitor_checked)
         title_suffix = "Workspace 1" if self.window_slot == "primary" else "Workspace 2"
         self.setWindowTitle(f"Mei Tea Room Edition - {title_suffix}")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
@@ -525,17 +527,22 @@ class AppShell(QMainWindow):
                 outcomes.append((monitor["title"], outcome))
             return outcomes
 
-        def _done(future):
-            try:
-                outcomes = future.result() or []
-            except Exception:
-                return
-            for title, outcome in outcomes:
-                if outcome == "changed":
-                    self.system_notify("Page changed 📄", title)
-
+        # Marshal back to the GUI thread via a queued signal (same pattern as
+        # update_checked); AppShell has no _worker_relay - that lives on the
+        # browser window.
         future = self._executor.submit(_run)
-        future.add_done_callback(lambda f: self._worker_relay.post(lambda: _done(f)))
+        future.add_done_callback(lambda f: self.monitor_checked.emit(f))
+
+    def _on_monitor_checked(self, future):
+        if self._closing:
+            return
+        try:
+            outcomes = future.result() or []
+        except Exception:
+            return
+        for title, outcome in outcomes:
+            if outcome == "changed":
+                self.system_notify("Page changed 📄", title)
 
     def _init_routines_timer(self):
         """30s scheduler tick — fires due routines once per day each."""

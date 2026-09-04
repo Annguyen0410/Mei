@@ -190,9 +190,18 @@ class DockingMixin:
         return self.panel_view
 
     def toggle_web_panel(self, title="", url=""):
-        """Show/hide the panel dock; a new preset replaces the current URL."""
+        """Toggle semantics matching real panel docks:
+        - click the SAME preset while open -> close the dock
+        - a DIFFERENT preset while open -> swap the URL in place
+        - anything while closed -> open it"""
         url = (url or "").strip()
-        if self.panel_dock.isVisible() and not url:
+        visible = self.panel_dock.isVisible()
+        if visible and not url:
+            self.close_web_panel()
+            return
+        if visible and url and self._panel_last_url == url:
+            # Same panel re-selected: treat as toggle-off, not a reload that
+            # would wipe the panel's scroll/session state.
             self.close_web_panel()
             return
         panel_view = self._ensure_panel_view()
@@ -200,8 +209,9 @@ class DockingMixin:
             self.lbl_panel_title.setText(title or "Panel")
             self._panel_last_url = url
             prefs.set_last_web_panel(self.base_dir, title, url)
-            panel_view.setUrl(QUrl(url))
-        if not self.panel_dock.isVisible():
+            if not (visible and panel_view.url().toString() == url):
+                panel_view.setUrl(QUrl(url))
+        if not visible:
             self.panel_dock.show()
             prefs.set_web_panel_visible(self.base_dir, True)
             total = max(600, self.panel_split.width())

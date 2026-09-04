@@ -240,6 +240,7 @@ class DockingMixin:
         if self.ai_dock.isVisible():
             self.ai_dock.hide()
             self.btn_rail_ai.setChecked(False)
+            self._apply_dock_sizes()
             return
         self.ai_dock.show()
         self.btn_rail_ai.setChecked(True)

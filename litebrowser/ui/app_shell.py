@@ -101,7 +101,7 @@ class AppShell(QMainWindow):
         brand_layout = QHBoxLayout(brand_wrap)
         brand_layout.setContentsMargins(0, 0, 0, 0)
         brand_layout.setSpacing(8)
-        brand_glyph = QLabel("ðŸµ")
+        brand_glyph = QLabel("🍵")
         brand_glyph.setObjectName("BrandGlyph")
         brand_layout.addWidget(brand_glyph)
         brand_text = QVBoxLayout()
@@ -211,7 +211,7 @@ class AppShell(QMainWindow):
                 "MAKE & KEEP",
                 (
                     ("ai", "AI Workspace", "✦"),
-                    ("personal", "Personal", "▲"),
+                    ("personal", "Personal", "◍"),
                     ("library", "Library", "▤"),
                 ),
             ),
@@ -371,7 +371,7 @@ class AppShell(QMainWindow):
         if status.get("running"):
             remaining = int(status.get("remaining", 0))
             mm, ss = divmod(remaining, 60)
-            self.lbl_status.setText("ðŸµ Focus: %02d:%02d left — %s" % (mm, ss, status.get("session", {}).get("label", "")))
+            self.lbl_status.setText("🍵 Focus: %02d:%02d left — %s" % (mm, ss, status.get("session", {}).get("label", "")))
         else:
             self.lbl_status.setText("No café focus pour running. Try /focus 25")
 
@@ -473,7 +473,7 @@ class AppShell(QMainWindow):
         sync_state = life_service.load_sync_state(self.profile_dir)
         status = account.get("display_name") or "Offline-ready"
         self.lbl_sync_state.setText(f"{status}\npending {int(sync_state.get('pending_changes', 0) or 0)}")
-        self.lbl_status.setText(f"▲ Theme: {theme_name}")
+        self.lbl_status.setText(f"● Theme: {theme_name}")
         self.lbl_status_context.setText(f"Last sync: {_format_ts(int(sync_state.get('last_sync_at', 0) or 0))}")
         self.lbl_theme_pill.setText(f"{theme_name} · {prefs.get_accent(self.profile_dir)}")
         self._refresh_insights()
@@ -894,12 +894,21 @@ class AppShell(QMainWindow):
         insight_visible = self.insights.isVisible()
         insight_width = 0 if not insight_visible else (120 if xtiny else 140 if tiny else 160 if narrow else 185 if compact else 205)
         middle_width = max(320, width - rail_width - insight_width - 18)
-        # Only push sizes when the Insights panel just changed visibility; a
-        # blind setSizes on every call fought the user's splitter drags and,
-        # with setChildrenCollapsible(True), a 0-width entry could COLLAPSE a
-        # pane entirely - dragging it afterwards was impossible (pre-1.0 bug).
-        if insight_visible != getattr(self, "_last_insight_visible", None):
-            self._last_insight_visible = insight_visible
+        # Only push sizes when something structural changed (rail collapse /
+        # expand, Insights visibility, or a size-class boundary); a blind
+        # setSizes on every call fought the user's splitter drags and, with
+        # setChildrenCollapsible(True), a 0-width entry could COLLAPSE a pane
+        # entirely - dragging it afterwards was impossible (pre-1.0 bug).
+        # Tracking only the Insights flag (as an earlier fix did) left the rail
+        # toggle with no way to push its new width, so the rail would not
+        # compress or expand at all.
+        layout_key = (
+            rail_collapsed,
+            insight_visible,
+            getattr(self, "_compact_bucket", None),
+        )
+        if layout_key != getattr(self, "_last_shell_layout_key", None):
+            self._last_shell_layout_key = layout_key
             self.split.setSizes([rail_width, middle_width, insight_width])
         self.split.setChildrenCollapsible(False)
 
@@ -917,8 +926,8 @@ class AppShell(QMainWindow):
             section_label.setVisible(not tiny and not rail_collapsed)
 
         for key, button in self.nav_buttons.items():
-            labels = {"home": ("Home", "◧"), "browser": ("Browser", "↗"), "history": ("History", "◷"), "ai": ("AI", "◈"), "personal": ("Personal", "▲"), "library": ("Library", "▤"), "settings": ("Settings", "⚙")}
-            name, glyph = labels.get(key, (key, "▲†"))
+            labels = {"home": ("Home", "◧"), "browser": ("Browser", "↗"), "history": ("History", "◷"), "ai": ("AI", "◈"), "personal": ("Personal", "◍"), "library": ("Library", "▤"), "settings": ("Settings", "⚙")}
+            name, glyph = labels.get(key, (key, "◆"))
             button.setVisible(not rail_collapsed)
             if rail_collapsed or xtiny:
                 button.setText(glyph)

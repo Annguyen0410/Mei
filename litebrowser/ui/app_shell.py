@@ -309,7 +309,9 @@ class AppShell(QMainWindow):
         assistant_layout.addWidget(self.ai_preview)
         insights_layout.addWidget(assistant_card)
         self.split.addWidget(self.insights)
-        self.split.setChildrenCollapsible(True)
+        # Collapsible(True) let a 0-width setSizes entry permanently collapse
+        # the Insights pane - un-draggable afterwards (pre-1.0 layout bug).
+        self.split.setChildrenCollapsible(False)
         self.split.setStretchFactor(0, 0)
         self.split.setStretchFactor(1, 1)
         self.split.setStretchFactor(2, 0)
@@ -888,10 +890,18 @@ class AppShell(QMainWindow):
 
         rail_width = 46 if rail_collapsed else (64 if xtiny else 96 if tiny else 112 if narrow else 126 if compact else 150)
         # A visible Insights panel keeps its width even in the Browser workspace
-        # once the user toggled it on, so "báº­t insight AI" works while browsing.
-        insight_width = 0 if not self.insights.isVisible() else (120 if xtiny else 140 if tiny else 160 if narrow else 185 if compact else 205)
+        # once the user toggled it on, so "bật insight AI" works while browsing.
+        insight_visible = self.insights.isVisible()
+        insight_width = 0 if not insight_visible else (120 if xtiny else 140 if tiny else 160 if narrow else 185 if compact else 205)
         middle_width = max(320, width - rail_width - insight_width - 18)
-        self.split.setSizes([rail_width, middle_width, insight_width])
+        # Only push sizes when the Insights panel just changed visibility; a
+        # blind setSizes on every call fought the user's splitter drags and,
+        # with setChildrenCollapsible(True), a 0-width entry could COLLAPSE a
+        # pane entirely - dragging it afterwards was impossible (pre-1.0 bug).
+        if insight_visible != getattr(self, "_last_insight_visible", None):
+            self._last_insight_visible = insight_visible
+            self.split.setSizes([rail_width, middle_width, insight_width])
+        self.split.setChildrenCollapsible(False)
 
         if hasattr(self, "btn_rail_toggle"):
             self.btn_rail_toggle.setText("»" if rail_collapsed else "«")

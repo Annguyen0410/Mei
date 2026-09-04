@@ -139,7 +139,7 @@ class _DomainWeekChart(QWidget):
         top = 8
         row_h = max(18, (h - 16) // max(1, len(self._rows)))
         max_count = max(c for _d, c, _s in self._rows) or 1
-        label_w = min(150, w * 0.4)
+        label_w = int(min(150, w * 0.4))
         bar_x = label_w + 10
         bar_w_max = max(30, w - bar_x - 46)
         for i, (domain, count, scary) in enumerate(self._rows):

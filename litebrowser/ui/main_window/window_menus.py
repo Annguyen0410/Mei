@@ -4,8 +4,9 @@
 # separately from browser state. Methods only touch SearchWindow-owned
 # attributes (tab_list, base_dir, tab_manager, ...).
 
-from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtWidgets import (
+    QApplication,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -14,9 +15,18 @@ from PyQt5.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
 )
 
+from litebrowser.core import app_paths, app_version, prefs
+from litebrowser.browser.tab_manager import (
+    TAB_GROUP_COLLAPSED_ROLE,
+    TAB_GROUP_COLORS,
+    TAB_GROUP_ROLE,
+    TAB_META_ROLE,
+    TAB_PINNED_ROLE,
+)
 from litebrowser.ui import dialogs
 from litebrowser.services import extension_bridge, workspace_manager
 

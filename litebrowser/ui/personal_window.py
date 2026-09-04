@@ -559,42 +559,11 @@ class _FocusHeatmap(QWidget):
         self.setMinimumHeight(58)
 
     def refresh(self, base_dir: str):
-        import datetime as _dt
-
         sessions = focus_service.focus_journal(base_dir, limit=200)
-        per_day = {}
-        for s in sessions:
-            if s.get("status") == "abandoned":
-                continue
-            started = int(s.get("started_at", 0) or 0)
-            ended = int(s.get("ended_at", 0) or started)
-            planned = int(s.get("minutes", 0) or 0) * 60
-            spent = max(0, min(ended - started, planned)) if ended else min(planned, 0)
-            key = time.strftime("%Y-%m-%d", time.localtime(started))
-            per_day[key] = per_day.get(key, 0) + spent // 60
-        self._minutes = per_day
-        # Streak: consecutive days (ending today or yesterday) with >= 1 min.
-        today = _dt.date.today()
-        streak = 0
-        for offset in range(0, 120):
-            key = (today - _dt.timedelta(days=offset)).isoformat()
-            if per_day.get(key, 0) >= 1:
-                streak += 1
-            elif offset == 0:
-                continue  # today may not have started yet
-            else:
-                break
-        self._streak = streak
-        longest = 0
-        run = 0
-        for offset in range(119, -1, -1):
-            key = (today - _dt.timedelta(days=offset)).isoformat()
-            if per_day.get(key, 0) >= 1:
-                run += 1
-                longest = max(longest, run)
-            else:
-                run = 0
-        self._longest = longest
+        # Shared pure helpers in focus_service keep the heatmap, the dashboard
+        # stat and any future consumer in perfect agreement.
+        self._minutes = focus_service.compute_daily_minutes(sessions)
+        self._streak, self._longest = focus_service.compute_streaks(self._minutes)
         self.update()
 
     def paintEvent(self, _event):

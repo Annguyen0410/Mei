@@ -110,6 +110,53 @@ def focus_journal(base_dir: str, limit: int = 50) -> list:
     return data.get("sessions", [])[:limit]
 
 
+def compute_daily_minutes(sessions: list) -> dict:
+    """Pure helper: {YYYY-MM-DD: minutes} from a session journal (skips
+    abandoned, clamps to planned). Shared by today_focus_seconds and the
+    Personal Hub heatmap so both always agree."""
+    per_day = {}
+    for s in sessions:
+        if s.get("status") == "abandoned":
+            continue
+        started = int(s.get("started_at", 0) or 0)
+        ended = int(s.get("ended_at", 0) or started)
+        planned = int(s.get("minutes", 0) or 0) * 60
+        if not started or planned <= 0:
+            continue
+        spent = max(0, min(ended - started, planned))
+        key = datetime.fromtimestamp(started).strftime("%Y-%m-%d")
+        per_day[key] = per_day.get(key, 0) + spent // 60
+    return per_day
+
+
+def compute_streaks(per_day: dict) -> tuple[int, int]:
+    """(current_streak, longest_streak) from a {date: minutes} map.
+
+    Current streak counts back from today (today with 0 minutes does not
+    break it — the day may not be over yet)."""
+    import datetime as _dt
+
+    today = _dt.date.today()
+    current = 0
+    for offset in range(0, 365):
+        key = (today - _dt.timedelta(days=offset)).isoformat()
+        if per_day.get(key, 0) >= 1:
+            current += 1
+        elif offset == 0:
+            continue
+        else:
+            break
+    longest = run = 0
+    for offset in range(364, -1, -1):
+        key = (today - _dt.timedelta(days=offset)).isoformat()
+        if per_day.get(key, 0) >= 1:
+            run += 1
+            longest = max(longest, run)
+        else:
+            run = 0
+    return current, longest
+
+
 def today_focus_seconds(base_dir: str) -> int:
     """Completed focus seconds from the local day, for dashboard stats."""
     data = _load(base_dir)

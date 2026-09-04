@@ -1586,6 +1586,8 @@ class PersonalWindow(QMainWindow):
         self._find_in_note()
         self._refresh_notes()
         self._refresh_overview()
+        if removed_cards:
+            self._flash(f"Note deleted — {removed_cards} linked card(s) removed too")
 
     def _make_flashcard_from_selection(self):
         """Selection → flashcard: front = the selection, back = a prompt; or

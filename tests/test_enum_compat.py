@@ -9,7 +9,7 @@ os_setter("QT_QPA_PLATFORM", "offscreen")
 import litebrowser.qt_compat  # noqa: F402  (activates the shim)
 
 from PyQt5.QtCore import QEvent, Qt
-from PyQt5.QtWidgets import QSystemTrayIcon, QLineEdit, QMessageBox, QDialog
+from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QLineEdit, QMessageBox, QDialog
 from PyQt5.QtGui import QFont, QPainter
 from PyQt5.QtWidgets import QStyle, QLineEdit as _LE
 from PyQt5.QtWebEngineWidgets import (
@@ -65,6 +65,13 @@ class TestEnumCompat(unittest.TestCase):
         self._assert_attr(QStyle, "SP_DialogCloseButton")
         for name in ("Socks5Proxy", "HttpProxy", "NoProxy"):
             self._assert_attr(QNetworkProxy, name)
+
+    def test_exec_alias_on_all_used_classes(self):
+        # PyQt6 removed exec_(); the shim must restore it on every class the
+        # app calls exec_() on - QMenu especially (it is NOT a QDialog).
+        from PyQt5.QtWidgets import QMenu
+        for cls in (QApplication, QDialog, QMessageBox, QMenu):
+            self.assertTrue(callable(getattr(cls, "exec_", None)), f"{cls.__name__}.exec_ missing")
 
 
 if __name__ == "__main__":

@@ -408,6 +408,15 @@ if PYQT6:
 
         QDialog.exec_ = _qdialog_exec_
 
+    # QMenu inherits QWidget, not QDialog - it needs its own exec_ alias
+    # (right-click context menus call menu.exec_(pos) everywhere).
+    from PyQt6.QtWidgets import QMenu
+    if not hasattr(QMenu, "exec_"):
+        def _qmenu_exec_(self, *args):
+            return self.exec(*args)
+
+        QMenu.exec_ = _qmenu_exec_
+
     # --- QEvent (QtCore) – the Type enum members used across the app ---
     from PyQt6.QtCore import QEvent as _QEvent6
     if hasattr(_QEvent6, "Type"):

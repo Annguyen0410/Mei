@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtNetwork import QNetworkProxy
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import (
@@ -155,15 +155,20 @@ def run_leak_test(parent, base_dir) -> None:
     resolver; a WebEngine tab (Chromium path) fetches it again. If the two
     differ, DNS/traffic is partially bypassing the proxy."""
     QApplication.setOverrideCursor(Qt.WaitCursor)
-    os_ip, browser_ip, errors = "", "", []
+    os_ip, errors = "", []
     try:
         os_ip = _fetch_ip_info().get("ip", "")
     except Exception as exc:
         errors.append(f"OS path: {exc}")
     browser_path_ip = {"v": ""}
+    done = {"called": False}
 
     def _finish():
+        if done["called"]:
+            return
+        done["called"] = True
         QApplication.restoreOverrideCursor()
+        browser_ip = browser_path_ip["v"]
         protected = bool(prefs.get_proxy_config(base_dir).get("enabled"))
         if errors and not browser_ip:
             body = ("Could not complete the leak test:\n" + "\n".join(errors[:2]) +
@@ -203,6 +208,9 @@ def run_leak_test(parent, base_dir) -> None:
 
     probe_view.loadFinished.connect(_on_load)
     probe_view.load(QUrl("https://ipv4.ipleak.net/json/"))
+    # Never hang the cursor: if the probe page stalls (offline, blocked),
+    # finish with whatever we have after 12 s.
+    QTimer.singleShot(12000, _finish)
 
 
 def show_vpn_hub(parent) -> None:

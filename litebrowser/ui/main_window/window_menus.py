@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from litebrowser.core import app_paths, app_version, prefs
+from litebrowser.core import app_paths, app_version
 from litebrowser.browser.tab_manager import (
     TAB_GROUP_COLLAPSED_ROLE,
     TAB_GROUP_COLORS,

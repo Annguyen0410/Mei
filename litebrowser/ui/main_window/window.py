@@ -1625,7 +1625,7 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
 
     def _show_bookmark_context_menu(self, pos):
         item = self.bookmarks_tree.itemAt(pos)
-        menu = QMenu()
+        menu = QMenu(self)  # parented: inherits the shell theme QSS
         add_folder_action = menu.addAction("+ Add subfolder" if item else "+ Add folder")
         add_bm_action = menu.addAction("+ Add bookmark here")
         menu.addSeparator()
@@ -2146,7 +2146,7 @@ class SearchWindow(DockingMixin, WindowToolsMixin, QMainWindow):
         browser = self.browsers[row]
         is_current = browser is not None and browser == self.current_browser()
         is_pinned = bool(item.data(TAB_PINNED_ROLE))
-        menu = QMenu()
+        menu = QMenu(self)  # parented: inherits the shell theme QSS
         copy_url_action = menu.addAction("Copy tab URL")
         split_action = menu.addAction("Show beside (split view)")
         split_action.setEnabled(browser is not None)

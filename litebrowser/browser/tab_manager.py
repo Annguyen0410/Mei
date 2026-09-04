@@ -106,9 +106,9 @@ class TabMemoryTip(QLabel):
             "QLabel#TabMemoryTip { background: %s; color: %s; border: 1px solid %s;"
             " border-radius: 6px; padding: 6px 9px; font-size: 11px; font-weight: 600; }"
             % (
-                pal.get("CARD_BG", "#1d1710"),
-                pal.get("TEXT", "#f4ead8"),
-                pal.get("ITEM_SELECTED_BORDER", "#e0b878"),
+                pal.get("CARD_BG", "#1F1810"),
+                pal.get("TEXT", "#F7EDD9"),
+                pal.get("ITEM_SELECTED_BORDER", "#D9A94F"),
             )
         )
         self.hide()

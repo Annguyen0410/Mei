@@ -9,6 +9,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QMenu, QSystemTrayIcon
 
 from litebrowser.core import prefs
+from litebrowser.ui import theme
 
 
 class MeiTray(QSystemTrayIcon):
@@ -19,6 +20,9 @@ class MeiTray(QSystemTrayIcon):
         self.setToolTip("Mei — your café")
 
         menu = QMenu()
+        # Tray popups are separate top-levels: style them explicitly so the
+        # menu follows the active café theme instead of raw system gray.
+        menu.setStyleSheet(theme.main_qss(prefs.get_shell_theme(shell.profile_dir), prefs.get_accent(shell.profile_dir)))
         act_note = menu.addAction("✎ Quick note")
         act_note.triggered.connect(self._quick_note)
         act_pour = menu.addAction("☕ Pour 25 min")

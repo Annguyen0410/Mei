@@ -581,6 +581,7 @@ class AppShell(QMainWindow):
             return
         try:
             import ctypes
+            import ctypes.wintypes  # noqa: F401  (submodule — NOT auto-imported)
 
             self._hotkey_msg_id = 0xB00B  # app-local WM_HOTKEY identifier
             MOD_CONTROL, MOD_ALT = 0x0002, 0x0001
@@ -594,12 +595,17 @@ class AppShell(QMainWindow):
             self._hotkey_timer.setInterval(400)
 
             def _poll():
-                msg = ctypes.wintypes.MSG()
-                while ctypes.windll.user32.PeekMessageW(
-                    ctypes.byref(msg), None, 0x0312, 0x0312, 0x0001
-                ):  # PM_REMOVE, WM_HOTKEY range
-                    if msg.message == 0x0312 and msg.wParam == self._hotkey_msg_id:
-                        self._open_quick_note_overlay()
+                # Guard every tick: an exception escaping a Qt slot can abort
+                # the whole process (PyQt5 default excepthook policy).
+                try:
+                    msg = ctypes.wintypes.MSG()
+                    while ctypes.windll.user32.PeekMessageW(
+                        ctypes.byref(msg), None, 0x0312, 0x0312, 0x0001
+                    ):  # PM_REMOVE, WM_HOTKEY range
+                        if msg.message == 0x0312 and msg.wParam == self._hotkey_msg_id:
+                            self._open_quick_note_overlay()
+                except Exception:
+                    self._hotkey_timer.stop()
 
             self._hotkey_timer.timeout.connect(_poll)
             self._hotkey_timer.start()

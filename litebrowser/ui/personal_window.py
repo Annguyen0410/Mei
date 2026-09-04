@@ -1743,10 +1743,14 @@ class PersonalWindow(QMainWindow):
     def _grade_review(self, grade: str):
         from litebrowser.services import flashcard_service
 
-        if self._review_current is None:
+        current = self._review_current
+        if current is None:
             return
-        flashcard_service.review_card(self.base_dir, self._review_current["id"], grade)
-        self._review_queue.pop(0)
+        flashcard_service.review_card(self.base_dir, current["id"], grade)
+        # Pop by id: fast double-presses could desync a positional pop(0) from
+        # the card actually on screen (keyboard shortcuts make this real).
+        self._review_queue = [c for c in self._review_queue if c.get("id") != current["id"]]
+        self._review_current = None
         self._show_next_review_card()
         stats = flashcard_service.stats(self.base_dir)
         self.lbl_review_stats.setText(f"{stats['total']} cards · {stats['due']} due · {stats['matured']} matured")

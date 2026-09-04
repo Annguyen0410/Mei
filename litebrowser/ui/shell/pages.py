@@ -757,7 +757,7 @@ class SettingsPage(QWidget):
             pixmap = QPixmap(24, 18)
             pixmap.fill(QColor("transparent"))
             painter = QPainter(pixmap)
-            painter.setPen(QPen(QColor(pal["INPUT_BORDER"]), 1))
+            painter.setPen(QPen(QColor(theme._palette(theme.DEFAULT_THEME, None)["BORDER_SOFT"]), 1))
             painter.setBrush(QColor(theme.ACCENTS[accent_id][0]))
             painter.drawRoundedRect(3, 3, 18, 12, 4, 4)
             painter.end()

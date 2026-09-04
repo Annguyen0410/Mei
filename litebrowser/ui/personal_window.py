@@ -1653,7 +1653,27 @@ class PersonalWindow(QMainWindow):
         self.review_card.setCursor(Qt.PointingHandCursor)
         self.review_card.mousePressEvent = lambda _ev: self._flip_review_card()
         self.review_card.setMinimumHeight(200)
-        l.addWidget(self.review_card, 1)
+
+        # The card and the empty state share one surface slot between the
+        # header and the grade/add rows.  (Previously the empty state was a
+        # separate layout entry BELOW the fixed rows: when the queue drained,
+        # hiding the stretch-1 card left the empty panel stranded at the
+        # bottom of the page and stretched it into a giant misplaced panel.)
+        self.review_surface = QStackedWidget()
+        card_slot = QWidget()
+        card_slot_layout = QVBoxLayout(card_slot)
+        card_slot_layout.setContentsMargins(0, 0, 0, 0)
+        card_slot_layout.addWidget(self.review_card)
+        self.review_surface_card_index = self.review_surface.addWidget(card_slot)
+
+        empty_slot = QWidget()
+        empty_slot_layout = QVBoxLayout(empty_slot)
+        empty_slot_layout.setContentsMargins(40, 24, 40, 24)
+        empty = components.empty_state("No cards due", "Add a card above, or select text in a note and make one.")
+        self.review_empty = empty
+        empty_slot_layout.addWidget(empty)
+        self.review_surface_empty_index = self.review_surface.addWidget(empty_slot)
+        l.addWidget(self.review_surface, 1)
 
         grades_row = QHBoxLayout()
         grades_row.addStretch(1)
@@ -1676,10 +1696,6 @@ class PersonalWindow(QMainWindow):
         add_row.addWidget(self.ed_card_back, 1)
         add_row.addWidget(self.btn_card_add)
         l.addLayout(add_row)
-
-        empty = components.empty_state("No cards due", "Add a card above, or select text in a note and make one.")
-        self.review_empty = empty
-        l.addWidget(empty)
 
         self._review_queue: list[dict] = []
         self._review_current = None
@@ -1713,11 +1729,13 @@ class PersonalWindow(QMainWindow):
 
     def _show_next_review_card(self):
         if not self._review_queue:
+            self.review_surface.setCurrentIndex(self.review_surface_empty_index)
             self.review_card.hide()
             self.review_empty.show()
             for b in (self.btn_card_again, self.btn_card_hard, self.btn_card_good, self.btn_card_easy):
                 b.setEnabled(False)
             return
+        self.review_surface.setCurrentIndex(self.review_surface_card_index)
         self.review_empty.hide()
         self.review_card.show()
         self._review_current = self._review_queue[0]

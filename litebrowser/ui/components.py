@@ -131,6 +131,10 @@ def section_header(title: str, subtitle: str = "", action: QPushButton | None = 
     if subtitle:
         sub = QLabel(subtitle)
         sub.setObjectName("MutedLabel")
+        # Wrap instead of forcing the row to a full-text minimum width: in
+        # narrow columns an un-wrapped subtitle made whole cards (and the
+        # dashboards around them) overflow their viewport.
+        sub.setWordWrap(True)
         text_col.addWidget(sub)
     layout.addLayout(text_col, 1)
     if action is not None:

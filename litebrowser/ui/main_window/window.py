@@ -13,6 +13,7 @@ from PyQt5.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
     QObject,
+    QSize,
     Qt,
     QTimer,
     QUrl,
@@ -98,6 +99,24 @@ COMPATIBILITY_HOSTS = (
 # Chrome-style memory saver: when the process working set grows past this many
 # MB, background tabs are frozen automatically until RAM settles down again.
 MEMORY_SAVER_RSS_THRESHOLD_MB = 800
+
+
+class _BrowserContentArea(QWidget):
+    """Browser pane sitting to the right of the workspace tab desk.
+
+    Nested docks and QWebEngineView advertise large minimumSizeHints. On Windows
+    with PyQt6, QSplitter re-applies those hints on a bare click of its handle
+    (press+release with no drag), which steals width from the tab desk until it
+    looks like the sidebar vanished and can no longer be resized. Report a zero
+    minimum to the *outer* workspace splitter; the inner panel_split still
+    honors each dock's own minimum when that dock is actually visible.
+    """
+
+    def minimumSizeHint(self):
+        return QSize(0, 0)
+
+    def sizeHint(self):
+        return QSize(640, 480)
 
 
 def _process_rss_mb():
@@ -225,7 +244,7 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.sidebar_collapsed = False
         self._topbar_collapsed = False
         self.sidebarWidget.setMinimumWidth(190)
-        self.sidebarWidget.setMaximumWidth(320)
+        self.sidebarWidget.setMaximumWidth(800)
         self.sidebar_layout = QVBoxLayout(self.sidebarWidget)
         self.sidebar_layout.setContentsMargins(8, 10, 8, 10)
         self.sidebar_layout.setSpacing(6)
@@ -234,6 +253,7 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         sidebar_title_row = QHBoxLayout()
         sidebar_title_row.setAlignment(Qt.AlignCenter)
         self.btn_collapse_sidebar = QToolButton()
+        self.btn_collapse_sidebar.setObjectName("SidebarCollapse")
         self.btn_collapse_sidebar.setToolTip("Collapse / expand sidebar")
         self.btn_collapse_sidebar.setText("‹")
         self.btn_collapse_sidebar.clicked.connect(self._toggle_sidebar_collapse)
@@ -425,9 +445,12 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.sidebar_layout.addWidget(self.sidebar_footer)
         self.main_splitter.addWidget(self.sidebarWidget)
 
-        self.content_widget = QWidget()
+        self.content_widget = _BrowserContentArea()
         self.content_widget.setObjectName("ContentArea")
         self.content_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # Explicit floor for layouts that read minimumWidth rather than the
+        # overridden minimumSizeHint above.
+        self.content_widget.setMinimumWidth(0)
         self.content_layout = QVBoxLayout(self.content_widget)
         if self.embedded:
             self.content_layout.setContentsMargins(2, 2, 2, 2)
@@ -585,11 +608,13 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.web_container = QWidget()
         self.web_container.setObjectName("WebContainer")
         self.web_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.web_container.setMinimumWidth(0)
         self.web_container_layout = QVBoxLayout(self.web_container)
         self.web_container_layout.setContentsMargins(0, 0, 0, 0)
         self.web_container_layout.setSpacing(0)
         self.stack = QStackedWidget()
         self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.stack.setMinimumWidth(0)
         self.web_container_layout.addWidget(self.stack, 1)
         # Opera GX-style web panels: a right dock holding a slim WebEngine view
         # that shares the main profile (logins persist across sessions). The
@@ -602,11 +627,14 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.panel_split = QSplitter(Qt.Horizontal)
         self.panel_split.setChildrenCollapsible(False)
         self.panel_split.setHandleWidth(2)
+        self.panel_split.setMinimumWidth(0)
         self.panel_split.addWidget(self.split_dock)
         self.panel_split.addWidget(self.web_container)
         self.panel_split.addWidget(self.panel_dock)
-        self.panel_split.setStretchFactor(0, 1)
-        self.panel_split.setStretchFactor(1, 0)
+        # stretch the live page, not the optional left split dock
+        self.panel_split.setStretchFactor(0, 0)
+        self.panel_split.setStretchFactor(1, 1)
+        self.panel_dock.setMinimumWidth(0)
         self.panel_dock.hide()
         # Edge-Copilot-style AI sidebar: chat with the visible page without
         # leaving the browser workspace. Reuses the inline AI widgets, but as
@@ -652,7 +680,9 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         ask_row.addWidget(self.inline_ai_ask)
         ai_body_layout.addLayout(ask_row)
         ai_dock_layout.addWidget(ai_body, 1)
-        self.ai_dock.setMinimumWidth(320)
+        # Keep the closed AI dock out of QSplitter's minimum math; restore the
+        # readable width only while the dock is actually shown.
+        self.ai_dock.setMinimumWidth(0)
         self.ai_dock.setMaximumWidth(560)
         self.panel_split.addWidget(self.ai_dock)
         self.ai_dock.hide()
@@ -697,6 +727,8 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.dock_rail.setFixedWidth(34)
         self.panel_split.addWidget(self.dock_rail)
         self.panel_split.setStretchFactor(2, 0)
+        self.panel_split.setStretchFactor(3, 0)
+        self.panel_split.setStretchFactor(4, 0)
         self.content_layout.addWidget(self.panel_split, 1)
         # Chrome-style link-hover preview: the target URL shows in a slim strip
         # at the bottom-left while hovering links (never blocks the page — it
@@ -706,8 +738,26 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.link_preview.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.link_preview.hide()
         self.main_splitter.addWidget(self.content_widget)
+        # Set this per child after both widgets exist.  PyQt6's splitter can
+        # otherwise retain a child-specific default even when the global flag
+        # was set before addWidget(), especially after nested dock layouts
+        # update their size hints.
+        self.main_splitter.setCollapsible(0, False)
+        self.main_splitter.setCollapsible(1, False)
         initial_sidebar = self._sidebar_expanded_nominal_width()
         self.main_splitter.setSizes([initial_sidebar, max(420, (1216 if self.embedded else 1228) - initial_sidebar)])
+        # Dragging the divider is the natural way users expect to bring the
+        # collapsed sidebar back ("kéo ra"); wire it up so a collapsed rail
+        # can always be widened back by hand, not only via the tiny toggle.
+        self.main_splitter.splitterMoved.connect(self._on_main_splitter_moved)
+        # Give the divider a real grab-area (the app-wide QSS handle is only
+        # 3px). It is resize-only: collapse/expand belongs to the explicit
+        # sidebar arrow, never an accidental click on this divider.
+        self.main_splitter.setHandleWidth(8)
+        self._sidebar_split_press = None
+        _split_handle = self.main_splitter.handle(1)
+        if _split_handle is not None:
+            _split_handle.installEventFilter(self)
         self.title_label.setVisible(False)
         self.lbl_tab_count.setVisible(False)
         self.workspace_combo.setVisible(False)
@@ -885,24 +935,55 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
             return 240
         return 260
 
+    def _collapsed_rail_width(self):
+        """Width of the rail while the sidebar is collapsed.
+
+        Never returns 0 and the rail is never hidden: the expand toggle lives
+        inside the sidebar, so a 0-width/hidden rail would make the collapsed
+        state irreversible (the tab desk vanishes until a full restart).  The
+        rail is wide enough (~50px) to read as a real interactive strip with
+        the expand button clearly visible - a 26-30px sliver just looked like
+        the sidebar had disappeared.
+        """
+        return 54 if max(0, self.width()) >= 640 else 46
+
     def _apply_responsive_layout(self):
         width = max(0, self.width())
         compact = width < 1400
         tight = width < 1120
         tiny = width < 900
         xtiny = width < 640
-        rail = 30 if not xtiny else 0
+        rail = self._collapsed_rail_width()
 
         _anim = getattr(self, "_sidebar_anim", None)
         _sidebar_anim_idle = _anim is None or _anim.state() != QAbstractAnimation.Running
         if hasattr(self, "sidebarWidget") and _sidebar_anim_idle:
             if self.sidebar_collapsed:
+                # Rail stays visible and wide-open for the splitter handle
+                # (minimum only), so the sidebar can always be pulled back out
+                # by dragging - never locked at zero or at a dead 30px.
                 self.sidebarWidget.setMinimumWidth(rail)
-                self.sidebarWidget.setMaximumWidth(rail)
-                self.sidebarWidget.setVisible(not xtiny)
+                self.sidebarWidget.setMaximumWidth(800)
+                self.sidebarWidget.setVisible(True)
+                # If a prior interrupted anim or parent resize left the pane
+                # narrower than the rail, snap it back so the › toggle stays
+                # reachable without needing a shell re-layout workaround.
+                if self.sidebarWidget.width() < rail:
+                    sw = max(0, self.main_splitter.width())
+                    if sw > 0:
+                        self.main_splitter.setSizes([rail, max(280, sw - rail)])
             else:
                 self.sidebarWidget.setMinimumWidth(120)
                 self.sidebarWidget.setMaximumWidth(800)
+                # Nested shell/dock splitters can briefly force this child to
+                # zero while they recalculate.  Also heal a stuck min==max lock
+                # left by older animation code.
+                if (
+                    self.sidebarWidget.width() < 120
+                    or self.sidebarWidget.isHidden()
+                    or self.sidebarWidget.maximumWidth() <= self.sidebarWidget.minimumWidth() + 1
+                ):
+                    self._queue_expanded_sidebar_recovery()
         self._apply_sidebar_collapse_visibility()
 
         if hasattr(self, "topbar_layout"):
@@ -1660,6 +1741,13 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         qss = theme.main_qss(theme_name, accent)
         self.btn_collapse_sidebar.setStyleSheet(theme.collapse_btn_qss(theme_name, accent))
         self.setStyleSheet(qss)
+        self._apply_collapse_btn_state()
+        # Override the app-wide 3px divider only for the sidebar splitter so
+        # the collapse/expand rail has a handle that is easy to grab.
+        try:
+            self.main_splitter.setStyleSheet("QSplitter::handle { width: 8px; }")
+        except Exception:
+            pass
         self._apply_dynamic_background_overlay()
 
     def _load_ui_dynamic_background_pref(self):
@@ -2115,6 +2203,26 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         # Middle-click on the URL bar: paste & go (browser standard).
         from PyQt5.QtCore import QEvent, Qt as _Qt
 
+        # Workspace divider: resize by drag only. A bare click (or nested
+        # layout settling that looks like a click) must never leave the tab
+        # desk stuck at a locked/narrow width.
+        splitter = getattr(self, "main_splitter", None)
+        handle = splitter.handle(1) if splitter is not None else None
+        if handle is not None and obj is handle:
+            et = ev.type()
+            if et == QEvent.Type.MouseButtonPress and ev.button() == _Qt.LeftButton:
+                self._sidebar_split_press = (ev.pos(), list(splitter.sizes()))
+            elif et in (QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick):
+                press = getattr(self, "_sidebar_split_press", None)
+                self._sidebar_split_press = None
+                if press is not None and ev.button() == _Qt.LeftButton:
+                    press_pos, press_sizes = press
+                    moved = (ev.pos() - press_pos).manhattanLength()
+                    if moved < 4 and press_sizes:
+                        # Click without drag: keep the pre-click widths.
+                        splitter.setSizes(press_sizes)
+                    self._ensure_sidebar_splitter_healthy()
+            return False
         if obj is getattr(self, "url_bar", None) and ev.type() == QEvent.Type.MouseButtonRelease:
             if ev.button() == _Qt.MiddleButton:
                 clipboard = QApplication.clipboard().text().strip()
@@ -2655,19 +2763,39 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
             if widget is not None:
                 widget.setVisible(not collapsed)
         if hasattr(self, "btn_collapse_sidebar"):
+            # Always keep the expand toggle visible & tappable in the rail.
             self.btn_collapse_sidebar.setVisible(True)
 
     def _toggle_sidebar_collapse(self):
         self.sidebar_collapsed = not self.sidebar_collapsed
         self.btn_collapse_sidebar.setText("›" if self.sidebar_collapsed else "‹")
+        self._apply_collapse_btn_state()
         self._apply_sidebar_collapse_visibility()
-        rail = 30
+        # Swap to snug margins while collapsed so the toggle actually fits in
+        # the narrow rail; restore the normal padding when expanding.
+        self.sidebar_layout.setContentsMargins(6 if self.sidebar_collapsed else 8, 10, 6 if self.sidebar_collapsed else 8, 10)
+        rail = self._collapsed_rail_width()
         end_open = self._sidebar_expanded_nominal_width()
         start_w = max(rail, self.sidebarWidget.width())
         end_w = rail if self.sidebar_collapsed else min(end_open, max(rail + 20, self.main_splitter.width() // 3))
 
-        if self._sidebar_anim:
+        # CRITICAL: never animate by locking minimumWidth == maximumWidth.
+        # That lock is what made the tab desk "vanish" and refuse to resize
+        # until an unrelated shell re-layout (profile rail toggle) unlocked it.
+        if self._sidebar_anim is not None:
+            try:
+                self._sidebar_anim.valueChanged.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                self._sidebar_anim.finished.disconnect()
+            except (TypeError, RuntimeError):
+                pass
             self._sidebar_anim.stop()
+            self._sidebar_anim = None
+
+        self._release_sidebar_width_lock(rail)
+
         self._sidebar_anim = QVariantAnimation(self)
         self._sidebar_anim.setDuration(240)
         self._sidebar_anim.setEasingCurve(QEasingCurve.OutCubic)
@@ -2675,26 +2803,134 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self._sidebar_anim.setEndValue(float(end_w))
 
         def _on_sidebar_width(v):
-            w = max(rail, int(round(v)))
-            self.sidebarWidget.setMinimumWidth(w)
-            self.sidebarWidget.setMaximumWidth(w)
+            w = max(rail, round(v))
             sw = max(0, self.main_splitter.width())
             if sw > 0:
                 self.main_splitter.setSizes([w, max(280, sw - w)])
 
         def _on_sidebar_finished():
-            if self.sidebar_collapsed:
-                self.sidebarWidget.setMinimumWidth(rail)
-                self.sidebarWidget.setMaximumWidth(rail)
-            else:
-                self.sidebarWidget.setMinimumWidth(120)
-                self.sidebarWidget.setMaximumWidth(800)
             self._sidebar_anim = None
+            self._release_sidebar_width_lock(rail)
+            target = rail if self.sidebar_collapsed else max(120, end_w)
+            sw = max(0, self.main_splitter.width())
+            if sw > 0:
+                self.main_splitter.setSizes([target, max(280, sw - target)])
             self._apply_responsive_layout()
 
         self._sidebar_anim.valueChanged.connect(_on_sidebar_width)
         self._sidebar_anim.finished.connect(_on_sidebar_finished)
         self._sidebar_anim.start()
+
+    def _release_sidebar_width_lock(self, rail=None):
+        """Keep min/max in a resizable range (never min == max)."""
+        if rail is None:
+            rail = self._collapsed_rail_width()
+        if self.sidebar_collapsed:
+            self.sidebarWidget.setMinimumWidth(rail)
+            self.sidebarWidget.setMaximumWidth(800)
+        else:
+            self.sidebarWidget.setMinimumWidth(120)
+            self.sidebarWidget.setMaximumWidth(800)
+
+    def _ensure_sidebar_splitter_healthy(self):
+        """Unlock a stuck desk and restore a usable width if needed.
+
+        The historic bug locked minimumWidth == maximumWidth during the
+        collapse animation.  Drag then does nothing; a bare divider click can
+        look like the workspace tab vanished.  Profile-rail toggles only
+        appeared to "fix" it because they forced a parent resize that ran
+        _apply_responsive_layout and unlocked max width.
+        """
+        sidebar = getattr(self, "sidebarWidget", None)
+        splitter = getattr(self, "main_splitter", None)
+        if sidebar is None or splitter is None:
+            return
+        anim = getattr(self, "_sidebar_anim", None)
+        if anim is not None and anim.state() == QAbstractAnimation.Running:
+            return
+
+        rail = self._collapsed_rail_width()
+        self._release_sidebar_width_lock(rail)
+        sidebar.show()
+
+        sizes = splitter.sizes()
+        if len(sizes) < 2:
+            return
+        total = max(0, sum(sizes))
+        if total <= 0:
+            total = max(0, splitter.width())
+        if total <= 0:
+            return
+
+        if getattr(self, "sidebar_collapsed", False):
+            if sizes[0] < rail:
+                splitter.setSizes([rail, max(280, total - rail)])
+            return
+
+        if sizes[0] < 120 or sidebar.width() < 120:
+            target = min(self._sidebar_expanded_nominal_width(), max(120, total - 160))
+            splitter.setSizes([target, max(0, total - target)])
+
+    def _on_main_splitter_moved(self, _pos, _index):
+        """Keep the tab desk resizable; never collapse from a divider event.
+
+        QSplitter emits splitterMoved for layout changes and harmless clicks
+        on some Windows styles, so this signal must never collapse an
+        expanded sidebar.  The explicit arrow button is the only collapse
+        control.
+        """
+        anim = getattr(self, "_sidebar_anim", None)
+        if anim is not None and anim.state() == QAbstractAnimation.Running:
+            return
+        if not hasattr(self, "sidebarWidget") or not hasattr(self, "sidebar_layout"):
+            return
+
+        # Always unlock first — a stuck min==max is why drag felt broken.
+        if self.sidebarWidget.maximumWidth() <= self.sidebarWidget.minimumWidth() + 1:
+            self._ensure_sidebar_splitter_healthy()
+            return
+
+        rail = self._collapsed_rail_width()
+        width = self.sidebarWidget.width()
+        if not getattr(self, "sidebar_collapsed", False):
+            if width < 120 or self.sidebarWidget.isHidden():
+                self._ensure_sidebar_splitter_healthy()
+            return
+        if width <= rail + 14:
+            return
+        # User pulled the rail open: restore the full tab desk at once.
+        self.sidebar_collapsed = False
+        self.btn_collapse_sidebar.setText("‹")
+        self._apply_collapse_btn_state()
+        self.sidebar_layout.setContentsMargins(8, 10, 8, 10)
+        self._apply_sidebar_collapse_visibility()
+        self._release_sidebar_width_lock(rail)
+        self._apply_responsive_layout()
+
+    def _queue_expanded_sidebar_recovery(self):
+        """Restore an expanded desk after a nested splitter squeezes it out."""
+        if getattr(self, "_sidebar_recovery_queued", False):
+            return
+        self._sidebar_recovery_queued = True
+
+        def _recover():
+            self._sidebar_recovery_queued = False
+            self._ensure_sidebar_splitter_healthy()
+
+        QTimer.singleShot(0, _recover)
+
+    def _apply_collapse_btn_state(self):
+        """Repaint the ‹/› toggle for its current state: when collapsed it is
+        the only thing on the rail, so it gets a filled accent look that is
+        impossible to miss ("did the sidebar disappear?" -> no, tap the ›)."""
+        btn = getattr(self, "btn_collapse_sidebar", None)
+        if btn is None:
+            return
+        btn.setProperty("collapsed", bool(getattr(self, "sidebar_collapsed", False)))
+        style = btn.style()
+        style.unpolish(btn)
+        style.polish(btn)
+        btn.update()
 
     def _toggle_topbar(self):
         self._topbar_collapsed = not getattr(self, "_topbar_collapsed", False)

@@ -101,7 +101,7 @@ class _DomainWeekChart(QWidget):
         super().__init__()
         self._page = page
         self._rows = []  # (domain, count, scary?)
-        self.setMinimumHeight(96)
+        self.setMinimumHeight(200)
 
     def refresh(self):
         from litebrowser.core import prefs as _prefs
@@ -167,7 +167,7 @@ class _WeekActivityChart(QWidget):
         self._page = page
         self._counts = [0] * 7
         self._day_labels = [""] * 7
-        self.setMinimumHeight(96)
+        self.setMinimumHeight(200)
 
     def refresh(self):
         import time as _time
@@ -201,25 +201,44 @@ class _WeekActivityChart(QWidget):
         w, h = self.width(), self.height()
         p = _theme.palette()
         painter.fillRect(self.rect(), QColor(p["MAIN_BG_ALT"]))
-        top, bottom = 10, h - 22
+        # Vertical zones that never overlap or clip, bottom to top:
+        #   [day labels] 4px .. bars .. [value labels above the bars]
+        # The day labels keep a generous clear margin under them so the text
+        # never touches (or looks sliced by) the card's bottom border.
+        value_zone = 16  # counts drawn above each bar
+        label_zone = 22  # day-of-week labels (with room under the descenders)
+        top = 6 + value_zone  # tallest bar tops stop here (labels sit above)
+        bottom = max(top + 4, h - label_zone - 4)  # bar baseline
         max_count = max(self._counts or [0]) or 1
-        bar_w = max(14, min(46, (w - 20) // 7 - 10))
-        gap = (w - 20 - bar_w * 7) / 6.0 if w > 20 + bar_w * 7 else 4
+        side = 12
+        bar_w = max(10, min(52, (w - side * 2 - 6 * 8) // 7))
+        step = (w - side * 2) / 7.0
         for i, count in enumerate(self._counts):
-            bar_h = int((count / max_count) * max(4, bottom - top))
-            x = int(10 + i * (bar_w + gap))
-            y = bottom - bar_h
+            x = side + int(i * step + (step - bar_w) / 2.0)
             is_today = i == 6
+            if count <= 0:
+                # No visits: draw a faint baseline dot instead of a stub bar,
+                # so empty days do not masquerade as activity.
+                color = QColor(p["MAIN_BG_ALT"]).lighter(103)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor(p["BORDER_SOFT"]))
+                painter.drawRoundedRect(x + (bar_w - 5) // 2, bottom - 5, 5, 5, 2, 2)
+                continue
+            bar_h = int((count / max_count) * max(8, bottom - top))
+            y = bottom - bar_h
             color = QColor(p["ACCENT"] if is_today else p["ACCENT_SOFT"])
             painter.setPen(QPen(QColor(p["INPUT_BORDER"]), 1))
             painter.setBrush(color)
             painter.drawRoundedRect(x, y, bar_w, max(4, bar_h), 4, 4)
-            painter.setPen(QColor(p["TEXT_MUTED"]))
+            painter.setPen(QColor(p["TEXT"]))
+            painter.drawText(x, max(0, y - 14), bar_w, 13, Qt.AlignCenter, str(count))
+        # Day labels sit comfortably above the card edge (never flush/cut).
+        painter.setPen(QColor(p["TEXT_MUTED"]))
+        label_y = h - label_zone
+        for i in range(7):
+            x = side + int(i * step + (step - bar_w) / 2.0)
             label = self._day_labels[i] if i < len(self._day_labels) else ""
-            painter.drawText(x, bottom + 14, bar_w, 14, Qt.AlignCenter, label[:3])
-            if count:
-                painter.setPen(QColor(p["TEXT"]))
-                painter.drawText(x, y - 13, bar_w, 13, Qt.AlignCenter, str(count))
+            painter.drawText(x, label_y + 2, bar_w, label_zone - 6, Qt.AlignCenter, label[:3])
         painter.end()
 
 
@@ -228,9 +247,27 @@ class HomeDashboardPage(QWidget):
         super().__init__()
         self.shell = shell
         self.setObjectName("HomeDashboard")
+        # The dashboard is ~1050px tall at its natural size.  Without a scroll
+        # area a shorter viewport (half-screen shell, small laptop) squeezed
+        # every row below its minimum: launcher tiles collapsed into glued
+        # strips with their labels clipped away.  Scrolling keeps every tile
+        # at full size and lets the page breathe at any window height.
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.home_scroll = QScrollArea()
+        self.home_scroll.setObjectName("HomeScroll")
+        self.home_scroll.setWidgetResizable(True)
+        self.home_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.home_scroll.setFrameShape(QFrame.NoFrame)
+        content = QWidget()
+        content.setObjectName("HomeScrollContent")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(18, 18, 18, 16)
+        content_layout.setSpacing(12)
+        self.home_scroll.setWidget(content)
+        layout.addWidget(self.home_scroll)
+        layout = content_layout
 
         hero = QFrame()
         hero.setObjectName("HeroCard")
@@ -250,17 +287,20 @@ class HomeDashboardPage(QWidget):
         brand = QLabel(headline)
         brand.setObjectName("HeroTitle")
         brand.setFont(components._font(26, components.WEIGHT_BOLD))
-        brand_row.addWidget(brand)
-        brand_row.addStretch(1)
+        # Wrap instead of forcing a ~1000px minimum width: the long greeting
+        # used to make the whole dashboard min-width wider than most shell
+        # viewports, so narrow windows clipped the right edge.
+        brand.setWordWrap(True)
+        brand_row.addWidget(brand, 1)
         self.lbl_today = QLabel(time.strftime("%A, %d %B · %H:%M"))
         self.lbl_today.setObjectName("HeroBadge")
-        brand_row.addWidget(self.lbl_today)
+        brand_row.addWidget(self.lbl_today, 0, Qt.AlignVCenter)
         self._clock_timer = QTimer(self)
         self._clock_timer.timeout.connect(self._tick_clock)
         self._clock_timer.start(1000)
-        version = QLabel(f"v{app_version.APP_VERSION}")
-        version.setObjectName("HeroBadge")
-        brand_row.addWidget(version)
+        self.lbl_home_version = QLabel(f"v{app_version.APP_VERSION}")
+        self.lbl_home_version.setObjectName("HeroBadge")
+        brand_row.addWidget(self.lbl_home_version, 0, Qt.AlignVCenter)
         hero_layout.addLayout(brand_row)
 
         subtitle = QLabel(
@@ -309,9 +349,9 @@ class HomeDashboardPage(QWidget):
 
         cmd_row = QHBoxLayout()
         cmd_row.setSpacing(6)
-        quick_label = QLabel("Quick commands")
-        quick_label.setObjectName("MutedLabel")
-        cmd_row.addWidget(quick_label)
+        self.lbl_quick_commands = QLabel("Quick commands")
+        self.lbl_quick_commands.setObjectName("MutedLabel")
+        cmd_row.addWidget(self.lbl_quick_commands)
         for cmd, tip in (("/task ", "Create task"), ("/note ", "Create note"), ("/board ", "New board"), ("/focus 25", "Start pour"), ("/hub", "Project Hub"), ("/cql", "Cục Quản Lý")):
             chip = components.chip(cmd, checkable=False)
             chip.setToolTip(tip)
@@ -404,6 +444,20 @@ class HomeDashboardPage(QWidget):
     def _tick_clock(self):
         self.lbl_today.setText(time.strftime("%A, %d %B · %H:%M:%S"))
 
+    def resizeEvent(self, event):
+        """Trim secondary hero chrome on narrow viewports.
+
+        The hero keeps its natural (wrap-friendly) width, so at small shell
+        sizes these extras would be the only things forcing horizontal
+        overflow; dropping them lets the dashboard fit without a sideways
+        scrollbar."""
+        super().resizeEvent(event)
+        width = max(0, self.width())
+        if hasattr(self, "lbl_home_version"):
+            self.lbl_home_version.setVisible(width >= 1150)
+        if hasattr(self, "lbl_quick_commands"):
+            self.lbl_quick_commands.setVisible(width >= 1000)
+
     def _open_recent_closed(self, item):
         url = item.data(Qt.UserRole) or ""
         if not url:
@@ -422,6 +476,10 @@ class HomeDashboardPage(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         header = components.section_header(title_text, subtitle)
         layout.addWidget(header)
+        # A generous floor keeps the Recent Notes / Today's Focus / Recently
+        # Closed cards from collapsing into a single cramped row on shorter
+        # viewports; extra window height then grows them further.
+        list_widget.setMinimumHeight(220)
         layout.addWidget(list_widget, 1)
         return card
 

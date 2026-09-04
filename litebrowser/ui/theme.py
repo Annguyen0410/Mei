@@ -633,6 +633,11 @@ QScrollArea#SettingsScroll {
     background-color: %(MAIN_BG)s;
 }
 QScrollArea#SettingsScroll > QWidget > QWidget { background-color: %(MAIN_BG)s; }
+QScrollArea#HomeScroll {
+    border: none;
+    background-color: %(MAIN_BG)s;
+}
+QScrollArea#HomeScroll > QWidget > QWidget { background-color: %(MAIN_BG)s; }
 
 /* ---------- labels ---------- */
 QLabel { color: %(TEXT)s; background: transparent; }
@@ -682,7 +687,7 @@ QLabel { color: %(TEXT)s; background: transparent; }
     background-color: %(ITEM_HOVER)s;
 }
 #ActionTile:pressed { background-color: %(ITEM_SELECTED)s; }
-#ActionGlyph { color: %(ACCENT_HOVER)s; font-size: 22px; }
+#ActionGlyph { color: %(ACCENT_HOVER)s; font-size: 25px; font-weight: 700; }
 #ActionLabel { color: %(TEXT)s; font-weight: 700; font-size: 13px; }
 #ActionHint { color: %(TEXT_MUTED)s; font-size: 10px; }
 
@@ -837,6 +842,12 @@ QPushButton#TopAccentButton:hover { background-color: %(ACCENT_HOVER)s; }
 }
 #SidebarPanelBtn:hover, #TopBar QToolButton:hover { background-color: %(ITEM_HOVER)s; color: %(TEXT)s; }
 #SidebarPanelBtn:checked { color: %(ACCENT_HOVER)s; background-color: %(ITEM_SELECTED)s; border: 1px solid %(ITEM_SELECTED_BORDER)s; }
+#SidebarCollapse {
+    background-color: %(MAIN_BG_ALT)s; color: %(TEXT)s;
+    border: 1px solid %(BORDER_SOFT)s; border-radius: %(RADIUS_SM)s;
+    min-width: 22px; min-height: 22px; padding: 0 4px; font-size: 13px; font-weight: 700;
+}
+#SidebarCollapse:hover { background-color: %(ITEM_HOVER)s; border-color: %(ACCENT)s; color: %(ACCENT_HOVER)s; }
 
 #TopIconButton {
     background-color: %(BUTTON_BG)s; color: %(TEXT)s; border: 1px solid %(INPUT_BORDER)s;
@@ -1129,7 +1140,7 @@ QLabel {
     border-color: %(ACCENT)s;
 }
 #ActionTile:pressed { background-color: %(ITEM_SELECTED)s; }
-#ActionGlyph { color: %(ACCENT_HOVER)s; font-size: 21px; }
+#ActionGlyph { color: %(ACCENT_HOVER)s; font-size: 24px; font-weight: 700; }
 #ActionLabel { color: %(TEXT)s; font-size: 12px; font-weight: 800; }
 #ActionHint { color: %(TEXT_MUTED)s; font-size: 9px; }
 
@@ -1250,6 +1261,22 @@ QPushButton#TopAccentButton:hover { background-color: %(ACCENT_HOVER)s; border-c
     border-color: %(BORDER_SOFT)s;
 }
 #SidebarPanelBtn:checked { color: %(ACCENT_HOVER)s; background-color: %(ACCENT_SOFT)s; border-color: %(INPUT_BORDER)s; }
+#SidebarCollapse {
+    min-width: 22px;
+    min-height: 22px;
+    background-color: %(MAIN_BG_ALT)s;
+    color: %(TEXT)s;
+    border: 1px solid %(BORDER_SOFT)s;
+    border-radius: 8px;
+    padding: 0 4px;
+    font-size: 13px;
+    font-weight: 700;
+}
+#SidebarCollapse:hover {
+    color: %(ACCENT_HOVER)s;
+    background-color: %(ITEM_HOVER)s;
+    border-color: %(ACCENT)s;
+}
 #TopBar {
     min-height: 42px;
     margin: 2px;
@@ -1592,10 +1619,18 @@ def collapse_btn_qss(mode: str = "cafe-night", accent: str | None = None):
     p = _palette(mode, accent)
     return """
     QToolButton {
-        background: transparent; color: %(TEXT_MUTED)s; border: none;
-        border-radius: 6px; min-width: 26px; min-height: 26px; font-size: 11px;
+        background: transparent; color: %(TEXT_MUTED)s; border: 1px solid transparent;
+        border-radius: 8px; min-width: 32px; min-height: 32px; font-size: 14px;
+        font-weight: 700; padding: 0;
     }
-    QToolButton:hover { color: %(ACCENT_HOVER)s; background: %(ITEM_HOVER)s; }
+    QToolButton:hover { color: %(ACCENT_HOVER)s; background: %(ITEM_HOVER)s; border-color: %(BORDER_SOFT)s; }
+    QToolButton[collapsed="true"] {
+        background: %(ACCENT_SOFT)s; color: %(ACCENT_HOVER)s;
+        border: 2px solid %(ACCENT)s; border-radius: 10px;
+    }
+    QToolButton[collapsed="true"]:hover {
+        background: %(ITEM_SELECTED)s; color: %(ACCENT_HOVER)s; border-color: %(ACCENT_HOVER)s;
+    }
     """ % p
 
 

@@ -84,7 +84,9 @@ class DockingMixin:
         self.split_body_layout = QVBoxLayout(self.split_body)
         self.split_body_layout.setContentsMargins(0, 0, 0, 0)
         dock_layout.addWidget(self.split_body, 1)
-        self.split_dock.setMinimumWidth(300)
+        # Keep hidden docks at min 0 so nested QSplitter math cannot steal
+        # width from the workspace tab desk on a bare handle click.
+        self.split_dock.setMinimumWidth(0)
         self.split_dock.setMaximumWidth(900)
         self.split_dock.hide()
 
@@ -107,9 +109,18 @@ class DockingMixin:
         from current visibility instead of hard-coding two-element lists."""
         total = max(700, self.panel_split.width())
         rail = 34
-        split_w = 340 if self.split_dock.isVisible() else 0
-        panel_w = 380 if self.panel_dock.isVisible() else 0
-        ai_w = 360 if self.ai_dock.isVisible() else 0
+        split_vis = self.split_dock.isVisible()
+        panel_vis = self.panel_dock.isVisible()
+        ai_vis = self.ai_dock.isVisible()
+        # Visible docks need a real floor; hidden ones must not inflate the
+        # outer workspace splitter's minimum (that squeezes the tab desk).
+        self.split_dock.setMinimumWidth(300 if split_vis else 0)
+        self.panel_dock.setMinimumWidth(300 if panel_vis else 0)
+        if hasattr(self, "ai_dock"):
+            self.ai_dock.setMinimumWidth(320 if ai_vis else 0)
+        split_w = 340 if split_vis else 0
+        panel_w = 380 if panel_vis else 0
+        ai_w = 360 if ai_vis else 0
         web_w = max(320, total - rail - split_w - panel_w - ai_w)
         self.panel_split.setSizes([split_w, web_w, panel_w, ai_w, rail])
 
@@ -185,7 +196,7 @@ class DockingMixin:
         self.panel_body_layout = QVBoxLayout(self.panel_body)
         self.panel_body_layout.setContentsMargins(0, 0, 0, 0)
         dock_layout.addWidget(self.panel_body, 1)
-        self.panel_dock.setMinimumWidth(300)
+        self.panel_dock.setMinimumWidth(0)
         self.panel_dock.setMaximumWidth(620)
 
     def _ensure_panel_view(self):

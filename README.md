@@ -4,7 +4,7 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 > **Run & build the desktop app**: see the dedicated **`RUN_AND_BUILD.md`** — app testing checklist, how to use `.venv`, common run errors, and the full PyInstaller command (`--collect-all PyQt6.QtWebEngine*`) to produce the `.exe`.
 
-> ## What's new in 6.8 — four new layers on top of browser + personal space
+> ## Milestone 0.6.8.0 — pre-1.0: four new layers on top of browser + personal space
 >
 > - **🧠 Learning layer** — **Flashcards with SM-2 spaced repetition** (Again/Hard/Good/Easy, ease clamped, 10-min retries) on a new Review page in the Personal Hub, `/review` command, and "⇄ Make flashcard" from selected note text; **Highlight clippings** — page-menu action appends the browser selection to a dated Clippings note with source title/URL; **Reading progress** — saved pages track scroll-% automatically, rows show badges, "▶" marks the furthest-along unfinished page.
 > - **🛡 Wellbeing layer** — **Distraction Shield** blocks social/autoplay hosts while a café pour runs (or "always on" in Settings), riding the existing adblock interceptor; **system tray** with quick actions (quick note, 25-min pour, VPN status) and **native Windows toasts** for downloads/focus; **20-20-20 eye-break nudges** inside long pours; **wellbeing chart** — top domains of the week with distraction domains tinted honestly.
@@ -152,7 +152,7 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 ## Current build
 
-- Version **6.5.0** (see "What's new in 6.5" above)
+- Version **0.6.8.0** (pre-1.0: the feature set is deep but the 1.0 bar - signed builds, docs, long-term API stability - has not been reached yet)
 - `AppShell` as the master shell for workspace navigation
 - `Browser` for web browsing: tabs, imports, workspaces, privacy, downloads
 - `Personal Hub` for notes, tasks, boards, files, sites, calendar

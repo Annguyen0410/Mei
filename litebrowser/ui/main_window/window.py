@@ -333,7 +333,9 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
             def eventFilter(_self, obj, ev):
                 from PyQt5.QtCore import QEvent
 
-                if ev.type() == QEvent.MouseButtonDblClick:
+                # QEvent.Type.* scoped form works on both PyQt5 and PyQt6;
+                # the un-scoped shortcut crashes under PyQt6.
+                if ev.type() == QEvent.Type.MouseButtonDblClick:
                     # Only when the click lands on empty space, not a tab row.
                     if self.tab_list.itemAt(ev.pos()) is None:
                         self.add_new_tab()
@@ -2113,7 +2115,7 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         # Middle-click on the URL bar: paste & go (browser standard).
         from PyQt5.QtCore import QEvent, Qt as _Qt
 
-        if obj is getattr(self, "url_bar", None) and ev.type() == QEvent.MouseButtonRelease:
+        if obj is getattr(self, "url_bar", None) and ev.type() == QEvent.Type.MouseButtonRelease:
             if ev.button() == _Qt.MiddleButton:
                 clipboard = QApplication.clipboard().text().strip()
                 if clipboard:
@@ -2123,7 +2125,7 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
                 ev.accept()
                 return True
         # Middle-click a bookmark / history / reading row: open in a new tab.
-        if ev.type() == QEvent.MouseButtonRelease and ev.button() == _Qt.MiddleButton:
+        if ev.type() == QEvent.Type.MouseButtonRelease and ev.button() == _Qt.MiddleButton:
             if obj is getattr(self, "bookmarks_tree", None).viewport():
                 item = self.bookmarks_tree.itemAt(ev.pos())
                 if item is not None:

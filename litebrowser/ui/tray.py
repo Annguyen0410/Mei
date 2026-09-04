@@ -62,11 +62,17 @@ class MeiTray(QSystemTrayIcon):
             self.notify("Mei Shield", "Direct connection (no proxy)")
 
     def _on_activated(self, reason):
-        if reason == QSystemTrayIcon.Trigger:  # single click → focus a window
+        # Scoped form (ActivationReason) is required by PyQt6; fall back to
+        # the un-scoped PyQt5 shortcut on older bindings.
+        trigger = getattr(QSystemTrayIcon, "ActivationReason", None)
+        trigger = getattr(trigger, "Trigger", None) or getattr(QSystemTrayIcon, "Trigger", None)
+        if trigger is not None and reason == trigger:  # single click → focus a window
             self.shell.showNormal()
             self.shell.raise_()
 
     # -- native toast --------------------------------------------------
     def notify(self, title: str, message: str, msecs: int = 4000):
+        message_icon = getattr(QSystemTrayIcon, "MessageIcon", None)
+        message_icon = getattr(message_icon, "Information", None) or getattr(QSystemTrayIcon, "Information", None)
         if self.isVisible():
-            self.showMessage(title, message, QSystemTrayIcon.Information, msecs)
+            self.showMessage(title, message, message_icon, msecs)

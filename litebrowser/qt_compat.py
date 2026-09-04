@@ -407,3 +407,46 @@ if PYQT6:
             return self.exec()
 
         QDialog.exec_ = _qdialog_exec_
+
+    # --- QEvent (QtCore) – the Type enum members used across the app ---
+    from PyQt6.QtCore import QEvent as _QEvent6
+    if hasattr(_QEvent6, "Type"):
+        for name in ("MouseButtonDblClick", "MouseButtonRelease", "MouseButtonPress",
+                      "KeyPress", "KeyRelease", "Resize", "Close", "WindowActivate",
+                      "HoverMove", "MouseMove", "Leave", "Enter", "Paint", "Show"):
+            val = getattr(_QEvent6.Type, name, None)
+            if val is not None:
+                _patch(_QEvent6, {name: val})
+
+    # --- QWebEngineScript – injection point / world enums ---
+    from PyQt6.QtWebEngineCore import QWebEngineScript as _QWEScript6
+    if hasattr(_QWEScript6, "InjectionPoint"):
+        for name in ("DocumentCreation", "DocumentReady", "Deferred"):
+            val = getattr(_QWEScript6.InjectionPoint, name, None)
+            if val is not None:
+                _patch(_QWEScript6, {name: val})
+    if hasattr(_QWEScript6, "ScriptWorldId"):
+        for name in ("MainWorld", "ApplicationWorld", "UserWorld"):
+            val = getattr(_QWEScript6.ScriptWorldId, name, None)
+            if val is not None:
+                _patch(_QWEScript6, {name: val})
+
+    # --- QWebEnginePage – web actions (hard reload etc.) ---
+    if hasattr(QWebEnginePage, "WebAction"):
+        for name in ("ReloadAndBypassCache", "Reload", "Back", "Forward", "Stop"):
+            val = getattr(QWebEnginePage.WebAction, name, None)
+            if val is not None:
+                _patch(QWebEnginePage, {name: val})
+
+    # --- QSystemTrayIcon – activation reason / message icon ---
+    from PyQt6.QtWidgets import QSystemTrayIcon as _Tray6
+    if hasattr(_Tray6, "ActivationReason"):
+        for name in ("Trigger", "DoubleClick", "MiddleClick", "Context", "Unknown"):
+            val = getattr(_Tray6.ActivationReason, name, None)
+            if val is not None:
+                _patch(_Tray6, {name: val})
+    if hasattr(_Tray6, "MessageIcon"):
+        for name in ("Information", "Warning", "Critical", "NoIcon"):
+            val = getattr(_Tray6.MessageIcon, name, None)
+            if val is not None:
+                _patch(_Tray6, {name: val})

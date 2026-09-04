@@ -457,6 +457,10 @@ class AppShell(QMainWindow):
                 self.settings_page,
             ):
                 widget.setStyleSheet(qss)
+            # Popups are separate top-levels: keep the tray menu on-theme.
+            tray = getattr(self, "tray", None)
+            if tray is not None and tray.contextMenu() is not None:
+                tray.contextMenu().setStyleSheet(qss)
         self.home_page.refresh()
         self.history_page.refresh()
         self.library_page.refresh(self.library_page.ed_search.text().strip())

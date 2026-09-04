@@ -2164,6 +2164,8 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         (Chromium reads proxy flags only at process start)."""
         try:
             os.environ["MEI_SMART_RESTART"] = "1"
+            if reason:
+                os.environ["MEI_RESTART_REASON"] = reason
             state = prefs.session_state_load(self.base_dir)
             current = self.current_browser()
             tabs = []
@@ -2177,13 +2179,21 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
             pass
         try:
             if getattr(sys, "frozen", False):
-                exe = sys.executable
-                args = [exe]
+                args = [sys.executable]
             else:
                 args = [sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "browser.py")]
+            # Release the cross-process profile claim BEFORE spawning: the new
+            # instance can start while this one is still tearing down, and the
+            # lifetime lock would otherwise reject it as "profile in use".
+            from litebrowser.core import profile_lock
+
+            profile_lock.release_process_lock(self.base_dir)
+            # Inherit the environment so MEI_SMART_RESTART / MEI_RESTART_REASON
+            # reach the new instance (Popen copies os.environ by default).
             subprocess.Popen(args, close_fds=True)
         except Exception:
             os.environ.pop("MEI_SMART_RESTART", None)
+            os.environ.pop("MEI_RESTART_REASON", None)
             QMessageBox.warning(self, "Restart", "Could not relaunch Mei automatically. Please start it again manually.")
             return
         QApplication.instance().quit()

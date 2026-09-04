@@ -53,9 +53,15 @@ class TestDuplicatesRemoved(unittest.TestCase):
         self.assertFalse(hasattr(help_hub, "show_modern_guide"))
 
     def test_extension_import_appears_once_in_browser_menus(self):
-        from litebrowser.ui.main_window import window
-        src = inspect.getsource(window.SearchWindow)
-        count = src.count('addAction("Extension Import Center")')
+        from litebrowser.ui.main_window import window, window_menus
+
+        # The entry may live on SearchWindow or its menu mixins — count the
+        # whole MRO's sources so duplicates across files are still caught.
+        sources = [
+            inspect.getsource(window.SearchWindow),
+            inspect.getsource(window_menus.MenusMixin),
+        ]
+        count = sum(s.count('addAction("Extension Import Center")') for s in sources)
         self.assertEqual(count, 1, f"duplicate menu entries remain: {count}")
 
 

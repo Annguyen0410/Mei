@@ -20,6 +20,7 @@ from PyQt5.QtGui import (
     QColor,
     QFont,
     QIcon,
+    QKeySequence,
     QPainter,
     QPainterPath,
     QPen,
@@ -61,6 +62,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QShortcut,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -1734,6 +1736,18 @@ class PersonalWindow(QMainWindow):
         self.btn_card_good.clicked.connect(lambda: self._grade_review("good"))
         self.btn_card_easy.clicked.connect(lambda: self._grade_review("easy"))
         self.btn_card_add.clicked.connect(self._add_review_card)
+        # Keyboard-first review: Space flips, 1-4 grade (Anki muscle memory).
+        grade_shortcuts = (
+            (Qt.Key_Space, self._flip_review_card),
+            (Qt.Key_1, lambda: self._grade_review("again")),
+            (Qt.Key_2, lambda: self._grade_review("hard")),
+            (Qt.Key_3, lambda: self._grade_review("good")),
+            (Qt.Key_4, lambda: self._grade_review("easy")),
+        )
+        for key_code, handler in grade_shortcuts:
+            shortcut = QShortcut(QKeySequence(int(key_code)), self.review_card)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(handler)
         return w
 
     def _refresh_review(self):

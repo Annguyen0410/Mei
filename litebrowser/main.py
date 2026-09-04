@@ -2,6 +2,7 @@
 import os
 import shutil
 import sys
+import time
 from urllib.parse import unquote
 
 
@@ -165,6 +166,7 @@ def _register_bundled_personal_sites(profile_dir, app_dir):
 
 def main(app_dir=None):
     """Run the app. Pass ``app_dir`` when started from repo-root ``browser.py`` shim; else repo root is inferred."""
+    _t0 = time.time()
     if app_dir is None:
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -258,6 +260,9 @@ def main(app_dir=None):
     ]
     for window in windows:
         window.show()
+    # Cold-start metric (pre-1.0 quality tracking): startup duration to the
+    # console so regressions surface immediately during development.
+    print(f"Mei {app_version.APP_VERSION} ready in {time.time() - _t0:.2f}s", flush=True)
     if smart_restart:
         # Session restored from the previous instance; surface why we bounced.
         note = restart_reason or "Mei restarted to apply new settings"

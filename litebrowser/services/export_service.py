@@ -108,13 +108,13 @@ def export_notes_html(base_dir: str, out_path: str) -> int:
         with open(os.path.join(root, "notes", slug), "w", encoding="utf-8") as fh:
             fh.write(body)
         pages.append((note["title"], note.get("category", "General"), "notes/" + slug))
-    index_items = "\n".join(
-        f'<li><a href="{html.escape(rel)}">{html.escape(title)}</a> <small>{html.escape(cat)}</small></li>'
-        for title, cat, rel in pages
+    # Build the whole index body first so the list lands INSIDE the document
+    # (appending after _render_html_page put it past </html>).
+    index_body = f"# Mei Notes\n\n{len(pages)} notes\n\n## All notes\n\n" + "\n".join(
+        f"- [{title}]({rel}) · {cat}" for title, cat, rel in pages
     )
     with open(os.path.join(root, "index.html"), "w", encoding="utf-8") as fh:
-        fh.write(_render_html_page("Mei Notes", f"# Mei Notes\n\n{len(pages)} notes\n\n- see index list below\n", tokens))
-        fh.write(f"<h2>All notes ({len(pages)})</h2><ul>\n{index_items}\n</ul>")
+        fh.write(_render_html_page("Mei Notes", index_body, tokens))
     # zip it
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for dirpath, _dirs, files in os.walk(root):

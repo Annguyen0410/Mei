@@ -876,6 +876,11 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
                     self.add_new_tab(QUrl(home_url or "https://google.com"), "Home")
 
         self._check_bootstrap_import_payload()
+        # Every visible string is selectable/copyable: labels highlight with
+        # the mouse, buttons get a right-click "Copy text" menu.
+        from litebrowser.ui.textselect import enable_text_selection
+
+        enable_text_selection(self)
 
     def _escape_in_browser(self):
         if getattr(self, "_zen_mode", False):

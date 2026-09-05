@@ -123,7 +123,7 @@ def data_root(app_dir: str | None = None) -> str:
 
 
 def _migrate_legacy_data_folder(base: str, new_root: str) -> None:
-    """One-time rename of the pre-rename data folder (%LOCALAPPDATA%\LiteBrowser).
+    r"""One-time rename of the pre-rename data folder (%LOCALAPPDATA%\LiteBrowser).
 
     Older builds stored everything under "LiteBrowser"; after the rebrand to
     Mei the app would otherwise start with an empty profile. If the new Mei

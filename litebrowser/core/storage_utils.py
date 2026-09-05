@@ -1,6 +1,7 @@
 import json
 import os
 import secrets
+import time
 from typing import Any
 
 _JSON_ENCODER = json.JSONEncoder(ensure_ascii=False, indent=2, sort_keys=False)
@@ -17,7 +18,20 @@ def read_json(path: str, default: Any):
 
 
 def _atomic_replace(tmp_path: str, final_path: str) -> None:
-    os.replace(tmp_path, final_path)
+    """Replace a file atomically, tolerating short-lived Windows file locks.
+
+    Antivirus scanners and Explorer previews can briefly hold a profile file
+    open just as an atomic write is committed.  Retrying the final rename keeps
+    the existing file intact while avoiding an unnecessary failed save.
+    """
+    for attempt in range(5):
+        try:
+            os.replace(tmp_path, final_path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.01 * (attempt + 1))
 
 
 def write_text_atomic(path: str, text: str) -> None:

@@ -10,6 +10,7 @@ from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PyQt5.QtWidgets import QWidget
 
+from litebrowser.core import prefs
 from litebrowser.services import focus_service
 from litebrowser.ui import theme
 
@@ -43,11 +44,30 @@ class FocusHeatmap(QWidget):
         self._minutes = {}  # day-key -> minutes
         self._streak = 0
         self._longest = 0
+        self._base_dir = ""
+        self._tokens = None
         self.setToolTip("Focus minutes per day — keep the chain alive")
         self.setMinimumHeight(self._content_height(_CELL_MIN))
 
+    def _resolve_palette(self, base_dir: str) -> dict:
+        """Theme tokens for the profile hosting this widget.
+
+        The dashboard re-polishes with the profile's *effective* theme (auto
+        day/night included) and accent, so painting must follow the same
+        resolution - not theme.palette(), which only reads the stored default
+        profile theme and painted a light panel inside a dark dashboard.
+        """
+        try:
+            mode = prefs.resolved_auto_theme(base_dir) if base_dir else prefs.get_shell_theme(base_dir)
+            accent = prefs.get_accent(base_dir)
+            return theme.palette_tokens(mode, accent)
+        except Exception:
+            return theme.palette()
+
     def refresh(self, base_dir: str):
-        sessions = focus_service.focus_journal(base_dir, limit=200)
+        self._base_dir = base_dir or ""
+        self._tokens = self._resolve_palette(self._base_dir)
+        sessions = focus_service.focus_journal(self._base_dir, limit=200)
         self._minutes = focus_service.compute_daily_minutes(sessions)
         self._streak, self._longest = focus_service.compute_streaks(self._minutes)
         self.update()
@@ -76,7 +96,7 @@ class FocusHeatmap(QWidget):
         import datetime as _dt
 
         painter = QPainter(self)
-        p = theme.palette()
+        p = self._tokens if isinstance(self._tokens, dict) else theme.palette()
         painter.fillRect(self.rect(), QColor(p["CARD_BG"]))
 
         cell = self._cell_size(self.width())

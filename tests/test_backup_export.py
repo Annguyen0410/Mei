@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 import zipfile
+from unittest import mock
 
 from litebrowser.core import prefs
 from litebrowser.services import history_service, personal_service
@@ -80,6 +81,40 @@ class TestBackupExport(unittest.TestCase):
         self.assertTrue(os.path.isfile(marker))
         with open(marker, "r", encoding="utf-8") as f:
             self.assertEqual(f.read(), "webengine-test")
+
+    def test_browser_data_restore_rolls_back_if_final_swap_is_blocked(self):
+        """A blocked directory rename must leave the pre-import profile intact."""
+        from litebrowser.core import app_paths
+
+        source_data = app_paths.browser_data_path(self.base)
+        with open(os.path.join(source_data, "new.txt"), "w", encoding="utf-8") as f:
+            f.write("new")
+        zpath = os.path.join(self._tmp.name, "browser-data.zip")
+        self.assertTrue(history_service.export_profile_to_zip(self.base, zpath, include_browser_data=True))
+
+        dest = prefs.ensure_profile_layout(os.path.join(self._tmp.name, "profile-swap-rollback"))
+        dest_data = app_paths.browser_data_path(dest)
+        old_marker = os.path.join(dest_data, "old.txt")
+        with open(old_marker, "w", encoding="utf-8") as f:
+            f.write("old")
+
+        real_replace = history_service.os.replace
+
+        def block_staging_swap(src, target):
+            if (
+                os.path.abspath(target) == os.path.abspath(dest_data)
+                and os.path.basename(os.path.abspath(src)).startswith(".BrowserData.import-")
+            ):
+                raise PermissionError("simulated transient lock")
+            return real_replace(src, target)
+
+        with zipfile.ZipFile(zpath, "r") as zf, mock.patch.object(
+            history_service.os, "replace", side_effect=block_staging_swap
+        ):
+            self.assertFalse(history_service._import_browser_data_from_zip(dest, zf))
+
+        self.assertTrue(os.path.isfile(old_marker))
+        self.assertFalse(os.path.exists(os.path.join(dest_data, "new.txt")))
 
     def test_import_rejects_path_traversal_note_ids(self):
         """A crafted backup must not write outside the notes dir (v6.5 fix)."""

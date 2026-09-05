@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 from litebrowser.core import prefs, storage_utils
 
@@ -99,6 +100,26 @@ class TestConcurrentWriteSafety(unittest.TestCase):
             self.assertIn("writer", payload)
             self.assertIn("value", payload)
             self.assertIsInstance(payload["value"], list)
+
+    def test_atomic_replace_retries_a_transient_windows_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "state.json")
+            real_replace = storage_utils.os.replace
+            calls = 0
+
+            def briefly_locked(src, dest):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise PermissionError("simulated antivirus lock")
+                return real_replace(src, dest)
+
+            with mock.patch.object(storage_utils.os, "replace", side_effect=briefly_locked):
+                storage_utils.write_json(target, {"saved": True})
+
+            self.assertEqual(calls, 2)
+            with open(target, "r", encoding="utf-8") as fh:
+                self.assertEqual(json.load(fh), {"saved": True})
 
 
 if __name__ == "__main__":

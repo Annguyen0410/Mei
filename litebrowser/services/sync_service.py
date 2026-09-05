@@ -43,50 +43,79 @@ def _bundle(base_dir: str) -> dict:
     }
 
 
+def _dict_rows(value) -> list[dict]:
+    """Return independently-owned mapping rows from an external snapshot.
+
+    Sync responses are remote input.  A malformed array must be ignored rather
+    than making a pull crash halfway through applying the rest of the bundle.
+    """
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _text(value, default: str = "") -> str:
+    """Accept text-only fields from a remote snapshot without coercion."""
+    return value.strip() if isinstance(value, str) else default
+
+
 def _upsert(existing, incoming, key="id"):
-    seen = {item.get(key) for item in incoming if item.get(key)}
-    merged = [item for item in existing if item.get(key) not in seen]
-    merged.extend(incoming)
+    existing_rows = _dict_rows(existing)
+    incoming_rows = _dict_rows(incoming)
+    seen = {item.get(key) for item in incoming_rows if item.get(key)}
+    merged = [item for item in existing_rows if item.get(key) not in seen]
+    merged.extend(incoming_rows)
     return merged
 
 
 def _apply_bundle(base_dir: str, bundle: dict) -> dict:
     """Merge a remote snapshot into the local profile (last-writer-wins per item)."""
     applied = {"tasks": 0, "events": 0, "boards": 0, "pages": 0, "notes": 0, "bookmarks": 0, "history": 0}
+    if not isinstance(bundle, dict):
+        return applied
 
-    tasks = _upsert(life_service.load_tasks(base_dir), bundle.get("tasks") or [])
+    incoming_tasks = _dict_rows(bundle.get("tasks"))
+    tasks = _upsert(life_service.load_tasks(base_dir), incoming_tasks)
     life_service.save_tasks(base_dir, tasks)
-    applied["tasks"] = len(bundle.get("tasks") or [])
+    applied["tasks"] = len(incoming_tasks)
 
-    events = _upsert(life_service.load_events(base_dir), bundle.get("events") or [])
+    incoming_events = _dict_rows(bundle.get("events"))
+    events = _upsert(life_service.load_events(base_dir), incoming_events)
     life_service.save_events(base_dir, events)
-    applied["events"] = len(bundle.get("events") or [])
+    applied["events"] = len(incoming_events)
 
-    boards = _upsert(life_service.load_boards(base_dir), bundle.get("boards") or [])
+    incoming_boards = _dict_rows(bundle.get("boards"))
+    boards = _upsert(life_service.load_boards(base_dir), incoming_boards)
     life_service.save_boards(base_dir, boards)
-    applied["boards"] = len(bundle.get("boards") or [])
+    applied["boards"] = len(incoming_boards)
 
-    pages = _upsert(life_service.load_saved_pages(base_dir), bundle.get("saved_pages") or [])
+    incoming_pages = _dict_rows(bundle.get("saved_pages"))
+    pages = _upsert(life_service.load_saved_pages(base_dir), incoming_pages)
     life_service.save_saved_pages(base_dir, pages)
-    applied["pages"] = len(bundle.get("saved_pages") or [])
+    applied["pages"] = len(incoming_pages)
 
-    for note in bundle.get("notes") or []:
-        title = (note.get("title") or "").strip()
-        category = (note.get("category") or "General").strip() or "General"
-        content = note.get("content") or ""
+    local_notes = personal_service.list_notes(base_dir)
+    local_notes_by_key = {
+        (_text(note.get("title")), _text(note.get("category"), "General") or "General"): note
+        for note in local_notes
+        if isinstance(note, dict)
+    }
+    for note in _dict_rows(bundle.get("notes")):
+        title = _text(note.get("title"))
+        category = _text(note.get("category"), "General") or "General"
+        content = note.get("content") if isinstance(note.get("content"), str) else ""
         if not title:
             continue
-        existing = [
-            n for n in personal_service.list_notes(base_dir)
-            if n.get("title", "").strip() == title and (n.get("category") or "General").strip() == category
-        ]
+        existing = local_notes_by_key.get((title, category))
         if existing:
-            personal_service.update_note(base_dir, existing[0]["id"], content, category)
+            personal_service.update_note(base_dir, existing["id"], content, category)
         else:
-            personal_service.create_note(base_dir, title, content, category)
+            created = personal_service.create_note(base_dir, title, content, category)
+            if created:
+                local_notes_by_key[(title, category)] = created
         applied["notes"] += 1
 
-    remote_bookmarks = bundle.get("bookmarks") or []
+    remote_bookmarks = _dict_rows(bundle.get("bookmarks"))
     if remote_bookmarks:
         # Merge by URL instead of wholesale replace: v6.4 overwrote local
         # bookmarks with the remote set, so pulling from a device with sparse
@@ -94,21 +123,34 @@ def _apply_bundle(base_dir: str, bundle: dict) -> dict:
         local_bookmarks = prefs.load_bookmarks(base_dir) or []
         local_by_url = {}
         for bm in local_bookmarks:
-            if isinstance(bm, dict) and bm.get("url"):
-                local_by_url[bm["url"]] = bm
+            if isinstance(bm, dict):
+                url = _text(bm.get("url"))
+                if url:
+                    local_by_url[url] = bm
         merged = list(local_bookmarks)
         for bm in remote_bookmarks:
-            if not isinstance(bm, dict) or not bm.get("url"):
+            url = _text(bm.get("url"))
+            if not url:
                 continue
-            if bm["url"] in local_by_url:
+            if url in local_by_url:
                 continue
             merged.append(bm)
-            local_by_url[bm["url"]] = bm
+            local_by_url[url] = bm
         if merged != local_bookmarks:
             prefs.save_bookmarks(base_dir, merged)
         applied["bookmarks"] = len(remote_bookmarks)
 
-    remote_history = [tuple(item) for item in (bundle.get("history") or [])]
+    remote_history = []
+    history_items = bundle.get("history")
+    if not isinstance(history_items, list):
+        history_items = []
+    for item in history_items:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        try:
+            remote_history.append((int(item[0] or 0), str(item[1] or "")))
+        except (TypeError, ValueError):
+            continue
     if remote_history:
         existing = prefs.load_history_entries(base_dir)
         merged = existing + [item for item in remote_history if item not in existing]

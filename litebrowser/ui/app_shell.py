@@ -4,7 +4,7 @@ import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt5.QtCore import QUrl, QRect, Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QEvent, QPoint, QUrl, QRect, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeySequence
 from PyQt5.QtWidgets import (
     QApplication,
@@ -132,7 +132,31 @@ class AppShell(QMainWindow):
         self._omnibar_completer.setCaseSensitivity(Qt.CaseInsensitive)
         self._omnibar_completer.setFilterMode(Qt.MatchStartsWith)
         self.omnibar.setCompleter(self._omnibar_completer)
-        self.omnibar.addAction(self.style().standardIcon(self.style().SP_FileDialogContentsView), QLineEdit.LeadingPosition)
+        # Leading search action: custom-drawn magnifier that follows the
+        # active theme accent; clicking it opens the feature finder.
+        from litebrowser.ui.icons import search_icon
+
+        self._omnibar_search_action = self.omnibar.addAction(search_icon("#9ca3af"), QLineEdit.LeadingPosition)
+        self._omnibar_search_action.setToolTip("Search app features — start typing in the search box")
+        self._omnibar_search_action.triggered.connect(self._open_omnibar_feature_finder)
+        # Inline feature finder: typing any letters in the omnibar drops a
+        # live list of matching workspaces / personal pages / sites / commands
+        # right under the box; Enter or a click jumps to the feature.
+        from litebrowser.ui.dialogs.shell_palette import _build_entries as _build_feature_entries
+
+        self._feature_entries = _build_feature_entries(self)
+        # A plain child overlay (NOT Qt.Popup — that grabs the keyboard and
+        # steals typing focus from the omnibar). Outside clicks are closed via
+        # the app-level event filter below.
+        self._feature_popup = QListWidget(self)
+        self._feature_popup.setObjectName("FeaturePopupList")
+        self._feature_popup.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._feature_popup.setUniformItemSizes(True)
+        self._feature_popup.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._feature_popup.itemClicked.connect(lambda _item: self._execute_feature_from_popup())
+        self._feature_popup.setFocusPolicy(Qt.NoFocus)
+        self.omnibar.installEventFilter(self)
+        QApplication.instance().installEventFilter(self)
         top_layout.addWidget(self.omnibar, 1)
 
         # Keyboard-first shell: Ctrl+K jumps to the omnibar, Ctrl+1..7 switch
@@ -187,10 +211,20 @@ class AppShell(QMainWindow):
         rail_layout = QVBoxLayout(rail)
         rail_layout.setContentsMargins(6, 10, 6, 10)
         rail_layout.setSpacing(4)
+        # Rail header row: wordmark on the left fills the corner that used to
+        # sit empty above the Profile box (with only the collapse toggle on the
+        # right), then the profile chip follows below it.
+        rail_header = QHBoxLayout()
+        rail_header.setSpacing(4)
+        self.rail_brand = QLabel("🍵  Mei")
+        self.rail_brand.setObjectName("RailBrand")
+        rail_header.addWidget(self.rail_brand)
+        rail_header.addStretch(1)
         self.btn_rail_toggle = QPushButton("«")
         self.btn_rail_toggle.setObjectName("NavToggle")
         self.btn_rail_toggle.setToolTip("Collapse / expand the navigation rail")
-        rail_layout.addWidget(self.btn_rail_toggle, 0, Qt.AlignRight)
+        rail_header.addWidget(self.btn_rail_toggle)
+        rail_layout.addLayout(rail_header)
         profile_name = os.path.basename(self.profile_dir)
         self.rail_meta = QLabel(f"Profile: {profile_name}")
         self.rail_meta.setObjectName("RailMeta")
@@ -346,8 +380,8 @@ class AppShell(QMainWindow):
             "settings": 6,
         }
 
-        self.omnibar.returnPressed.connect(self.handle_omnibar)
-        self.omnibar.textChanged.connect(self._update_omnibar_hint)
+        self.omnibar.returnPressed.connect(self._on_omnibar_return)
+        self.omnibar.textChanged.connect(self._on_omnibar_text_changed)
         self.btn_sync.clicked.connect(self._run_sync_now)
         self.btn_insights.clicked.connect(self.toggle_insights)
         self.btn_rail_toggle.clicked.connect(self._toggle_rail)
@@ -365,6 +399,169 @@ class AppShell(QMainWindow):
         # only the primary workspace ran this deferred pass, leaving the second
         # window looking like an unstyled collection of default Qt controls.
         QTimer.singleShot(50, self._deferred_init)
+        # Every visible string is selectable/copyable: labels highlight with
+        # the mouse, buttons get a right-click "Copy text" menu.
+        from litebrowser.ui.textselect import enable_text_selection
+
+        enable_text_selection(self)
+        self._refresh_search_icon()
+
+    def _dialog_stylesheet(self):
+        """Themed QSS for modal dialogs spawned from the shell (command
+        palette, prompts, etc.). Mirrors SearchWindow._dialog_stylesheet."""
+        return theme.dialog_qss(prefs.get_shell_theme(self.profile_dir), prefs.get_accent(self.profile_dir))
+
+    def _open_shell_palette(self):
+        """Modal feature-finder fallback (kept for reuse; the inline omnibar
+        popup is the primary entry point)."""
+        from litebrowser.ui.dialogs.shell_palette import show_shell_palette
+
+        show_shell_palette(self)
+
+    def _open_omnibar_feature_finder(self):
+        """Search-icon click: focus the omnibar and show the full feature list
+        so the user can type to filter or pick directly."""
+        self.omnibar.setFocus()
+        self.omnibar.selectAll()
+        self._show_feature_popup(self.omnibar.text().strip())
+
+    def _execute_shell_palette(self, entry: dict):
+        """Run a palette result through the normal shell dispatch, so
+        password-protected workspaces prompt for the passcode first (via
+        switch_workspace) and then enter automatically."""
+        kind = entry.get("kind")
+        payload = entry.get("payload")
+        try:
+            if kind == "workspace":
+                self.switch_workspace(payload)
+            elif kind == "personal_page":
+                if self.switch_workspace("personal"):
+                    self.personal_page._switch_page(payload)
+            elif kind == "site":
+                self.switch_workspace("browser")
+                self.browser_page.open_bundled_site(payload)
+            elif kind == "hub":
+                self.switch_workspace("browser")
+                self.browser_page.open_project_hub()
+            elif kind == "command":
+                cmd = payload or ""
+                if cmd.endswith(" ") or cmd.startswith("/agent "):
+                    self.omnibar.setText(cmd)
+                    self.omnibar.setFocus()
+                    self.omnibar.setCursorPosition(len(cmd))
+                else:
+                    self.omnibar.setText(cmd)
+                    self.handle_omnibar()
+        except Exception:
+            pass
+
+    def _refresh_search_icon(self):
+        """Re-paint the omnibar search glyph in the current theme accent."""
+        try:
+            from litebrowser.ui.icons import search_icon
+
+            accent = theme.palette_tokens(prefs.resolved_auto_theme(self.profile_dir), prefs.get_accent(self.profile_dir))["ACCENT"]
+            self._omnibar_search_action.setIcon(search_icon(accent))
+        except Exception:
+            pass
+
+    def _on_omnibar_text_changed(self, text: str):
+        """Typing in the omnibar drives the inline feature finder: every
+        letter (not just a few) filters workspaces, personal pages, sites and
+        commands. Slash-commands keep the existing QCompleter behaviour."""
+        self._update_omnibar_hint(text)
+        stripped = (text or "").strip()
+        if not stripped or stripped.startswith("/"):
+            self._hide_feature_popup()
+            return
+        self._show_feature_popup(stripped)
+
+    def _on_omnibar_return(self):
+        """Enter: if the feature popup is open and a row is selected, jump to
+        that feature; otherwise the normal omnibar dispatch (web search /
+        commands)."""
+        if self._feature_popup.isVisible() and self._feature_popup.currentRow() >= 0:
+            self._execute_feature_from_popup()
+            return
+        self.handle_omnibar()
+
+    def _show_feature_popup(self, query: str):
+        q = (query or "").strip().lower()
+        if not self._feature_entries:
+            self._hide_feature_popup()
+            return
+        from litebrowser.ui.dialogs.shell_palette import (
+            add_feature_row,
+            clear_feature_rows,
+            filter_feature_entries,
+        )
+
+        clear_feature_rows(self._feature_popup)
+        rows = filter_feature_entries(self._feature_entries, q)
+        if not rows:
+            self._hide_feature_popup()
+            return
+        base = getattr(self, "profile_dir", None) or ""
+        visible = rows[:40]
+        for entry in visible:
+            item = add_feature_row(self._feature_popup, entry, base)
+            item.setData(Qt.UserRole, entry)
+        self._feature_popup.setCurrentRow(0)
+        # Place it under the omnibar, same width, capped height (shell-local
+        # coords: this is a plain child widget, not a top-level popup).
+        top_left = self.omnibar.mapTo(self, QPoint(0, self.omnibar.height() + 3))
+        width = max(320, self.omnibar.width())
+        height = min(420, 44 + len(visible) * 34)
+        self._feature_popup.setGeometry(QRect(top_left.x(), top_left.y(), width, height))
+        if not self._feature_popup.isVisible():
+            self._feature_popup.show()
+        self._feature_popup.raise_()
+
+    def _hide_feature_popup(self):
+        if getattr(self, "_feature_popup", None) is not None and self._feature_popup.isVisible():
+            self._feature_popup.hide()
+
+    def _execute_feature_from_popup(self):
+        row = self._feature_popup.currentRow()
+        if row < 0 or row >= self._feature_popup.count():
+            self._hide_feature_popup()
+            return
+        item = self._feature_popup.item(row)
+        entry = item.data(Qt.UserRole) if item is not None else None
+        self._hide_feature_popup()
+        if not isinstance(entry, dict):
+            return
+        if entry.get("kind") != "command":
+            self.omnibar.clear()
+        self._execute_shell_palette(entry)
+
+    def eventFilter(self, obj, ev):
+        # Arrow keys / Esc steer the inline feature popup while it is open.
+        if obj is getattr(self, "omnibar", None) and getattr(self, "_feature_popup", None) is not None and self._feature_popup.isVisible():
+            if ev.type() == QEvent.Type.KeyPress:
+                key = ev.key()
+                if key == Qt.Key_Down:
+                    self._feature_popup.setCurrentRow(min(self._feature_popup.count() - 1, self._feature_popup.currentRow() + 1))
+                    return True
+                if key == Qt.Key_Up:
+                    self._feature_popup.setCurrentRow(max(0, self._feature_popup.currentRow() - 1))
+                    return True
+                if key == Qt.Key_Escape:
+                    self._hide_feature_popup()
+                    return True
+        # Outside click (anywhere but the popup or the omnibar) closes it,
+        # mimicking the Qt.Popup dismissal without stealing keyboard focus.
+        if (
+            obj is not self
+            and isinstance(obj, QWidget)
+            and getattr(self, "_feature_popup", None) is not None
+            and self._feature_popup.isVisible()
+            and ev.type() == QEvent.Type.MouseButtonPress
+        ):
+            if obj is self._feature_popup or obj is self.omnibar or self._feature_popup.isAncestorOf(obj):
+                return False
+            self._hide_feature_popup()
+        return super().eventFilter(obj, ev)
 
     def _announce_focus(self, status: dict):
         """Show the running focus timer state in the status strip."""
@@ -449,6 +646,7 @@ class AppShell(QMainWindow):
         qss_key = (theme_name, prefs.get_accent(self.profile_dir))
         if force_deep or qss_key != getattr(self, "_qss_key", None):
             self._qss_key = qss_key
+            self._refresh_search_icon()
             qss = theme.main_qss(theme_name, prefs.get_accent(self.profile_dir))
             self.setStyleSheet(qss)
             for widget in (
@@ -914,6 +1112,18 @@ class AppShell(QMainWindow):
 
         if hasattr(self, "btn_rail_toggle"):
             self.btn_rail_toggle.setText("»" if rail_collapsed else "«")
+        if hasattr(self, "rail_brand"):
+            # Wordmark adapts to the rail width: emoji-only when the rail is
+            # folded or extremely narrow, short name on small windows, full
+            # wordmark otherwise — never clipped, never squeezed.
+            self.rail_brand.setText(
+                "🍵"
+                if (rail_collapsed or xtiny)
+                else "Mei"
+                if tiny
+                else "🍵  Mei"
+            )
+            self.rail_brand.setToolTip("Mei" if rail_collapsed or xtiny else "")
         self.omnibar.setMinimumHeight(26 if xtiny else 30 if tiny else 34 if narrow else 36)
         self.btn_sync.setText("↻" if tiny else "↻  Snapshot")
         self.btn_insights.setText("✦" if tiny else "✦  Insights")
@@ -967,6 +1177,8 @@ class AppShell(QMainWindow):
         if name not in self.workspace_index:
             # Unknown workspace names must not raise inside a UI slot.
             return False
+        # Never leave the inline feature list floating over another screen.
+        self._hide_feature_popup()
         if name in ("ai", "personal") and name not in self._unlocked_spaces:
             if not security.ensure_unlocked(self, self.profile_dir, title=f"Open {name.title()}"):
                 return False

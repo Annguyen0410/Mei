@@ -228,6 +228,10 @@ class AIWindow(QMainWindow):
         self._load_settings()
         self._refresh_index_label()
         self._apply_compact_layout()
+        # Make every label selectable and every button copyable via right-click.
+        from litebrowser.ui.textselect import enable_text_selection
+
+        enable_text_selection(self)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

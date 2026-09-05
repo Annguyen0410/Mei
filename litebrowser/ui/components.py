@@ -160,12 +160,16 @@ def empty_state(text: str, hint: str = "") -> QFrame:
     lbl.setAlignment(Qt.AlignCenter)
     lbl.setObjectName("MutedLabel")
     layout.addWidget(lbl)
+    card._empty_title = lbl
 
     if hint:
         sub = QLabel(hint)
         sub.setAlignment(Qt.AlignCenter)
         sub.setObjectName("MutedLabel")
         layout.addWidget(sub)
+    else:
+        sub = None
+    card._empty_hint = sub
     return card
 
 

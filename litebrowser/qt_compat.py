@@ -124,6 +124,16 @@ if PYQT6:
         "CustomContextMenu": Qt.ContextMenuPolicy.CustomContextMenu,
         # ScrollBarPolicy
         "ScrollBarAlwaysOff": Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+        # FocusPolicy
+        "NoFocus": Qt.FocusPolicy.NoFocus,
+        "StrongFocus": Qt.FocusPolicy.StrongFocus,
+        "ClickFocus": Qt.FocusPolicy.ClickFocus,
+        # WindowType / WindowState
+        "Popup": Qt.WindowType.Popup,
+        "FramelessWindowHint": Qt.WindowType.FramelessWindowHint,
+        "WindowDoesNotAcceptFocus": Qt.WindowType.WindowDoesNotAcceptFocus,
+        "WindowMinimized": Qt.WindowState.WindowMinimized,
+        "WindowMaximized": Qt.WindowState.WindowMaximized,
         # AspectRatioMode
         "KeepAspectRatio": Qt.AspectRatioMode.KeepAspectRatio,
         # TransformationMode

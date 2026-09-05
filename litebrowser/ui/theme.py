@@ -816,10 +816,37 @@ QPushButton#TopAccentButton:hover { background-color: %(ACCENT_HOVER)s; }
 #SearchEngine::down-arrow, #WorkspaceCombo::down-arrow { width: 10px; height: 10px; }
 
 /* ---------- lists ---------- */
+/* Inline omnibar feature finder: a card-popup list under the search box. */
+#FeaturePopupList {
+    background-color: %(CARD_BG)s;
+    border: 1px solid %(INPUT_BORDER)s;
+    border-radius: 10px;
+    padding: 4px;
+    outline: none;
+}
+#FeaturePopupList::item {
+    background-color: transparent;
+    border-radius: 7px;
+    color: %(TEXT)s;
+}
+#FeaturePopupList::item:hover { background-color: %(ITEM_HOVER)s; }
+#FeaturePopupList::item:selected {
+    background-color: %(ITEM_SELECTED)s;
+    border: 1px solid %(ITEM_SELECTED_BORDER)s;
+}
+
 #CafeList, #TabList { background-color: transparent; border: none; outline: none; }
-#CafeList::item, #TabList::item {
+#CafeList::item {
     background-color: transparent; border-radius: %(RADIUS_SM)s;
     padding: 5px 8px; margin: 2px 2px; border-left: 3px solid transparent; color: %(TEXT_MUTED)s;
+}
+/* #TabList rows are custom item widgets (favicon + title + close); QSS
+   padding/margins here shrink the widget rect and slice the title in half
+   (rows rendered ~12px tall for a 32px item). The row widget carries its
+   own internal margins, so the ::item rule must stay padding-free. */
+#TabList::item {
+    background-color: transparent; border-radius: %(RADIUS_SM)s;
+    border-left: 3px solid transparent; color: %(TEXT_MUTED)s;
 }
 #CafeList::item:hover, #TabList::item:hover { background-color: %(ITEM_HOVER)s; color: %(TEXT)s; }
 #CafeList::item:selected, #TabList::item:selected {
@@ -1027,6 +1054,50 @@ QLabel {
     background-color: %(ACCENT_SOFT)s;
     border-color: %(INPUT_BORDER)s;
 }
+#RailBrand {
+    color: %(TEXT)s;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.2px;
+    padding: 2px 2px 2px 6px;
+}
+#NavToggle {
+    color: %(TEXT_MUTED)s;
+    background: transparent;
+    border: 1px solid %(BORDER_SOFT)s;
+    border-radius: 8px;
+    min-width: 25px;
+    max-width: 26px;
+    min-height: 25px;
+    max-height: 26px;
+    padding: 0;
+    font-size: 11px;
+    font-weight: 700;
+}
+#NavToggle:hover {
+    color: %(TEXT)s;
+    background-color: %(ITEM_HOVER)s;
+    border-color: %(ACCENT)s;
+}
+#ChipButton {
+    color: %(TEXT_MUTED)s;
+    background: transparent;
+    border: 1px solid %(BORDER_SOFT)s;
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 700;
+}
+#ChipButton:hover {
+    color: %(TEXT)s;
+    background-color: %(ITEM_HOVER)s;
+    border-color: %(BORDER_SOFT)s;
+}
+#ChipButton:checked {
+    color: %(ACCENT_HOVER)s;
+    background-color: %(ACCENT_SOFT)s;
+    border-color: %(ACCENT)s;
+}
 
 #StatusStrip {
     min-height: 28px;
@@ -1203,13 +1274,21 @@ QPushButton#TopAccentButton:hover { background-color: %(ACCENT_HOVER)s; border-c
     outline: none;
     padding: 2px;
 }
-#CafeList::item, #TabList::item, QTreeWidget::item {
+#CafeList::item, QTreeWidget::item {
     color: %(TEXT_MUTED)s;
     background-color: transparent;
     border: 1px solid transparent;
     border-radius: 9px;
     margin: 2px;
     padding: 7px 8px;
+}
+/* TabList rows use custom widgets: keep the ::item padding-free so the
+   title is not sliced in half (see the sidebar tab desk). */
+#TabList::item {
+    color: %(TEXT_MUTED)s;
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 9px;
 }
 #CafeList::item:hover, #TabList::item:hover, QTreeWidget::item:hover {
     color: %(TEXT)s;

@@ -502,6 +502,31 @@ def remove_personal_site(base_dir, url):
     return True
 
 
+def get_show_bundled_sites(base_dir) -> bool:
+    """Whether Personal → Sites should also list the bundled/remote project
+    sites. Fresh profiles (only auto-seeded links, nothing the user added)
+    default to off so first entry shows an empty "Add site" state instead of
+    a forced shelf; profiles the user already curates keep them visible."""
+    data = load_prefs(base_dir)
+    if "show_bundled_sites" in data:
+        return bool(data["show_bundled_sites"])
+    from litebrowser.core import app_paths as _paths
+
+    bundled_urls = {
+        (site.get("url") or "").strip()
+        for site in _paths.bundled_sites() + _paths.chain_remote_sites()
+        if site.get("url")
+    }
+    user_sites = [s for s in get_personal_sites(base_dir) if (s.get("url") or "").strip() not in bundled_urls]
+    return bool(user_sites)
+
+
+def set_show_bundled_sites(base_dir, value):
+    data = load_prefs(base_dir)
+    data["show_bundled_sites"] = bool(value)
+    save_prefs(base_dir, data)
+
+
 def load_permissions(base_dir):
     data = read_json(permissions_path(base_dir), {})
     return data if isinstance(data, dict) else {}

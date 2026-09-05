@@ -7,6 +7,7 @@ import time
 
 from PyQt5.QtCore import (
     QDate,
+    QEvent,
     QFileSystemWatcher,
     QPointF,
     Qt,
@@ -60,6 +61,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QShortcut,
@@ -611,11 +613,31 @@ class PersonalWindow(QMainWindow):
         self.btn_set_root = QPushButton("Set personal root")
         nav_layout.addWidget(self.btn_save_set)
         nav_layout.addWidget(self.btn_set_root)
-        layout.addWidget(nav, 0)
+        # The nav rail lives in a splitter so it is both resizable by dragging
+        # the divider and collapsible (click the divider, or the « button).
+        self.nav_splitter = QSplitter(Qt.Horizontal)
+        self.nav_splitter.setChildrenCollapsible(False)
+        self.nav_splitter.setHandleWidth(8)
+        layout.addWidget(self.nav_splitter)
+        self.nav_splitter.addWidget(nav)
         self.btn_nav_toggle.toggled.connect(self._toggle_nav_collapse)
 
         self.stack = QStackedWidget()
-        layout.addWidget(self.stack, 1)
+        # Ignore the pages' (large) horizontal minimum hints — the boards/notes
+        # pages hint ~1340px, which otherwise locks the divider: the nav could
+        # never widen because the stack refused to shrink. Content pages stay
+        # fully usable; they scroll/compact like they already do when the
+        # window is narrow.
+        self.stack.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.nav_splitter.addWidget(self.stack)
+        self.nav_splitter.setStretchFactor(0, 0)
+        self.nav_splitter.setStretchFactor(1, 1)
+        self.nav_splitter.setCollapsible(0, False)
+        self.nav_splitter.setCollapsible(1, False)
+        self._nav_split_press = None
+        _nav_handle = self.nav_splitter.handle(1)
+        if _nav_handle is not None:
+            _nav_handle.installEventFilter(self)
         self.page_order = {}
         for key, widget in (
             ("overview", self._build_overview_page()),
@@ -637,6 +659,11 @@ class PersonalWindow(QMainWindow):
         self.refresh_all()
         self._apply_compact_layout()
         self._setup_notes_fs_watcher()
+        # Every visible string is selectable/copyable: labels highlight with
+        # the mouse, buttons get a right-click "Copy text" menu.
+        from litebrowser.ui.textselect import enable_text_selection
+
+        enable_text_selection(self)
 
     def _setup_notes_fs_watcher(self):
         self._notes_fs_watcher = QFileSystemWatcher(self)
@@ -708,6 +735,9 @@ class PersonalWindow(QMainWindow):
             if nav:
                 nav.setMinimumWidth(46)
                 nav.setMaximumWidth(46)
+            sw = max(0, width)
+            if sw > 0:
+                self.nav_splitter.setSizes([46, max(300, sw - 46)])
             for button in getattr(self, "nav_buttons", {}).values():
                 button.setVisible(False)
             self.btn_save_set.setVisible(False)
@@ -720,11 +750,19 @@ class PersonalWindow(QMainWindow):
         narrow = width < 980
         tiny = width < 820
         xtiny = width < 600
-        nav_width = 64 if xtiny else 98 if tiny else 112 if narrow else 126 if compact else 150
+        default_w = 64 if xtiny else 98 if tiny else 112 if narrow else 126 if compact else 150
         nav = self.findChild(QWidget, "LeftRail")
         if nav:
-            nav.setMinimumWidth(nav_width)
-            nav.setMaximumWidth(nav_width)
+            # Never lock min == max: the divider must stay draggable (dragging
+            # is how users resize the bar; a fixed-width lock made it look
+            # stuck in earlier builds). Only re-anchor when out of range.
+            nav.setMinimumWidth(56)
+            nav.setMaximumWidth(320)
+            current = nav.width()
+            sw = max(0, width)
+            if current < 56 or current > 320:
+                if sw > 0:
+                    self.nav_splitter.setSizes([default_w, max(300, sw - default_w)])
         self.btn_save_set.setVisible(not tiny)
         self.btn_set_root.setVisible(not tiny)
         if hasattr(self, "nav_buttons"):
@@ -748,6 +786,39 @@ class PersonalWindow(QMainWindow):
         self._nav_collapsed = bool(checked)
         self.btn_nav_toggle.setText("≫" if checked else "≪")
         self._apply_compact_layout()
+        if not checked:
+            # Coming out of the 46px rail: explicitly re-open to a usable
+            # width (the expanded branch only re-anchors out-of-range widths,
+            # and 46 is exactly the rail minimum so it would stay stuck).
+            width = max(0, self.width())
+            default_w = 98 if width < 820 else 112 if width < 980 else 126 if width < 1220 else 150
+            sw = max(0, width)
+            if sw > 0:
+                self.nav_splitter.setSizes([default_w, max(300, sw - default_w)])
+
+    def eventFilter(self, obj, ev):
+        # Divider between the nav rail and the content: drag to resize, bare
+        # click (or double-click) to collapse/expand — same feel as the
+        # browser sidebar divider.
+        handle = self.nav_splitter.handle(1) if hasattr(self, "nav_splitter") else None
+        if handle is not None and obj is handle:
+            et = ev.type()
+            if et == QEvent.Type.MouseButtonPress and ev.button() == Qt.LeftButton:
+                self._nav_split_press = (ev.pos(), list(self.nav_splitter.sizes()), False)
+            elif et == QEvent.Type.MouseButtonDblClick and ev.button() == Qt.LeftButton:
+                self._nav_split_press = (ev.pos(), list(self.nav_splitter.sizes()), True)
+            elif et in (QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick):
+                press = getattr(self, "_nav_split_press", None)
+                self._nav_split_press = None
+                if press is not None and ev.button() == Qt.LeftButton:
+                    press_pos, press_sizes, was_dbl = press
+                    moved = (ev.pos() - press_pos).manhattanLength()
+                    if moved < 4 and not was_dbl:
+                        # Bare click: keep the pre-click widths, then toggle.
+                        self.nav_splitter.setSizes(press_sizes)
+                        self.btn_nav_toggle.setChecked(not self._nav_collapsed)
+            return False
+        return super().eventFilter(obj, ev)
 
     def _switch_page(self, key: str):
         previous = self.stack.currentIndex()
@@ -1627,6 +1698,42 @@ class PersonalWindow(QMainWindow):
         header_row.addWidget(self.lbl_review_stats)
         l.addLayout(header_row)
 
+        # Deck toolbar: practice scope (Due vs All cards) on the left; on the
+        # right the position counter with prev/next paging plus delete, so a
+        # long queue can be browsed in both directions at any time.
+        tool_row = QHBoxLayout()
+        tool_row.setSpacing(6)
+        self.btn_mode_due = QPushButton("Due")
+        self.btn_mode_all = QPushButton("All cards")
+        for _btn in (self.btn_mode_due, self.btn_mode_all):
+            _btn.setObjectName("ChipButton")
+            _btn.setCheckable(True)
+        mode_group = QButtonGroup(self)
+        mode_group.setExclusive(True)
+        mode_group.addButton(self.btn_mode_due)
+        mode_group.addButton(self.btn_mode_all)
+        self.btn_mode_due.setChecked(True)
+        tool_row.addWidget(self.btn_mode_due)
+        tool_row.addWidget(self.btn_mode_all)
+        tool_row.addStretch(1)
+        self.lbl_review_counter = QLabel("0 / 0")
+        self.lbl_review_counter.setObjectName("MutedLabel")
+        self.lbl_review_counter.setToolTip("Position in the current practice deck")
+        tool_row.addWidget(self.lbl_review_counter)
+        self.btn_review_prev = QPushButton("‹")
+        self.btn_review_prev.setObjectName("NavToggle")
+        self.btn_review_prev.setToolTip("Previous card (←)")
+        self.btn_review_next = QPushButton("›")
+        self.btn_review_next.setObjectName("NavToggle")
+        self.btn_review_next.setToolTip("Next card (→)")
+        self.btn_card_delete = QPushButton("🗑")
+        self.btn_card_delete.setObjectName("NavToggle")
+        self.btn_card_delete.setToolTip("Delete the current card")
+        tool_row.addWidget(self.btn_review_prev)
+        tool_row.addWidget(self.btn_review_next)
+        tool_row.addWidget(self.btn_card_delete)
+        l.addLayout(tool_row)
+
         # Card surface: front/back flip in one themed card.
         self.review_card = QFrame()
         self.review_card.setObjectName("HeroCard")
@@ -1697,8 +1804,14 @@ class PersonalWindow(QMainWindow):
         add_row.addWidget(self.btn_card_add)
         l.addLayout(add_row)
 
-        self._review_queue: list[dict] = []
-        self._review_current = None
+        self._deck: list[dict] = []
+        self._deck_pos = 0
+        self._deck_mode = "due"
+        self.btn_mode_due.clicked.connect(lambda: self._set_review_mode("due"))
+        self.btn_mode_all.clicked.connect(lambda: self._set_review_mode("all"))
+        self.btn_review_prev.clicked.connect(lambda: self._nav_review(-1))
+        self.btn_review_next.clicked.connect(lambda: self._nav_review(1))
+        self.btn_card_delete.clicked.connect(self._delete_current_card)
         self.btn_card_again.clicked.connect(lambda: self._grade_review("again"))
         self.btn_card_hard.clicked.connect(lambda: self._grade_review("hard"))
         self.btn_card_good.clicked.connect(lambda: self._grade_review("good"))
@@ -1711,6 +1824,8 @@ class PersonalWindow(QMainWindow):
             (Qt.Key_2, lambda: self._grade_review("hard")),
             (Qt.Key_3, lambda: self._grade_review("good")),
             (Qt.Key_4, lambda: self._grade_review("easy")),
+            (Qt.Key_Left, lambda: self._nav_review(-1)),
+            (Qt.Key_Right, lambda: self._nav_review(1)),
         )
         for key_code, handler in grade_shortcuts:
             shortcut = QShortcut(QKeySequence(int(key_code)), self.review_card)
@@ -1719,35 +1834,101 @@ class PersonalWindow(QMainWindow):
         return w
 
     def _refresh_review(self):
+        """Called when entering Review / after data changes."""
+        self._update_review_stats()
+        if not getattr(self, "_deck", None):
+            # A fresh visit starts from the due queue — even when the last
+            # visit ended in an All-cards session that just drained.
+            self._deck_mode = "due"
+            if hasattr(self, "btn_mode_due"):
+                self.btn_mode_due.setChecked(True)
+                self.btn_mode_all.setChecked(False)
+            self._reload_deck()
+        else:
+            # An in-progress session survives a page refresh: graded cards
+            # have already left the deck, so just re-render the current one.
+            self._show_current_card()
+
+    def _set_review_mode(self, mode: str):
+        self._deck_mode = mode
+        self.btn_mode_due.setChecked(mode == "due")
+        self.btn_mode_all.setChecked(mode == "all")
+        self._reload_deck()
+
+    def _reload_deck(self):
+        from litebrowser.services import flashcard_service
+
+        if getattr(self, "_deck_mode", "due") == "all":
+            self._deck = flashcard_service.load_cards(self.base_dir)
+        else:
+            self._deck = flashcard_service.due_cards(self.base_dir)
+        self._deck_pos = 0
+        self._show_current_card()
+
+    def _update_review_stats(self):
         from litebrowser.services import flashcard_service
 
         stats = flashcard_service.stats(self.base_dir)
         self.lbl_review_stats.setText(f"{stats['total']} cards · {stats['due']} due · {stats['matured']} matured")
-        self._review_queue = flashcard_service.due_cards(self.base_dir)
-        self._review_current = None
-        self._show_next_review_card()
 
-    def _show_next_review_card(self):
-        if not self._review_queue:
-            self.review_surface.setCurrentIndex(self.review_surface_empty_index)
-            self.review_card.hide()
-            self.review_empty.show()
-            for b in (self.btn_card_again, self.btn_card_hard, self.btn_card_good, self.btn_card_easy):
-                b.setEnabled(False)
+    def _show_current_card(self):
+        deck = getattr(self, "_deck", None)
+        if not deck:
+            self._show_review_empty()
             return
+        pos = min(max(0, getattr(self, "_deck_pos", 0)), len(deck) - 1)
+        self._deck_pos = pos
         self.review_surface.setCurrentIndex(self.review_surface_card_index)
         self.review_empty.hide()
         self.review_card.show()
-        self._review_current = self._review_queue[0]
-        self.lbl_card_front.setText(self._review_current.get("front", ""))
-        self.lbl_card_back.setText(self._review_current.get("back", ""))
+        card = deck[pos]
+        self.lbl_card_front.setText(card.get("front", ""))
+        self.lbl_card_back.setText(card.get("back", ""))
         self.lbl_card_back.hide()
         self.lbl_card_hint.setText("Click to reveal")
         for b in (self.btn_card_again, self.btn_card_hard, self.btn_card_good, self.btn_card_easy):
             b.setEnabled(False)
+        self.lbl_review_counter.setText(f"{pos + 1} / {len(deck)}")
+        self.btn_review_prev.setEnabled(pos > 0)
+        self.btn_review_next.setEnabled(pos < len(deck) - 1)
+        self.btn_card_delete.setEnabled(True)
+
+    def _show_review_empty(self):
+        from litebrowser.services import flashcard_service
+
+        self.review_surface.setCurrentIndex(self.review_surface_empty_index)
+        self.review_card.hide()
+        self.review_empty.show()
+        total = flashcard_service.stats(self.base_dir)["total"]
+        if total == 0:
+            title, hint = "No cards yet", "Add a card below, or select text in a note and choose “Make flashcard”."
+        elif getattr(self, "_deck_mode", "due") == "all":
+            title, hint = "Deck complete", "Every card practiced — graded cards are scheduled for their next review."
+        else:
+            title, hint = "All due cards reviewed", "Nothing left due right now — switch to “All cards” to practice the whole deck."
+        if getattr(self.review_empty, "_empty_title", None) is not None:
+            self.review_empty._empty_title.setText(title)
+        if getattr(self.review_empty, "_empty_hint", None) is not None:
+            self.review_empty._empty_hint.setText(hint)
+        for b in (self.btn_card_again, self.btn_card_hard, self.btn_card_good, self.btn_card_easy):
+            b.setEnabled(False)
+        self.btn_review_prev.setEnabled(False)
+        self.btn_review_next.setEnabled(False)
+        self.btn_card_delete.setEnabled(False)
+        self.lbl_review_counter.setText("0 / 0")
+
+    def _nav_review(self, delta: int):
+        """Move through the deck without grading (peek ahead / go back)."""
+        if not getattr(self, "_deck", None):
+            return
+        pos = self._deck_pos + delta
+        if not (0 <= pos < len(self._deck)):
+            return
+        self._deck_pos = pos
+        self._show_current_card()
 
     def _flip_review_card(self):
-        if self._review_current is None:
+        if not getattr(self, "_deck", None):
             return
         if self.lbl_card_back.isHidden():
             self.lbl_card_back.show()
@@ -1763,17 +1944,42 @@ class PersonalWindow(QMainWindow):
     def _grade_review(self, grade: str):
         from litebrowser.services import flashcard_service
 
-        current = self._review_current
-        if current is None:
+        deck = getattr(self, "_deck", None)
+        if not deck:
             return
-        flashcard_service.review_card(self.base_dir, current["id"], grade)
-        # Pop by id: fast double-presses could desync a positional pop(0) from
-        # the card actually on screen (keyboard shortcuts make this real).
-        self._review_queue = [c for c in self._review_queue if c.get("id") != current["id"]]
-        self._review_current = None
-        self._show_next_review_card()
-        stats = flashcard_service.stats(self.base_dir)
-        self.lbl_review_stats.setText(f"{stats['total']} cards · {stats['due']} due · {stats['matured']} matured")
+        pos = min(max(0, self._deck_pos), len(deck) - 1)
+        card = deck[pos]
+        flashcard_service.review_card(self.base_dir, card["id"], grade)
+        # The graded card leaves this session's deck (a due review drains,
+        # All-cards walks the whole library once).  Keeping the index shows
+        # the next card; a last-card grade clamps back onto the previous one.
+        self._deck = [c for c in deck if c.get("id") != card["id"]]
+        self._deck_pos = min(pos, max(0, len(self._deck) - 1))
+        self._update_review_stats()
+        self._show_current_card()
+
+    def _delete_current_card(self):
+        deck = getattr(self, "_deck", None)
+        if not deck:
+            return
+        pos = min(max(0, self._deck_pos), len(deck) - 1)
+        card = deck[pos]
+        answer = QMessageBox.question(
+            self,
+            "Delete card",
+            f"Delete this card?\n\n{card.get('front', '')}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        from litebrowser.services import flashcard_service
+
+        flashcard_service.delete_card(self.base_dir, card["id"])
+        self._deck = [c for c in self._deck if c.get("id") != card["id"]]
+        self._deck_pos = min(pos, max(0, len(self._deck) - 1))
+        self._update_review_stats()
+        self._show_current_card()
 
     def _add_review_card(self):
         from litebrowser.services import flashcard_service
@@ -1786,7 +1992,7 @@ class PersonalWindow(QMainWindow):
         flashcard_service.add_card(self.base_dir, front, back)
         self.ed_card_front.clear()
         self.ed_card_back.clear()
-        self._refresh_review()
+        self._reload_deck()
 
     def make_flashcard_from_note(self, front: str, back: str, note_id: str = ""):
         """Entry point for the notes page ('Make flashcard' on selection)."""
@@ -2377,6 +2583,13 @@ class PersonalWindow(QMainWindow):
         self.btn_remove_site = QPushButton("Delete site")
         self.btn_open_site = QPushButton("Open in Browser")
         self.btn_site_ai = QPushButton("Ask AI")
+        self.btn_bundled_sites = QPushButton("Include bundled sites")
+        self.btn_bundled_sites.setCheckable(True)
+        self.btn_bundled_sites.setChecked(prefs.get_show_bundled_sites(self.base_dir))
+        self.btn_bundled_sites.setToolTip(
+            "Show the bundled project sites (Cục Quản Lý, Bí Mật, …) alongside your own. "
+            "Off = only sites you added yourself."
+        )
         self.chk_site_preview = QCheckBox("Live preview")
         self.chk_site_preview.setToolTip("Render the selected site here (off = instant, no background load)")
         self.chk_site_preview.setChecked(False)
@@ -2384,6 +2597,7 @@ class PersonalWindow(QMainWindow):
         row.addWidget(self.btn_remove_site)
         row.addWidget(self.btn_open_site)
         row.addWidget(self.btn_site_ai)
+        row.addWidget(self.btn_bundled_sites)
         row.addWidget(self.chk_site_preview)
         row.addStretch(1)
         l.addWidget(top_bar)
@@ -2460,6 +2674,7 @@ class PersonalWindow(QMainWindow):
         self.btn_remove_site.clicked.connect(self._remove_site)
         self.btn_open_site.clicked.connect(self._open_selected_site_in_browser)
         self.btn_site_ai.clicked.connect(self._ask_ai_about_site)
+        self.btn_bundled_sites.toggled.connect(self._on_bundled_sites_toggled)
         self.chk_site_preview.toggled.connect(self._on_site_preview_toggled)
         self.btn_full_preview.toggled.connect(self._on_full_preview_toggled)
         if not self.embedded:
@@ -2473,8 +2688,20 @@ class PersonalWindow(QMainWindow):
             self.site_preview_stack.addWidget(self.site_view)
         return self.site_view
 
+    def _bundled_site_urls(self) -> set:
+        """URLs the app seeds itself (bundled local + deployed chain)."""
+        urls = set()
+        for site in app_paths.bundled_sites(self.app_dir) + app_paths.chain_remote_sites(self.app_dir):
+            url = (site.get("url") or "").strip()
+            if url:
+                urls.add(url)
+        return urls
+
     def _refresh_sites(self):
         sites = prefs.get_personal_sites(self.base_dir)
+        if not prefs.get_show_bundled_sites(self.base_dir):
+            bundled = self._bundled_site_urls()
+            sites = [s for s in sites if (s.get("url") or "").strip() not in bundled]
         current_url = ""
         if self.sites_list.currentItem():
             current_url = self.sites_list.currentItem().data(Qt.UserRole) or ""
@@ -2487,7 +2714,13 @@ class PersonalWindow(QMainWindow):
         self.sites_list.blockSignals(False)
         self.lbl_sites_summary.setText(f"{len(sites)} personal sites · select one to preview or double-click to open in Browser.")
         if not sites:
-            self._set_site_placeholder("No personal sites yet", "Add a site to keep your private study, work, or life spaces separate from normal browser bookmarks.")
+            if prefs.get_show_bundled_sites(self.base_dir):
+                self._set_site_placeholder("No personal sites yet", "Add a site to keep your private study, work, or life spaces separate from normal browser bookmarks.")
+            else:
+                self._set_site_placeholder(
+                    "No personal sites yet",
+                    "Your own sites are hidden because bundled sites are off. Add a site below, or turn on \"Include bundled sites\" to browse the project apps.",
+                )
             return
         for index in range(self.sites_list.count()):
             item = self.sites_list.item(index)
@@ -2495,6 +2728,12 @@ class PersonalWindow(QMainWindow):
                 self.sites_list.setCurrentItem(item)
                 return
         self.sites_list.setCurrentRow(0)
+
+    def _on_bundled_sites_toggled(self, checked: bool):
+        """Persist the bundled-sites choice and re-render the list (no data
+        is removed — bundled entries stay in prefs, they are just hidden)."""
+        prefs.set_show_bundled_sites(self.base_dir, bool(checked))
+        self._refresh_sites()
 
     def _add_site(self):
         url, ok = QInputDialog.getText(self, "Add site", "URL:")

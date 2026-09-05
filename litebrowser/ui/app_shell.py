@@ -1,3 +1,14 @@
+"""AppShell: the master window that hosts every Mei workspace.
+
+The shell is the outer frame of the app — a left navigation rail, a top bar
+with the omnibar (search box + slash commands + the inline feature finder),
+an insights panel, and a QStackedWidget of workspaces (Home, Browser,
+History, AI, Personal, Library, Settings).
+
+Everything a user types in the omnibar routes through :meth:`handle_omnibar`;
+the inline feature finder (:meth:`_show_feature_popup`) turns plain letters
+into live feature results without opening a separate dialog.
+"""
 import os
 import sys
 import time
@@ -133,7 +144,9 @@ class AppShell(QMainWindow):
         self._omnibar_completer.setFilterMode(Qt.MatchStartsWith)
         self.omnibar.setCompleter(self._omnibar_completer)
         # Leading search action: custom-drawn magnifier that follows the
-        # active theme accent; clicking it opens the feature finder.
+        # active theme accent. Clicking it focuses the box and opens the
+        # feature list; typing alone also opens the list (see
+        # _on_omnibar_text_changed), so the icon is a shortcut, not a gate.
         from litebrowser.ui.icons import search_icon
 
         self._omnibar_search_action = self.omnibar.addAction(search_icon("#9ca3af"), QLineEdit.LeadingPosition)
@@ -522,10 +535,15 @@ class AppShell(QMainWindow):
             self._feature_popup.hide()
 
     def _execute_feature_from_popup(self):
+        """Run the highlighted feature row: clear the box (unless it was a
+        slash command that still needs an argument) and dispatch through the
+        normal shell path, which handles passcode-gated workspaces."""
         row = self._feature_popup.currentRow()
         if row < 0 or row >= self._feature_popup.count():
             self._hide_feature_popup()
             return
+        # The entry dict is attached to the item when the row is built, so
+        # execution does not depend on re-parsing the visible text.
         item = self._feature_popup.item(row)
         entry = item.data(Qt.UserRole) if item is not None else None
         self._hide_feature_popup()

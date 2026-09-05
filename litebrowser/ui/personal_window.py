@@ -1,3 +1,14 @@
+"""PersonalWindow: the Personal Hub workspace.
+
+Eight pages (Overview, Notes, Tasks, Review, Calendar, Boards, Files, Sites)
+sit in a QStackedWidget behind a navigation rail. The rail lives in a
+QSplitter so it can be dragged wider/narrower AND collapsed with one click on
+the divider (the same feel as the browser sidebar divider).
+
+The Review page is a browsable flashcard deck (SM-2 scheduling); the Sites
+page can show user-added sites only, or also the bundled project apps
+(``Include bundled sites`` toggle, persisted in prefs).
+"""
 import hashlib
 import math
 import os
@@ -615,6 +626,9 @@ class PersonalWindow(QMainWindow):
         nav_layout.addWidget(self.btn_set_root)
         # The nav rail lives in a splitter so it is both resizable by dragging
         # the divider and collapsible (click the divider, or the « button).
+        # The stack ignores horizontal size hints on purpose: the Boards/Notes
+        # pages hint ~1340px wide, which otherwise locks the divider shut (the
+        # stack would refuse to shrink and the rail could never widen).
         self.nav_splitter = QSplitter(Qt.Horizontal)
         self.nav_splitter.setChildrenCollapsible(False)
         self.nav_splitter.setHandleWidth(8)
@@ -2730,8 +2744,12 @@ class PersonalWindow(QMainWindow):
         self.sites_list.setCurrentRow(0)
 
     def _on_bundled_sites_toggled(self, checked: bool):
-        """Persist the bundled-sites choice and re-render the list (no data
-        is removed — bundled entries stay in prefs, they are just hidden)."""
+        """Persist the bundled-sites choice and re-render the list.
+
+        Bundled entries are project shortcuts the app seeds itself (e.g. the
+        linked web apps); the toggle only filters what is *displayed* — the
+        entries stay in prefs untouched, so nothing the user added is ever
+        removed."""
         prefs.set_show_bundled_sites(self.base_dir, bool(checked))
         self._refresh_sites()
 

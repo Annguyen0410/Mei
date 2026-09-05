@@ -47,6 +47,15 @@ _PERSONAL_PAGES = (
 
 
 def _build_entries(parent) -> list[dict]:
+    """The single feature registry behind the palette AND the omnibar popup.
+
+    Each entry is a dict the shell dispatches on:
+      kind      -> workspace | personal_page | site | hub | command
+      payload   -> workspace key, page key, site key, or slash command text
+      title/…   -> what the user sees and searches
+    Because both UIs read from here, the omnibar and the palette can never
+    drift out of sync.
+    """
     entries: list[dict] = []
     for key, label, glyph in _WORKSPACES:
         entries.append(

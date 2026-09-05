@@ -4,6 +4,9 @@ import secrets
 import time
 from typing import Any
 
+from litebrowser.core.log import get_logger
+
+_log = get_logger("storage_utils")
 _JSON_ENCODER = json.JSONEncoder(ensure_ascii=False, indent=2, sort_keys=False)
 
 
@@ -12,8 +15,8 @@ def read_json(path: str, default: Any):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            _log.warning("read_json failed for %s: %s", path, exc)
     return default
 
 

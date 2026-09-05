@@ -4,6 +4,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from litebrowser.core.log import get_logger
+
 # On-disk data folder name. The app is branded "Mei" but older builds stored
 # data under "LiteBrowser"; data_root() migrates the old folder over once so no
 # profiles, sites, notes or settings are orphaned after the rename.
@@ -376,8 +378,8 @@ def ensure_frozen_web_support_mirrored(app_dir: str | None = None) -> None:
         return
     try:
         shutil.copytree(src, dest, dirs_exist_ok=True)
-    except Exception:
-        pass
+    except OSError as exc:
+        get_logger("app_paths").warning("could not copy bundled web_support: %s", exc)
 
 
 def cuc_quan_ly_support_dir_path(app_dir: str | None = None) -> str:

@@ -23,7 +23,7 @@ from PyQt5.QtCore import QCoreApplication, Qt
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import QApplication, QWidget
 
-from litebrowser.core import app_paths, app_version, prefs
+from litebrowser.core import app_paths, app_version, log, prefs
 from litebrowser.services import android_bridge_service, workspace_manager
 from litebrowser.ui.app_shell import AppShell
 from litebrowser.ui.dialogs import show_profiles_dialog
@@ -209,6 +209,7 @@ def main(app_dir=None):
     app.setFont(font)
 
     app_paths.data_root(app_dir)
+    log.configure(app_dir)
     app_paths.ensure_frozen_web_support_mirrored(app_dir)
     app_paths.ensure_linklumina_user_layout(app_dir)
     app.setWindowIcon(QIcon(os.path.join(app_dir, "icon.png")))

@@ -7,8 +7,11 @@ import time
 
 from litebrowser.core import app_paths
 from litebrowser.core import theme_data as _theme_mod
+from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import read_json, write_json, write_text_atomic
+
+_log = get_logger("prefs")
 
 
 def _prefs_path(base_dir):
@@ -820,8 +823,8 @@ def load_history_entries(base_dir):
                     else:
                         ts, url = 0, line
                     entries.append((ts, url))
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            _log.warning("could not read history for %s: %s", base_dir, exc)
     return entries
 
 
@@ -929,8 +932,8 @@ def get_last_profile(app_dir):
                 name = f.read().strip()
             if name and os.path.isdir(os.path.join(profiles_dir(app_dir), name)):
                 return name
-        except Exception:
-            pass
+        except OSError as exc:
+            _log.warning("could not read last-profile marker: %s", exc)
     return None
 
 

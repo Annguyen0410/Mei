@@ -70,8 +70,8 @@ def _rgba(hex_color, alpha):
 
 def _resolve_theme_tokens(mode, accent):
     """Resolve theme + accent into the color tokens used by the speed dial."""
-    from litebrowser.ui import theme
-    p = theme.palette_tokens(mode or theme.DEFAULT_THEME, accent)
+    from litebrowser.core import theme_data
+    p = theme_data.palette_tokens(mode or theme_data.DEFAULT_THEME, accent)
     return {
         "@MAIN_BG@": p["MAIN_BG"],
         "@MAIN_BG_ALT@": p["MAIN_BG_ALT"],

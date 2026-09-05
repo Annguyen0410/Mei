@@ -93,9 +93,9 @@ footer {{ color:{p['TEXT_MUTED']}; font-size:12px; margin-top:34px; }}
 def export_notes_html(base_dir: str, out_path: str) -> int:
     """Static mini-site: index.html + note pages under notes/. Returns count."""
     mode = prefs.get_shell_theme(base_dir)
-    from litebrowser.ui import theme
+    from litebrowser.core import theme_data
 
-    tokens = theme._palette(mode, prefs.get_accent(base_dir))
+    tokens = theme_data._palette(mode, prefs.get_accent(base_dir))
     notes = personal_service.list_notes(base_dir)
     if not notes:
         return 0

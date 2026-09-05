@@ -180,8 +180,8 @@ class TabListItemWidget(QWidget):
                 accent = prefs.get_accent(base_dir)
             except Exception:
                 pass
-        from litebrowser.ui import theme
-        return theme._palette(mode, accent)
+        from litebrowser.core import theme_data
+        return theme_data._palette(mode, accent)
 
     def set_icon(self, icon_value):
         if isinstance(icon_value, QIcon) and not icon_value.isNull():
@@ -275,9 +275,9 @@ class TabManager:
             self.tab_list.verticalScrollBar().valueChanged.connect(self.hide_tab_memory_tooltip)
         except Exception:
             pass
-        from litebrowser.ui import theme
-        mode = prefs.get_shell_theme(self.base_dir) if self.base_dir else theme.DEFAULT_THEME
-        self._pal = theme._palette(mode)
+        from litebrowser.core import theme_data
+        mode = prefs.get_shell_theme(self.base_dir) if self.base_dir else theme_data.DEFAULT_THEME
+        self._pal = theme_data._palette(mode)
 
     def get_hibernate_seconds(self):
         return prefs.get_hibernate_seconds(self.base_dir)

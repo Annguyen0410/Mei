@@ -1,4 +1,4 @@
-# Mei — Architecture & Upgrade Guide
+# MeiBrowser — Architecture & Upgrade Guide
 
 This document describes the current code structure and the **extension points** so future
 features can be added without touching code all over the place. Read it alongside `README.md`.

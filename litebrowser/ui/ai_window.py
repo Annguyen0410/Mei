@@ -66,7 +66,7 @@ class AIWindow(QMainWindow):
             self._ollama_models_ready.emit(models)
 
         self._executor.submit(_detect_models)
-        self.setWindowTitle("AI Workspace - Mei")
+        self.setWindowTitle("AI Workspace - MeiBrowser")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
         self.resize(1180, 780)
         self.setMinimumSize(760 if embedded else 880, 520 if embedded else 620)

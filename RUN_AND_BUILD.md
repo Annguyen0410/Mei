@@ -1,6 +1,4 @@
-# Run & Build Mei (Desktop App)
-
-This guide is specifically about **running** and **packaging** Mei (formerly Mei)
+# Run & Build MeiBrowser (Desktop App)This guide is specifically about **running** and **packaging** MeiBrowser
 as a desktop app (.exe on Windows). For code / architecture content, see `README.md` and `ARCHITECTURE.md`.
 
 ---

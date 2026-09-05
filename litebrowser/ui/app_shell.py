@@ -85,7 +85,7 @@ class AppShell(QMainWindow):
         self.sync_finished.connect(self._show_sync_result)
         self.monitor_checked.connect(self._on_monitor_checked)
         title_suffix = "Workspace 1" if self.window_slot == "primary" else "Workspace 2"
-        self.setWindowTitle(f"Mei Tea Room Edition - {title_suffix}")
+        self.setWindowTitle(f"MeiBrowser - {title_suffix}")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
         self.resize(1560, 940)
         self.setMinimumSize(760, 560)

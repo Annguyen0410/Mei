@@ -540,11 +540,11 @@ def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="%s">
-<title>Mei Home</title>
+<title>MeiBrowser Home</title>
 <style>%s</style>
 </head>
 <body>
-  <div class="awning"><span class="cup-logo">🍵</span> Mei · Tea Room Edition</div>
+  <div class="awning"><span class="cup-logo">🍵</span> MeiBrowser · Tea Room Edition</div>
   <div class="shell">
     <div class="hero">
       <div class="cup">
@@ -577,7 +577,7 @@ def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None
       <span class="hint">Ctrl+K command</span>
       <span class="hint">/agent · /brief · /group-tabs</span>
     </div>
-    <div class="footer-note">✦ Mei Tea Room Edition — privacy-first, local-first ✦</div>
+    <div class="footer-note">✦ MeiBrowser — privacy-first, local-first ✦</div>
   </div>
 </body>
 </html>""" % (

@@ -616,7 +616,7 @@ class TabManager:
         item.setData(TAB_META_ROLE, metadata)
         widget.setText(metadata["title"])
         if browser == self.current_browser() and title:
-            self.window.setWindowTitle(f"{title} - Mei")
+            self.window.setWindowTitle(f"{title} - MeiBrowser")
 
     def on_icon_changed(self, icon, browser):
         item = self._item_for_browser(browser)

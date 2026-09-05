@@ -1,4 +1,4 @@
-# Mei — Command & Shortcut Reference
+# MeiBrowser — Command & Shortcut Reference
 
 Everything you can type in the **omnibar** (slash commands) and the most useful
 **keyboard shortcuts**. Commands marked *arg* take an argument — typing the bare
@@ -126,5 +126,5 @@ command prefills the box so you can finish the argument.
 
 ---
 
-*Mei is its own application; the `/mas`, `/linklumina`, … commands open linked
-web apps that Mei does not contain.*
+*MeiBrowser is its own application; the `/mas`, `/linklumina`, … commands open
+linked web apps that MeiBrowser does not contain.*

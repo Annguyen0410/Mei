@@ -56,7 +56,7 @@ HOTKEYS = (
 
 def show_hotkeys_hub(parent):
     dialog = QDialog(parent)
-    dialog.setWindowTitle("Hotkeys — Mei")
+    dialog.setWindowTitle("Hotkeys — MeiBrowser")
     dialog.resize(560, 520)
     dialog.setStyleSheet(_stylesheet(parent))
     layout = QVBoxLayout(dialog)

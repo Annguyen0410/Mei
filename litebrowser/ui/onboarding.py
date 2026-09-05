@@ -50,7 +50,7 @@ def show_onboarding(shell) -> None:
     if prefs.get_pref(shell.profile_dir, "onboarding_done", False):
         return
     dlg = QDialog(shell)
-    dlg.setWindowTitle("Welcome to Mei — setup")
+    dlg.setWindowTitle("Welcome to MeiBrowser — setup")
     dlg.resize(620, 480)
     dlg.setStyleSheet(_stylesheet(shell))
     layout = QVBoxLayout(dlg)

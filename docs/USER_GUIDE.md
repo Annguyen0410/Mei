@@ -1,4 +1,4 @@
-# Mei — User Guide
+# MeiBrowser — User Guide
 
 A day-to-day walkthrough of the app. For the full command and shortcut list see
 [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md); for running/building see
@@ -89,5 +89,5 @@ The left rail inside Personal has its own collapse/expand (click the «/≫ butt
 
 ---
 
-*Mei is its own application; shortcut tiles in Personal → Sites may link out to
-separate web apps that Mei neither contains nor depends on.*
+*MeiBrowser is its own application; shortcut tiles in Personal → Sites may link out
+to separate web apps that MeiBrowser neither contains nor depends on.*

@@ -577,7 +577,7 @@ class PersonalWindow(QMainWindow):
         self._drag_note_ids = []
         self._current_note_image_path = ""
         self._note_find_matches = []
-        self.setWindowTitle("Personal Hub - Mei")
+        self.setWindowTitle("Personal Hub - MeiBrowser")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
         self.resize(1160, 760)
         self.setMinimumSize(760 if embedded else 900, 520 if embedded else 620)

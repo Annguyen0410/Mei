@@ -11,11 +11,10 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import litebrowser  # noqa: F401  (PyQt5->PyQt6 shim, same as shipped app)
-
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
+import litebrowser
 from litebrowser.core import prefs
 
 # QtWebEngine needs a non-empty program name in argv, otherwise Chromium's
@@ -104,7 +103,10 @@ class TestFeatureFilterEveryLetter(unittest.TestCase):
     """Typing any letter must surface features (fallback shows the registry)."""
 
     def test_every_letter_matches_something(self):
-        from litebrowser.ui.dialogs.shell_palette import _build_entries, filter_feature_entries
+        from litebrowser.ui.dialogs.shell_palette import (
+            _build_entries,
+            filter_feature_entries,
+        )
 
         entries = _build_entries(_DummyParent(app_dir=os.getcwd()))
         for letter in "abcdefghijklmnopqrstuvwxyz":
@@ -112,7 +114,10 @@ class TestFeatureFilterEveryLetter(unittest.TestCase):
                 self.assertGreaterEqual(len(filter_feature_entries(entries, letter)), 1)
 
     def test_multi_letter_narrowing(self):
-        from litebrowser.ui.dialogs.shell_palette import _build_entries, filter_feature_entries
+        from litebrowser.ui.dialogs.shell_palette import (
+            _build_entries,
+            filter_feature_entries,
+        )
 
         entries = _build_entries(_DummyParent(app_dir=os.getcwd()))
         wide = len(filter_feature_entries(entries, "b"))

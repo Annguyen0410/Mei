@@ -89,7 +89,7 @@ def show_onboarding(shell) -> None:
 
     combo_theme.currentIndexChanged.connect(lambda _i: _update_preview())
     combo_accent.currentIndexChanged.connect(lambda _i: _update_preview())
-    combo_theme.setCurrentIndex(max(0, list(sorted(theme.PALETTES.keys())).index(theme.DEFAULT_THEME)))
+    combo_theme.setCurrentIndex(max(0, sorted(theme.PALETTES.keys()).index(theme.DEFAULT_THEME)))
     _update_preview()
     tp_layout.addWidget(QLabel("Theme:"))
     tp_layout.addWidget(combo_theme)

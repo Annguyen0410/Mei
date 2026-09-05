@@ -21,10 +21,10 @@ from PyQt5.QtCore import (
     QEvent,
     QFileSystemWatcher,
     QPointF,
+    QStringListModel,
     Qt,
     QTimer,
     QUrl,
-    QStringListModel,
     pyqtSignal,
 )
 from PyQt5.QtGui import (
@@ -72,10 +72,10 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QShortcut,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
-    QShortcut,
     QTextEdit,
     QVBoxLayout,
     QWidget,

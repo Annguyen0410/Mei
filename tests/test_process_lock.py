@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 
-from litebrowser.core import profile_lock, prefs
+from litebrowser.core import prefs, profile_lock
 
 
 class TestProcessLock(unittest.TestCase):

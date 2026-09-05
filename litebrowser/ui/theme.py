@@ -5,12 +5,12 @@ from PyQt5.QtWidgets import QGraphicsOpacityEffect
 # layer can validate theme/accent names without importing Qt. Re-exported
 # here so every existing ``theme.<name>`` reference keeps working unchanged.
 from litebrowser.core.theme_data import (  # noqa: F401
+    _ACCENT_KEYS,
     ACCENTS,
-    DEFAULTS,
     DEFAULT_THEME,
+    DEFAULTS,
     PALETTES,
     THEME_LABELS,
-    _ACCENT_KEYS,
     _accent_override,
     _blend_hex,
     _is_light_color,
@@ -20,7 +20,6 @@ from litebrowser.core.theme_data import (  # noqa: F401
     palette_tokens,
     theme_display_name,
 )
-
 
 
 def palette(mode: str | None = None, accent: str | None = None) -> dict:

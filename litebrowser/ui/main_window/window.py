@@ -19,7 +19,15 @@ from PyQt5.QtCore import (
     QUrl,
     QVariantAnimation,
 )
-from PyQt5.QtGui import QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPainter, QPen
+from PyQt5.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPen,
+)
 from PyQt5.QtNetwork import QNetworkProxy
 from PyQt5.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt5.QtWebEngineWidgets import (
@@ -1930,9 +1938,7 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         live = 0
         sleeping = 0
         for browser in self.browsers:
-            if browser is None:
-                sleeping += 1
-            elif browser.property("hibernated"):
+            if browser is None or browser.property("hibernated"):
                 sleeping += 1
             else:
                 live += 1
@@ -2206,7 +2212,8 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
 
     def eventFilter(self, obj, ev):
         # Middle-click on the URL bar: paste & go (browser standard).
-        from PyQt5.QtCore import QEvent, Qt as _Qt
+        from PyQt5.QtCore import QEvent
+        from PyQt5.QtCore import Qt as _Qt
 
         # Workspace divider: resize by drag only. A bare click (or nested
         # layout settling that looks like a click) must never leave the tab

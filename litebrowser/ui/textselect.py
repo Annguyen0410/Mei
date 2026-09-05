@@ -12,7 +12,14 @@ Call :func:`enable_text_selection` once per top-level window after its UI
 is fully constructed.
 """
 from PyQt5.QtCore import QEvent, QObject, Qt
-from PyQt5.QtWidgets import QApplication, QCheckBox, QLabel, QMenu, QPushButton, QToolButton
+from PyQt5.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QToolButton,
+)
 
 __all__ = ["enable_text_selection"]
 
@@ -29,11 +36,7 @@ class _ButtonCopyFilter(QObject):
     def eventFilter(self, obj, ev):
         if ev.type() == QEvent.Type.ContextMenu:
             text = ""
-            if isinstance(obj, QPushButton):
-                text = obj.text()
-            elif isinstance(obj, QToolButton):
-                text = obj.text()
-            elif isinstance(obj, QCheckBox):
+            if isinstance(obj, QPushButton) or isinstance(obj, QToolButton) or isinstance(obj, QCheckBox):
                 text = obj.text()
             text = (text or "").strip()
             if text:

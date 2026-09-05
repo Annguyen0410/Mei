@@ -4,7 +4,16 @@ import socket
 import time
 
 from PyQt5.QtCore import QSize, Qt, QTimer, QUrl
-from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QImage, QPainter, QPen, QPixmap
+from PyQt5.QtGui import (
+    QColor,
+    QDesktopServices,
+    QGuiApplication,
+    QIcon,
+    QImage,
+    QPainter,
+    QPen,
+    QPixmap,
+)
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -104,8 +113,9 @@ class _DomainWeekChart(QWidget):
         self.setMinimumHeight(200)
 
     def refresh(self):
-        from litebrowser.core import prefs as _prefs
         from urllib.parse import urlparse as _urlparse
+
+        from litebrowser.core import prefs as _prefs
 
         entries = _prefs.load_history_entries(self._page.shell.profile_dir)
         midnight = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))

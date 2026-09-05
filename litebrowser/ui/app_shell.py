@@ -15,7 +15,7 @@ import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt5.QtCore import QEvent, QPoint, QUrl, QRect, Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QEvent, QPoint, QRect, Qt, QTimer, QUrl, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeySequence
 from PyQt5.QtWidgets import (
     QApplication,
@@ -155,7 +155,9 @@ class AppShell(QMainWindow):
         # Inline feature finder: typing any letters in the omnibar drops a
         # live list of matching workspaces / personal pages / sites / commands
         # right under the box; Enter or a click jumps to the feature.
-        from litebrowser.ui.dialogs.shell_palette import _build_entries as _build_feature_entries
+        from litebrowser.ui.dialogs.shell_palette import (
+            _build_entries as _build_feature_entries,
+        )
 
         self._feature_entries = _build_feature_entries(self)
         # A plain child overlay (NOT Qt.Popup — that grabs the keyboard and
@@ -806,7 +808,7 @@ class AppShell(QMainWindow):
             return
         try:
             import ctypes
-            import ctypes.wintypes  # noqa: F401  (submodule — NOT auto-imported)
+            import ctypes.wintypes
 
             self._hotkey_msg_id = 0xB00B  # app-local WM_HOTKEY identifier
             MOD_CONTROL, MOD_ALT = 0x0002, 0x0001

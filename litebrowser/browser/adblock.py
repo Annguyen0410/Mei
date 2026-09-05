@@ -155,8 +155,7 @@ def _domain_from_filter_line(line: str) -> str:
     line = line.strip()
     if not line or line.startswith(("!", "[")):
         return ""
-    if line.startswith("||"):
-        line = line[2:]
+    line = line.removeprefix("||")
     if "^" in line:
         line = line.split("^")[0]
     domain = line.strip()

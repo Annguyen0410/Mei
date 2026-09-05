@@ -6,8 +6,9 @@ class TestOmnibarCommandContracts(unittest.TestCase):
     """Static contract checks on AppShell routing without needing a running shell."""
 
     def test_workspace_navigation_commands_map_to_pages(self):
-        from litebrowser.ui.app_shell import AppShell
         import inspect
+
+        from litebrowser.ui.app_shell import AppShell
 
         src = inspect.getsource(AppShell.handle_omnibar) + inspect.getsource(AppShell._handle_omnibar_text)
         # The known workspace slash commands must be present and route to real pages.
@@ -17,8 +18,9 @@ class TestOmnibarCommandContracts(unittest.TestCase):
 
     def test_omnibar_does_not_double_prefix(self):
         """Regression: typing `/task x` then pressing Enter must not leak '/task' into the title."""
-        from litebrowser.ui.app_shell import AppShell
         import inspect
+
+        from litebrowser.ui.app_shell import AppShell
 
         src = inspect.getsource(AppShell.quick_task_dialog)
         # After prefix-strip the fallback title should not start with the slash command.
@@ -33,8 +35,9 @@ class TestOmnibarCommandContracts(unittest.TestCase):
         self.assertNotIn('switch_workspace("settings")  # sync button', src)
 
     def test_shell_defines_unique_page_map_keys(self):
-        from litebrowser.ui.app_shell import AppShell
         import inspect
+
+        from litebrowser.ui.app_shell import AppShell
 
         src = inspect.getsource(AppShell)
         self.assertIn('"home": 0', src)
@@ -44,9 +47,11 @@ class TestOmnibarCommandContracts(unittest.TestCase):
 
 class TestQuickTaskCreation(unittest.TestCase):
     def test_quick_task_creates_real_task(self):
-        import tempfile, os
-        from litebrowser.services import life_service
+        import os
+        import tempfile
+
         from litebrowser.core import prefs
+        from litebrowser.services import life_service
 
         with tempfile.TemporaryDirectory() as tmp:
             base = prefs.ensure_profile_layout(os.path.join(tmp, "profile"))
@@ -57,9 +62,11 @@ class TestQuickTaskCreation(unittest.TestCase):
             self.assertTrue(any(t.get("id") == task.get("id") for t in tasks))
 
     def test_task_ids_are_unique_so_sync_dedupes_cleanly(self):
-        import tempfile, os
-        from litebrowser.services import life_service
+        import os
+        import tempfile
+
         from litebrowser.core import prefs
+        from litebrowser.services import life_service
 
         with tempfile.TemporaryDirectory() as tmp:
             base = prefs.ensure_profile_layout(os.path.join(tmp, "profile"))

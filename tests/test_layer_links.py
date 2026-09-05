@@ -5,7 +5,12 @@ import time
 import unittest
 
 from litebrowser.core import prefs
-from litebrowser.services import flashcard_service, focus_service, page_monitor, routines_service
+from litebrowser.services import (
+    flashcard_service,
+    focus_service,
+    page_monitor,
+    routines_service,
+)
 
 
 class TestLayerLinks(unittest.TestCase):
@@ -52,7 +57,7 @@ class TestLayerLinks(unittest.TestCase):
 
         from PyQt5.QtCore import QUrl
 
-        info = _Info("https://www.facebook.com/feed")
+        _Info("https://www.facebook.com/feed")
         # requestUrl used via info.requestUrl(); interceptRequest needs more
         # Qt plumbing, so call the host check directly (unit of the decision).
         self.assertTrue(blocker._is_shielded_host("www.facebook.com"))

@@ -6,9 +6,9 @@ import shutil
 import time
 
 from litebrowser.core import app_paths
+from litebrowser.core import theme_data as _theme_mod
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import read_json, write_json, write_text_atomic
-from litebrowser.core import theme_data as _theme_mod
 
 
 def _prefs_path(base_dir):

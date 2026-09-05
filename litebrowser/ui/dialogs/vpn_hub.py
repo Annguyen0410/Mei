@@ -188,7 +188,9 @@ def run_leak_test(parent, base_dir) -> None:
         box.setText(verdict)
         box.exec_()
 
-    from litebrowser.browser import new_tab_page  # noqa: F401  (ensures WebEngine import)
+    from litebrowser.browser import (
+        new_tab_page,
+    )
 
     probe_view = QWebEngineView(parent)
 
@@ -251,7 +253,8 @@ def show_vpn_hub(parent) -> None:
         "For testing only; real VPNs (WireGuard/OpenVPN) need separate software."
     ))
 
-    from PyQt5.QtCore import QThread, pyqtSignal as _sig
+    from PyQt5.QtCore import QThread
+    from PyQt5.QtCore import pyqtSignal as _sig
 
     class _IpProbe(QThread):
         done = _sig(dict)

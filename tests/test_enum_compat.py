@@ -6,19 +6,24 @@ import unittest
 os_setter = __import__("os").environ.setdefault
 os_setter("QT_QPA_PLATFORM", "offscreen")
 
-import litebrowser.qt_compat  # noqa: F402  (activates the shim)
-
 from PyQt5.QtCore import QEvent, Qt
-from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QLineEdit, QMessageBox, QDialog
-from PyQt5.QtGui import QFont, QPainter
-from PyQt5.QtWidgets import QStyle, QLineEdit as _LE
+from PyQt5.QtNetwork import QNetworkProxy
 from PyQt5.QtWebEngineWidgets import (
     QWebEnginePage,
     QWebEngineProfile,
     QWebEngineScript,
     QWebEngineSettings,
 )
-from PyQt5.QtNetwork import QNetworkProxy
+from PyQt5.QtWidgets import (
+    QApplication,
+    QDialog,
+    QLineEdit,
+    QMessageBox,
+    QStyle,
+    QSystemTrayIcon,
+)
+
+import litebrowser.qt_compat
 
 
 class TestEnumCompat(unittest.TestCase):

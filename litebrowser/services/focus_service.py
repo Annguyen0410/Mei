@@ -138,7 +138,7 @@ def compute_streaks(per_day: dict) -> tuple[int, int]:
 
     today = _dt.date.today()
     current = 0
-    for offset in range(0, 365):
+    for offset in range(365):
         key = (today - _dt.timedelta(days=offset)).isoformat()
         if per_day.get(key, 0) >= 1:
             current += 1

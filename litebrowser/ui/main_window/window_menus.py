@@ -19,7 +19,6 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from litebrowser.core import app_paths, app_version
 from litebrowser.browser.tab_manager import (
     TAB_GROUP_COLLAPSED_ROLE,
     TAB_GROUP_COLORS,
@@ -27,8 +26,9 @@ from litebrowser.browser.tab_manager import (
     TAB_META_ROLE,
     TAB_PINNED_ROLE,
 )
-from litebrowser.ui import dialogs
+from litebrowser.core import app_paths, app_version
 from litebrowser.services import extension_bridge, workspace_manager
+from litebrowser.ui import dialogs
 
 
 class MenusMixin:

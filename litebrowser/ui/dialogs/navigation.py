@@ -1,6 +1,5 @@
 """Dialog helpers for browser and shell."""
 import os
-
 import time
 
 from PyQt5.QtCore import Qt, QTimer, QUrl

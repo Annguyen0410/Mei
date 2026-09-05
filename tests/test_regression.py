@@ -48,7 +48,7 @@ class TestDownloadFinalizationIsResilient(unittest.TestCase):
 
 class TestDuplicatesRemoved(unittest.TestCase):
     def test_dead_guide_dialog_functions_removed(self):
-        from litebrowser.ui.dialogs import navigation, help_hub
+        from litebrowser.ui.dialogs import help_hub, navigation
         self.assertFalse(hasattr(navigation, "show_guide"))
         self.assertFalse(hasattr(help_hub, "show_modern_guide"))
 

@@ -56,7 +56,7 @@ class TestStudySessionScenario(unittest.TestCase):
         self.assertEqual(len(clippings), 1)
 
         # 5. The wiki-linked target note is created by clicking the link
-        stub = personal_service.create_note(self.base, "TCP IP Basics", "# TCP IP Basics\n\n", category="General")
+        personal_service.create_note(self.base, "TCP IP Basics", "# TCP IP Basics\n\n", category="General")
         links = [n for n in personal_service.list_notes(self.base) if "[[TCP IP Basics]]" in n["content"]]
         self.assertEqual(len(links), 1)
 

@@ -15,8 +15,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # the legacy PyQt5 imports below to PyQt6 when PyQt6 is installed.  Do the
 # same in this test; otherwise it exercises a different splitter runtime than
 # the actual Mei process.
-import litebrowser  # noqa: F401
-
 from PyQt5.QtCore import QAbstractAnimation, QObject, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
@@ -30,6 +28,8 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+import litebrowser
 
 _app = QApplication.instance() or QApplication([])
 

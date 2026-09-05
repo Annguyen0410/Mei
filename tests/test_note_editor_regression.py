@@ -7,12 +7,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # QtWebEngine must be imported BEFORE QApplication is created (Qt hard
 # requirement) — personal_window pulls it in transitively.
-from litebrowser.ui import personal_window as _pw_module  # noqa: E402,F401
+from PyQt5.QtWidgets import QApplication
 
-from PyQt5.QtWidgets import QApplication  # noqa: E402
-
-from litebrowser.core import prefs  # noqa: E402
-from litebrowser.services import personal_service  # noqa: E402
+from litebrowser.core import prefs
+from litebrowser.services import personal_service
+from litebrowser.ui import personal_window as _pw_module
 
 
 @unittest.skipUnless(sys.platform.startswith("win"), "offscreen smoke on dev machine")
@@ -37,8 +36,9 @@ class TestNoteEditorSurvivesRefresh(unittest.TestCase):
         self._tmp.cleanup()
 
     def _window(self):
-        import litebrowser.ui.personal_window as pw
         from PyQt5.QtWidgets import QWidget
+
+        import litebrowser.ui.personal_window as pw
 
         # Stub the site preview builder: constructing real WebEngine objects
         # in offscreen mode spawns Chromium and hangs; the Sites page is not

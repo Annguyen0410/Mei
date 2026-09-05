@@ -20,7 +20,7 @@ from contextlib import contextmanager
 
 _registry_lock = threading.Lock()
 _locks: dict[str, threading.RLock] = {}
-_process_locks: dict[str, "object"] = {}
+_process_locks: dict[str, object] = {}
 
 
 def _profile_key(base_dir: str) -> str:
@@ -58,7 +58,7 @@ def try_acquire_process_lock(base_dir: str) -> tuple[bool, str]:
     path = os.path.join(base_dir, _LOCK_NAME)
     try:
         os.makedirs(base_dir, exist_ok=True)
-        handle = open(path, "a+b")  # noqa: SIM115  (lifetime-held by design)
+        handle = open(path, "a+b")
     except OSError as exc:
         return False, f"cannot open lock file: {exc}"
     try:

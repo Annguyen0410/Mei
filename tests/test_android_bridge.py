@@ -1,7 +1,7 @@
 """Tests for Android mobile bridge (no Qt)."""
 import base64
-import json
 import http.client
+import json
 import os
 import socket
 import tempfile
@@ -11,7 +11,11 @@ import urllib.parse
 import urllib.request
 
 from litebrowser.core import app_paths, prefs
-from litebrowser.services import android_bridge_service, extension_bridge, personal_service
+from litebrowser.services import (
+    android_bridge_service,
+    extension_bridge,
+    personal_service,
+)
 
 
 class TestDispatchIngest(unittest.TestCase):

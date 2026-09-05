@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 
+from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_locked
 
 try:
@@ -14,6 +15,8 @@ try:
     HAS_CRYPTO = True
 except ImportError:
     HAS_CRYPTO = False
+
+_log = get_logger("password_manager")
 
 
 _VAULT_VERSION = 2
@@ -50,7 +53,8 @@ def _get_cipher(master_password):
     try:
         key = _derive_key(master_password)
         return Fernet(key.encode() if isinstance(key, str) else key)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001  crypto failure -> no legacy cipher (never log the password)
+        _log.warning("legacy cipher derivation failed: %s", type(exc).__name__)
         return None
 
 
@@ -67,7 +71,8 @@ def _get_v2_cipher(master_password, salt=None, iterations=_KDF_ITERATIONS):
         if not key:
             return None, None
         return Fernet(key), salt
-    except Exception:
+    except Exception as exc:  # noqa: BLE001  crypto failure -> no v2 cipher (never log the password)
+        _log.warning("v2 cipher derivation failed: %s", type(exc).__name__)
         return None, None
 
 
@@ -91,7 +96,8 @@ def _decrypt_entries(data, cipher):
             try:
                 token = pw.encode("utf-8") if isinstance(pw, str) else pw
                 pw = cipher.decrypt(token).decode("utf-8")
-            except Exception:
+            except Exception as exc:  # noqa: BLE001  bad token -> empty (never log the password)
+                _log.warning("entry decrypt failed: %s", type(exc).__name__)
                 # Decryption failed: surface an empty password instead of the
                 # ciphertext blob (v6.4 leaked the encrypted string as if it
                 # were the plaintext password into the UI and autofill).
@@ -127,7 +133,7 @@ def _decode_v2_vault(blob, master_password):
     vault in that case (v6.4 wiped the whole vault on a typo'd password)."""
     try:
         envelope = json.loads(blob.decode("utf-8"))
-    except Exception:
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         return False, []
     if not isinstance(envelope, dict):
         return False, []
@@ -149,7 +155,7 @@ def _decode_v2_vault(blob, master_password):
         raw = cipher.decrypt(str(envelope.get("payload") or "").encode("utf-8")).decode("utf-8")
         data = json.loads(raw)
         return True, _decrypt_entries(data, cipher)
-    except Exception:
+    except Exception:  # noqa: BLE001  any crypto/decode failure means locked
         return True, None
 
 
@@ -164,6 +170,7 @@ def save_passwords(base_dir, entries, master_password):
     encoded = _encode_v2_vault(entries if isinstance(entries, list) else [], master_password)
     if not encoded:
         return False
+    tmp_path = None
     try:
         path = _passwords_path(base_dir)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -173,7 +180,8 @@ def save_passwords(base_dir, entries, master_password):
                 f.write(encoded)
             os.replace(tmp_path, path)
         return True
-    except Exception:
+    except (OSError, ValueError) as exc:
+        _log.warning("password vault save failed: %s", type(exc).__name__)
         try:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
@@ -211,7 +219,7 @@ def load_passwords_status(base_dir, master_password):
         raw = cipher.decrypt(blob).decode("utf-8")
         data = json.loads(raw)
         return "ok", _decrypt_entries(data, cipher)
-    except Exception:
+    except Exception:  # noqa: BLE001  wrong password/corrupt vault must stay locked
         return "locked", []
 
 

@@ -56,7 +56,7 @@ def verify_passcode(base_dir: str, passcode: str) -> bool:
         expected = _decode(hash_b64)
         got = _pbkdf2_hash(passcode, salt, int(rounds))
         return hmac.compare_digest(expected, got)
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
 

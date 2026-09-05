@@ -14,14 +14,18 @@ from urllib.parse import urlparse
 
 from litebrowser.browser.new_tab_page import cafe_greeting
 from litebrowser.core import prefs
+from litebrowser.core.log import get_logger
 from litebrowser.services import focus_service, life_service, personal_service
+
+_log = get_logger("brief_service")
 
 
 def _domain(url: str) -> str:
     try:
         host = (urlparse(url).netloc or "").lower()
         return host.removeprefix("www.")
-    except Exception:
+    except ValueError as exc:
+        _log.debug("could not parse url %r: %s", url, exc)
         return ""
 
 

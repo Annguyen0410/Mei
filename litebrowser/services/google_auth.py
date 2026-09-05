@@ -6,6 +6,10 @@ import urllib.request
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 
+from litebrowser.core.log import get_logger
+
+_log = get_logger("google_auth")
+
 AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 DEVICE_ENDPOINT = "https://oauth2.googleapis.com/device/code"
@@ -31,7 +35,8 @@ def _json_post(url: str, payload: dict) -> dict:
     except HTTPError as exc:
         try:
             body_txt = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-        except Exception:
+        except OSError as read_exc:
+            _log.debug("could not read Google error body: %s", read_exc)
             body_txt = ""
         detail = body_txt.strip() or str(exc)
         raise GoogleAuthError(f"Google API refused (HTTP {exc.code}). Response: {detail[:600]}") from exc

@@ -13,10 +13,14 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+import urllib.error
 import urllib.request
 
+from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import read_json, write_json
+
+_log = get_logger("page_monitor")
 
 
 def _path(base_dir: str) -> str:
@@ -78,7 +82,8 @@ def fetch_and_hash(url: str, timeout: float = 15.0) -> str | None:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read(2 * 1024 * 1024)
-    except Exception:
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        _log.debug("page monitor fetch failed for %s: %s", url, exc)
         return None
     return hashlib.blake2s(body, digest_size=16).hexdigest()
 

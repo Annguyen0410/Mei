@@ -3,9 +3,12 @@ import re
 import time
 
 from litebrowser.core import prefs
+from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import write_text_atomic
 from litebrowser.services import history_service
+
+_log = get_logger("personal_service")
 
 NOTE_EXTENSIONS = (".md", ".txt")
 
@@ -21,8 +24,8 @@ def _invalidate_cache():
 
     try:
         _ai.reset_index_signature_cache()
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001  cache reset must never break a note edit
+        _log.debug("index signature cache reset failed: %s", exc)
 
 
 def _get_cached_notes(base_dir: str) -> list[dict[str, str]]:
@@ -41,7 +44,8 @@ def _get_cached_notes(base_dir: str) -> list[dict[str, str]]:
                         text = f.read()
                     record = _note_record_from_path(base_dir, path, text=text)
                     items.append(record)
-                except Exception:
+                except (OSError, ValueError) as exc:
+                    _log.warning("skipping unreadable note %s: %s", path, exc)
                     continue
     items.sort(key=lambda item: (-int(item["updated_at"]), item["title"].lower()))
     _cache["notes"] = items

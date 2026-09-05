@@ -183,7 +183,7 @@ def _request(url: str, token: str, method: str = "GET", payload=None) -> tuple[b
                 except ValueError:
                     parsed = body
             return True, parsed, ""
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         return False, None, str(exc)
 
 

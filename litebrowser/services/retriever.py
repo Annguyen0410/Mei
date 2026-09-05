@@ -6,12 +6,16 @@ import math
 import re
 import time
 import unicodedata
+import urllib.error
 import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 from litebrowser.core import prefs
+from litebrowser.core.log import get_logger
 from litebrowser.services import ai_service
+
+_log = get_logger("retriever")
 
 _WORD_RE = re.compile(r"[^\W_]{2,}", re.UNICODE)
 _CACHE: dict[tuple[str, str], tuple[list, Counter, float]] = {}
@@ -128,7 +132,8 @@ def _ollama_embedding(model: str, text: str, timeout: float = 1.5) -> list[float
             vector = [float(x) for x in emb]
             norm = math.sqrt(sum(x * x for x in vector)) or 1.0
             return [x / norm for x in vector]
-    except Exception:
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        _log.debug("ollama embedding failed (falling back to BM25): %s", exc)
         return []
     return []
 
@@ -137,7 +142,8 @@ def _embedding_model_name(base_dir: str):
     """Return the configured Ollama model when the AI provider is Ollama, else None."""
     try:
         settings = prefs.load_ai_settings(base_dir)
-    except Exception:
+    except (OSError, ValueError) as exc:
+        _log.debug("could not read AI settings for embedding model: %s", exc)
         return None
     if (settings.get("provider") or "") != "ollama":
         return None
@@ -183,7 +189,8 @@ def search_hybrid(base_dir: str, query: str, top_k: int = 8, force_rebuild: bool
             cosine = 0.0
             try:
                 doc_vec = futures[rank].result(timeout=3.0)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001  thread-pool safety net: degrade to BM25
+                _log.debug("embedding future failed (rank %s): %s", rank, exc)
                 doc_vec = []
             if doc_vec:
                 cosine = _cosine(query_vec, doc_vec)

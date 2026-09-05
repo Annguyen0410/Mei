@@ -9,11 +9,15 @@ from __future__ import annotations
 import os
 import re
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import read_json, write_json
+
+_log = get_logger("rss_service")
 
 _TTL = 30 * 60  # considered fresh for 30 min
 
@@ -94,7 +98,8 @@ def refresh_feed(base_dir: str, feed_url: str) -> tuple[int, str]:
             return len(feed.get("items", [])), ""
         try:
             items = _parse_entries(_fetch(feed_url))
-        except Exception as exc:
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            _log.debug("feed refresh failed for %s: %s", feed_url, exc)
             return 0, str(exc)
         feed["items"] = items
         feed["fetched_at"] = int(time.time())

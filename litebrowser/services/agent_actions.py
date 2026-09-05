@@ -12,14 +12,18 @@ from collections import OrderedDict
 from urllib.parse import urlparse
 
 from litebrowser.core import prefs
+from litebrowser.core.log import get_logger
 from litebrowser.services import ai_service, life_service, personal_service
+
+_log = get_logger("agent_actions")
 
 
 def _ai_answer(base_dir: str, prompt: str) -> str:
     """Ask the configured LLM; return '' when none is reachable."""
     try:
         settings = prefs.load_ai_settings(base_dir)
-    except Exception:
+    except (OSError, ValueError) as exc:
+        _log.warning("could not load AI settings: %s", exc)
         return ""
     provider = (settings.get("provider") or "rag").strip()
     if provider not in ("openrouter", "ollama", "llama_cpp"):
@@ -27,7 +31,8 @@ def _ai_answer(base_dir: str, prompt: str) -> str:
     try:
         result = ai_service.answer_query(base_dir, prompt, provider=provider)
         answer = (result or {}).get("answer") or ""
-    except Exception:
+    except Exception as exc:  # noqa: BLE001  provider failure -> fall back to rules
+        _log.info("AI provider '%s' unavailable for agent action: %s", provider, exc)
         return ""
     if not answer or answer.startswith("No related items"):
         return ""

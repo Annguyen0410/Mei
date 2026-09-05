@@ -18,7 +18,10 @@ from typing import Any
 from urllib.parse import urlparse
 
 from litebrowser.core import app_paths, app_version, prefs
+from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_locked
+
+_log = get_logger("android_bridge")
 from litebrowser.services import (
     extension_bridge,
     history_service,
@@ -147,7 +150,8 @@ def _auth_ok(profile_dir: str, auth_header: str | None) -> bool:
         return False
     try:
         return hmac.compare_digest(got.encode("utf-8"), expected.encode("utf-8"))
-    except Exception:
+    except (TypeError, UnicodeEncodeError) as exc:
+        _log.warning("mobile bridge auth check failed: %s", exc)
         return False
 
 
@@ -431,8 +435,8 @@ def dispatch_ingest(profile_dir: str, envelope: dict[str, Any]) -> dict[str, Any
                 raise ValueError("create_drawing requires image_base64")
             try:
                 image_bytes = base64.b64decode(image_b64.strip(), validate=False)
-            except Exception:
-                raise ValueError("image_base64 is not valid base64")
+            except ValueError as exc:
+                raise ValueError("image_base64 is not valid base64") from exc
             if not image_bytes:
                 raise ValueError("image_base64 decoded to empty content")
             if len(image_bytes) > MAX_IMAGE_BYTES:
@@ -540,9 +544,10 @@ def dispatch_ingest(profile_dir: str, envelope: dict[str, Any]) -> dict[str, Any
             "result": None,
             "error": _json_error("invalid_payload", str(e))["error"],
         }
-    except Exception:
+    except Exception:  # noqa: BLE001  safety net: log, never echo detail to phone
         # Never return raw exception text to the phone: str(e) often embeds
         # local file paths (v6.4 leaked them).
+        _log.exception("mobile bridge action '%s' failed", action)
         return {
             "ok": False,
             "action": action,
@@ -564,8 +569,8 @@ def _parse_multipart(content_type: str, body: bytes) -> list[tuple[str, str, byt
             b"Content-Type: " + content_type.encode("utf-8") + b"\r\nMIME-Version: 1.0\r\n\r\n" + body,
             policy=policy.default,
         )
-    except Exception:
-        raise ValueError("Malformed multipart body")
+    except Exception as exc:  # noqa: BLE001  arbitrary malformed MIME input
+        raise ValueError("Malformed multipart body") from exc
     if not msg.is_multipart():
         raise ValueError("Body is not multipart")
     parts = []
@@ -855,12 +860,12 @@ def stop() -> None:
             return
         try:
             _server.shutdown()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001  shutdown while not serving is a no-op
+            _log.debug("mobile bridge shutdown raised: %s", exc)
         try:
             _server.server_close()
-        except Exception:
-            pass
+        except OSError as exc:
+            _log.debug("mobile bridge close raised: %s", exc)
         if _server_thread is not None:
             _server_thread.join(timeout=5.0)
         _server = None

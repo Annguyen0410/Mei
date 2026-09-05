@@ -3,13 +3,17 @@ import json
 import os
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
 
 from litebrowser.core import prefs
+from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import read_json, write_json
 from litebrowser.services import download_mgr, life_service, personal_service
+
+_log = get_logger("ai_service")
 
 INDEX_VERSION = 2
 
@@ -250,7 +254,8 @@ def detect_ollama_models() -> list[str]:
             return []
         lines = [line.strip() for line in (p.stdout or "").splitlines() if line.strip()]
         return [line.split()[0].strip() for line in lines[1:]] if len(lines) > 1 else []
-    except Exception:
+    except (OSError, subprocess.SubprocessError) as exc:
+        _log.debug("ollama list failed: %s", exc)
         return []
 
 
@@ -258,7 +263,8 @@ def call_ollama(model: str, prompt: str) -> str | None:
     try:
         p = subprocess.run(["ollama", "run", model], input=prompt, capture_output=True, text=True, timeout=60)
         return (p.stdout or "").strip() if p.returncode == 0 else None
-    except Exception:
+    except (OSError, subprocess.SubprocessError) as exc:
+        _log.debug("ollama run failed for %s: %s", model, exc)
         return None
 
 
@@ -275,7 +281,8 @@ def call_llama_cpp(url: str, prompt: str) -> str | None:
             if choices and isinstance(choices[0], dict):
                 if isinstance(choices[0].get("text"), str):
                     return choices[0]["text"].strip()
-    except Exception:
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        _log.debug("llama.cpp request failed: %s", exc)
         return None
     return None
 
@@ -324,7 +331,8 @@ def call_openrouter(
             content = message.get("content")
             if isinstance(content, str):
                 return content.strip()
-    except Exception:
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        _log.debug("OpenRouter request failed: %s", exc)
         return None
     return None
 

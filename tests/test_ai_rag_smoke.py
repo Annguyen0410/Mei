@@ -1,5 +1,6 @@
 """AI/RAG smoke: index + search returns something sensible from notes/pages/tasks."""
 import base64
+import inspect
 import json
 import os
 import tempfile
@@ -68,6 +69,13 @@ class TestAIRAGSmoke(unittest.TestCase):
         self.assertEqual(seen["payload"]["model"], "llava:latest")
         self.assertEqual(seen["payload"]["messages"][0]["images"], [image])
         self.assertFalse(seen["payload"]["stream"])
+
+    def test_clear_thread_clears_one_shot_external_context(self):
+        from litebrowser.ui.ai_window import AIWindow
+
+        source = inspect.getsource(AIWindow._clear_thread)
+        self.assertIn('self._external_context = ""', source)
+        self.assertIn('self._external_context_label = "Workspace-wide"', source)
 
     def test_answer_query_only_routes_screenshot_to_local_ollama(self):
         with mock.patch.object(ai_service, "build_context", return_value=("context", [])), mock.patch.object(

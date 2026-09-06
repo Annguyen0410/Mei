@@ -532,6 +532,8 @@ class AIWindow(QMainWindow):
         self._last_question = ""
         self._last_answer = ""
         self._last_context = ""
+        self._external_context = ""
+        self._external_context_label = "Workspace-wide"
         self._pending_screenshot_b64 = ""
         self.lbl_vision.setText("Vision: none")
         self.ed_question.clear()

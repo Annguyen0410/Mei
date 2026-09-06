@@ -65,5 +65,23 @@ class TestDuplicatesRemoved(unittest.TestCase):
         self.assertEqual(count, 1, f"duplicate menu entries remain: {count}")
 
 
+class TestTabHibernateTimerSafety(unittest.TestCase):
+    def test_hibernate_timer_is_single_shot_and_managed_by_selection(self):
+        from litebrowser.browser import tab_manager
+
+        source = inspect.getsource(tab_manager.TabManager)
+        wire = inspect.getsource(tab_manager.TabManager._wire_browser)
+        refresh = inspect.getsource(tab_manager.TabManager._refresh_hibernate_timers)
+
+        # A repeating timer would wake the UI forever and could suspend a tab
+        # based on time spent in the foreground. Idle timing belongs in the
+        # background-selection state transition instead.
+        self.assertIn("hibernate_timer.setSingleShot(True)", wire)
+        self.assertNotIn("hibernate_timer.start(sec * 1000)", wire)
+        self.assertIn("timer.stop()", refresh)
+        self.assertIn("timer.start(interval_ms)", refresh)
+        self.assertIn("self._refresh_hibernate_timers(active_index=i)", source)
+
+
 if __name__ == "__main__":
     unittest.main()

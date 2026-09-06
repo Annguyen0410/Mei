@@ -398,19 +398,43 @@ class TabManager:
             _FAVICON_CACHE.clear()
         return result
 
+    def _refresh_hibernate_timers(self, active_index=None):
+        """Arm idle timers only for background renderers.
+
+        A repeating timer started when a tab was created counted foreground time
+        as background idle time and woke the UI every interval even for the
+        active tab.  Keep one single-shot timer per live background tab; it is
+        started when the tab leaves the foreground and stopped when selected.
+        """
+        if active_index is None:
+            active_index = self.tab_list.currentRow()
+        sec = self.get_hibernate_seconds()
+        interval_ms = max(0, int(sec or 0)) * 1000
+        for i, browser in enumerate(self.browsers):
+            if browser is None:
+                continue
+            timer = browser.property("hibernate_timer")
+            if timer is None:
+                continue
+            item = self.tab_list.item(i)
+            is_active = i == active_index
+            is_pinned = bool(item and item.data(TAB_PINNED_ROLE))
+            is_hibernated = bool(browser.property("hibernated"))
+            if interval_ms <= 0 or is_active or is_pinned or is_hibernated:
+                timer.stop()
+                continue
+            if not timer.isActive() or timer.interval() != interval_ms:
+                timer.start(interval_ms)
+
     def _wire_browser(self, browser, item):
         """Attach the normal browser lifecycle to a freshly materialized view."""
         browser.setProperty("memory_hint_mb", 0.0)
         browser.setProperty("icon_url", "")
         browser.setProperty("hibernated", False)
         hibernate_timer = QTimer(browser)
+        hibernate_timer.setSingleShot(True)
         hibernate_timer.timeout.connect(lambda b=browser, i=item: self.hibernate_tab(b, i))
         browser.setProperty("hibernate_timer", hibernate_timer)
-        sec = self.get_hibernate_seconds()
-        if sec > 0:
-            # Opera-GX style: any background tab that idles past the limit is
-            # put to sleep, even with only a handful of tabs open.
-            hibernate_timer.start(sec * 1000)
         browser.urlChanged.connect(lambda q, b=browser: self.window.update_urlbar(q, b))
         browser.urlChanged.connect(lambda q, b=browser: self.window.record_history(q, b))
         browser.titleChanged.connect(lambda title, b=browser: self.on_title_changed(title, b))
@@ -585,6 +609,7 @@ class TabManager:
             if browser is not None:
                 self.stack.setCurrentWidget(browser)
 
+        self._refresh_hibernate_timers(self.tab_list.row(item) if is_active else None)
         self._enforce_background_hibernation()
         self.update_tab_count()
         return browser
@@ -728,6 +753,7 @@ class TabManager:
                 browser.setUrl(pending)
             item = self.tab_list.item(i)
             self._clear_hibernated_visual(item)
+        self._refresh_hibernate_timers(active_index=i)
         self.window.update_urlbar(browser.url(), browser)
         self.window.update_zoom_label()
         self._enforce_background_hibernation(active_index=i)
@@ -929,6 +955,7 @@ class TabManager:
             lbl.set_title_style(
                 f"color: {text_color}; font-size: 11px; font-weight: 600; background: transparent;"
             )
+        self._refresh_hibernate_timers()
 
     def close_tab(self, i):
         if i < 0 or i >= len(self.browsers):

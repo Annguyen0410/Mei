@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -268,6 +269,56 @@ def call_ollama(model: str, prompt: str) -> str | None:
         return None
 
 
+_OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat"
+_MAX_VISION_IMAGE_BYTES = 4 * 1024 * 1024
+
+
+def _decode_vision_image(image_b64: str) -> bytes:
+    """Decode one in-memory screenshot, rejecting oversized/malformed input."""
+    raw_value = (image_b64 or "").strip()
+    if raw_value.startswith("data:image/") and "," in raw_value:
+        raw_value = raw_value.split(",", 1)[1]
+    if not raw_value:
+        return b""
+    try:
+        image = base64.b64decode(raw_value, validate=True)
+    except (ValueError, TypeError):
+        return b""
+    return image if 0 < len(image) <= _MAX_VISION_IMAGE_BYTES else b""
+
+
+def call_ollama_vision(model: str, prompt: str, image_b64: str) -> str | None:
+    """Ask a local Ollama vision model about one user-captured screenshot.
+
+    This deliberately uses the fixed loopback endpoint rather than a
+    user-configurable URL: screenshots must never be redirected to a remote
+    server by an AI setting. Invalid/oversized images fail closed and callers
+    can continue with the text-only path.
+    """
+    image = _decode_vision_image(image_b64)
+    if not model or not prompt or not image:
+        return None
+    try:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt, "images": [base64.b64encode(image).decode("ascii")]}],
+            "stream": False,
+        }
+        req = urllib.request.Request(
+            _OLLAMA_CHAT_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        message = data.get("message") if isinstance(data, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        return content.strip() if isinstance(content, str) and content.strip() else None
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        _log.debug("ollama vision request failed for %s: %s", model, exc)
+        return None
+
+
 def call_llama_cpp(url: str, prompt: str) -> str | None:
     try:
         payload = json.dumps({"prompt": prompt, "n_predict": 384, "temperature": 0.2}).encode("utf-8")
@@ -356,7 +407,15 @@ def build_context(base_dir: str, question: str, extra_context: str = "", top_k: 
     return "\n".join(context_lines)[:12000].strip(), results
 
 
-def answer_query(base_dir: str, question: str, provider: str = "", model: str = "", extra_context: str = "", top_k: int = 10):
+def answer_query(
+    base_dir: str,
+    question: str,
+    provider: str = "",
+    model: str = "",
+    extra_context: str = "",
+    top_k: int = 10,
+    screenshot_b64: str = "",
+):
     from litebrowser.services import retriever
 
     settings = prefs.load_ai_settings(base_dir)
@@ -368,6 +427,10 @@ def answer_query(base_dir: str, question: str, provider: str = "", model: str = 
         f"CONTEXT:\n{context}\n\nQUESTION:\n{question}\n\nANSWER:\n"
     )
     answer = None
+    vision_used = False
+    if provider == "ollama" and screenshot_b64:
+        answer = call_ollama_vision(model or settings.get("ollama_model", ""), prompt, screenshot_b64)
+        vision_used = bool(answer)
     if provider == "openrouter":
         answer = call_openrouter(
             settings.get("openrouter_api_key", ""),
@@ -377,7 +440,7 @@ def answer_query(base_dir: str, question: str, provider: str = "", model: str = 
             site_url=settings.get("openrouter_site_url", ""),
             base_url=settings.get("openrouter_base_url", "https://openrouter.ai/api/v1/chat/completions"),
         )
-    elif provider == "ollama":
+    elif provider == "ollama" and not answer:
         answer = call_ollama(model or settings.get("ollama_model", ""), prompt)
     elif provider == "llama_cpp":
         answer = call_llama_cpp(settings.get("llama_cpp_url", "http://127.0.0.1:8080/completion"), prompt)
@@ -388,4 +451,5 @@ def answer_query(base_dir: str, question: str, provider: str = "", model: str = 
         "answer": answer,
         "context": context,
         "results": results,
+        "vision_used": vision_used,
     }

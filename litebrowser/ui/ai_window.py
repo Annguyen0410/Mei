@@ -1,8 +1,9 @@
+import base64
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QBuffer, QIODevice, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QCheckBox,
@@ -51,6 +52,7 @@ class AIWindow(QMainWindow):
         self._last_context = ""
         self._external_context = ""
         self._external_context_label = "Workspace-wide"
+        self._pending_screenshot_b64 = ""
         self._query_pending = False
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="litebrowser-ai")
         # detect_ollama_models runs `ollama list` with a 2 s timeout on the
@@ -118,8 +120,13 @@ class AIWindow(QMainWindow):
         prompt_row.addWidget(self.ed_question, 1)
         self.btn_ask = QPushButton("Ask assistant")
         self.btn_ask.setObjectName("TopAccentButton")
+        self.btn_capture_screenshot = QPushButton("Capture tab")
+        self.btn_capture_screenshot.setToolTip(
+            "Capture the visible current browser tab for the next local Ollama vision request"
+        )
         self.btn_reindex = QPushButton("Rebuild index")
         prompt_row.addWidget(self.btn_ask)
+        prompt_row.addWidget(self.btn_capture_screenshot)
         prompt_row.addWidget(self.btn_reindex)
         hero_layout.addLayout(prompt_row)
 
@@ -132,10 +139,12 @@ class AIWindow(QMainWindow):
         # Live provider badge: shows which engine will answer (v6.4 only
         # revealed the provider in the answer footer after the fact).
         self.lbl_provider = components.badge("Provider: RAG local only", "accent")
+        self.lbl_vision = components.badge("Vision: none", "muted")
         self.cmb_provider.currentTextChanged.connect(
             lambda _t: self.lbl_provider.setText("Provider: " + (self.cmb_provider.currentText() or "—"))
         )
         badge_row.addWidget(self.lbl_provider)
+        badge_row.addWidget(self.lbl_vision)
         badge_row.addStretch(1)
         self.chk_show_context = QCheckBox("Show sources")
         self.chk_show_context.setChecked(True)
@@ -212,6 +221,7 @@ class AIWindow(QMainWindow):
 
         self.setStyleSheet(theme.main_qss(prefs.get_shell_theme(self.base_dir), prefs.get_accent(self.base_dir)))
         self.btn_reindex.clicked.connect(self._reindex)
+        self.btn_capture_screenshot.clicked.connect(self._capture_current_tab)
         self.btn_ask.clicked.connect(self._ask)
         self.ed_question.returnPressed.connect(self._ask)
         self.cmb_provider.currentIndexChanged.connect(self._on_provider_change)
@@ -313,6 +323,12 @@ class AIWindow(QMainWindow):
     def _on_provider_change(self):
         provider = self.cmb_provider.currentData()
         self.ed_api_key.setVisible(provider == "openrouter")
+        self.btn_capture_screenshot.setEnabled(provider == "ollama")
+        self.btn_capture_screenshot.setToolTip(
+            "Capture the visible tab for local Ollama vision"
+            if provider == "ollama"
+            else "Select Local LLM: Ollama to enable screenshot vision"
+        )
         self._refresh_model_value()
         if provider == "rag":
             self.ed_model.setPlaceholderText("No remote model needed")
@@ -369,11 +385,59 @@ class AIWindow(QMainWindow):
         self._external_context = ""
         self.run_assistant_query(question, context_label, context)
 
-    def run_assistant_query(self, question: str, context_label: str = "Workspace-wide", extra_context: str = ""):
+    def _host_browser(self):
+        """Return the shell's selected browser tab, if this AI pane is embedded."""
+        current = self.parentWidget()
+        while current is not None:
+            browser_page = getattr(current, "browser_page", None)
+            if browser_page is not None and hasattr(browser_page, "current_browser"):
+                try:
+                    return browser_page.current_browser()
+                except Exception:
+                    return None
+            current = current.parentWidget()
+        return None
+
+    def _capture_current_tab(self):
+        """Capture one visible browser tab into an in-memory PNG for the next ask."""
+        browser = self._host_browser()
+        if browser is None:
+            self.lbl_vision.setText("Vision: no browser tab")
+            self.txt_answer.setPlainText("Open or select a browser tab first, then capture it.")
+            return
+        try:
+            pixmap = browser.grab()
+            if pixmap.isNull():
+                raise ValueError("empty browser capture")
+            buffer = QBuffer(self)
+            buffer.open(QIODevice.WriteOnly)
+            if not pixmap.save(buffer, "PNG"):
+                raise ValueError("could not encode browser capture")
+            encoded = base64.b64encode(bytes(buffer.data())).decode("ascii")
+        except (OSError, TypeError, ValueError) as exc:
+            self.lbl_vision.setText("Vision: capture failed")
+            self.txt_answer.setPlainText(f"Could not capture the current tab: {exc}")
+            return
+        self._pending_screenshot_b64 = encoded
+        self.lbl_vision.setText("Vision: screenshot ready (local Ollama only)")
+        self.txt_answer.setPlainText(
+            "Current tab screenshot captured in memory. Ask a question to analyze it with a local Ollama vision model."
+        )
+
+    def run_assistant_query(
+        self,
+        question: str,
+        context_label: str = "Workspace-wide",
+        extra_context: str = "",
+        screenshot_b64: str = "",
+    ):
         if self._query_pending:
             self.txt_answer.setPlainText("Another request is still running — please wait for it to finish.")
             return
         self._save_settings()
+        screenshot_b64 = screenshot_b64 or self._pending_screenshot_b64
+        self._pending_screenshot_b64 = ""
+        self.lbl_vision.setText("Vision: attached" if screenshot_b64 else "Vision: none")
         self._last_question = question
         self._prompt_history.append(question)
         self._prompt_history = self._prompt_history[-20:]
@@ -391,6 +455,7 @@ class AIWindow(QMainWindow):
             self.ed_model.text().strip(),
             extra_context,
             10,
+            screenshot_b64,
         )
         # Capture the provider label now: the user may switch the combo while
         # the query runs, and the answer must credit who produced it.
@@ -467,6 +532,8 @@ class AIWindow(QMainWindow):
         self._last_question = ""
         self._last_answer = ""
         self._last_context = ""
+        self._pending_screenshot_b64 = ""
+        self.lbl_vision.setText("Vision: none")
         self.ed_question.clear()
         self.lbl_context_scope.setText("Context: Workspace-wide")
 

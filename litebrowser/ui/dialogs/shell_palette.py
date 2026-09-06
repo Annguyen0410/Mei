@@ -37,6 +37,7 @@ _WORKSPACES = (
 _PERSONAL_PAGES = (
     ("overview", "Overview", "◧"),
     ("notes", "Notes", "✎"),
+    ("plan", "Weekly Plan", "▦"),
     ("tasks", "Tasks", "✓"),
     ("review", "Review", "⇄"),
     ("calendar", "Calendar", "◷"),

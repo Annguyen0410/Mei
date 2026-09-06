@@ -1,6 +1,6 @@
 """PersonalWindow: the Personal Hub workspace.
 
-Eight pages (Overview, Notes, Tasks, Review, Calendar, Boards, Files, Sites)
+Nine pages (Overview, Weekly Plan, Notes, Tasks, Review, Calendar, Boards, Files, Sites)
 sit in a QStackedWidget behind a navigation rail. The rail lives in a
 QSplitter so it can be dragged wider/narrower AND collapsed with one click on
 the divider (the same feel as the browser sidebar divider).
@@ -55,6 +55,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QCompleter,
+    QDateEdit,
     QFileDialog,
     QFrame,
     QGraphicsPathItem,
@@ -74,6 +75,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QShortcut,
     QSizePolicy,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QTextEdit,
@@ -88,7 +90,13 @@ from litebrowser.browser.browser_page import (
     ensure_text_highlight_script,
 )
 from litebrowser.core import app_paths, prefs
-from litebrowser.services import focus_service, life_service, personal_service, tab_sets
+from litebrowser.services import (
+    focus_service,
+    life_service,
+    personal_plan,
+    personal_service,
+    tab_sets,
+)
 from litebrowser.ui import components, theme, win_titlebar
 from litebrowser.ui.focus_heatmap import FocusHeatmap
 
@@ -561,6 +569,57 @@ class WikiLinkHighlighter(QSyntaxHighlighter):
 
 
 
+class PlannerDayList(QListWidget):
+    """A read-only day column that supports dragging items to another day."""
+
+    def __init__(self, owner, day_key: str, parent=None):
+        super().__init__(parent)
+        self._owner = owner
+        self.day_key = day_key
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        # DragDrop (rather than DragOnly) is required for Qt to deliver drops
+        # to another day column; dropEvent performs the persisted reschedule.
+        self.setDragDropMode(self.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.MoveAction)
+        self.setSelectionMode(self.SelectionMode.SingleSelection)
+
+    def startDrag(self, supported_actions):
+        item = self.currentItem()
+        item_id = item.data(Qt.UserRole) if item is not None else ""
+        if not item_id:
+            return
+        self._owner._planner_drag_item_id = str(item_id)
+        self._owner._planner_drag_source_day = self.day_key
+        try:
+            super().startDrag(supported_actions)
+        finally:
+            self._owner._planner_drag_item_id = ""
+            self._owner._planner_drag_source_day = ""
+
+    def dragEnterEvent(self, event):
+        if getattr(self._owner, "_planner_drag_item_id", ""):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if getattr(self._owner, "_planner_drag_item_id", ""):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        item_id = str(getattr(self._owner, "_planner_drag_item_id", "") or "")
+        if not item_id:
+            event.ignore()
+            return
+        if self._owner._planner_drop_item(item_id, self.day_key):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+
 class PersonalWindow(QMainWindow):
     def __init__(self, base_dir: str, app_dir: str = None, embedded: bool = False):
         super().__init__()
@@ -608,6 +667,7 @@ class PersonalWindow(QMainWindow):
         for key, label, glyph in (
             ("overview", "Overview", "◧"),
             ("notes", "Notes", "✎"),
+            ("plan", "Weekly Plan", "▦"),
             ("tasks", "Tasks", "✓"),
             ("review", "Review", "⇄"),
             ("calendar", "Calendar", "◷"),
@@ -656,6 +716,7 @@ class PersonalWindow(QMainWindow):
         for key, widget in (
             ("overview", self._build_overview_page()),
             ("notes", self._build_notes_page()),
+            ("plan", self._build_plan_page()),
             ("tasks", self._build_tasks_page()),
             ("review", self._build_review_page()),
             ("calendar", self._build_calendar_page()),
@@ -785,6 +846,7 @@ class PersonalWindow(QMainWindow):
                 labels = {
                     "overview": ("Overview", "◧"),
                     "notes": ("Notes", "✎"),
+                    "plan": ("Weekly Plan", "▦"),
                     "tasks": ("Tasks", "✓"),
                     "calendar": ("Calendar", "◷"),
                     "boards": ("Boards", "◌"),
@@ -2014,6 +2076,258 @@ class PersonalWindow(QMainWindow):
 
         flashcard_service.add_card(self.base_dir, front, back, source_note_id=note_id)
         self._flash(f"Card added — {stats_text(flashcard_service.stats(self.base_dir))}")
+
+    def _build_plan_page(self):
+        """Build the weekly student planner surface on the shared plan schema."""
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.setContentsMargins(12, 10, 12, 12)
+        l.setSpacing(6)
+        header = QHBoxLayout()
+        header.addWidget(components.page_header("Weekly Plan", "Student planning, deadlines, and focused time blocks"))
+        header.addStretch(1)
+        self.btn_plan_prev = QPushButton("‹")
+        self.btn_plan_prev.setToolTip("Previous week")
+        self.btn_plan_today = QPushButton("Today")
+        self.btn_plan_next = QPushButton("›")
+        self.lbl_plan_week = QLabel("")
+        self.lbl_plan_week.setObjectName("MutedLabel")
+        header.addWidget(self.btn_plan_prev)
+        header.addWidget(self.btn_plan_today)
+        header.addWidget(self.btn_plan_next)
+        header.addWidget(self.lbl_plan_week)
+        l.addLayout(header)
+
+        form = QHBoxLayout()
+        self.ed_plan_title = QLineEdit()
+        self.ed_plan_title.setPlaceholderText("New assignment or task...")
+        self.cmb_plan_kind = QComboBox()
+        self.cmb_plan_kind.addItems(["task", "assignment", "exam", "project", "study"])
+        self.ed_plan_date = QDateEdit(QDate.currentDate())
+        self.ed_plan_date.setCalendarPopup(True)
+        self.ed_plan_date.setDisplayFormat("yyyy-MM-dd")
+        self.ed_plan_due = QDateEdit(QDate.currentDate())
+        self.ed_plan_due.setCalendarPopup(True)
+        self.ed_plan_due.setDisplayFormat("yyyy-MM-dd")
+        self.cmb_plan_priority = QComboBox()
+        self.cmb_plan_priority.addItems(["low", "medium", "high", "urgent"])
+        self.ed_plan_category = QLineEdit()
+        self.ed_plan_category.setPlaceholderText("Category")
+        self.spin_plan_duration = QSpinBox()
+        self.spin_plan_duration.setRange(5, 1440)
+        self.spin_plan_duration.setValue(personal_plan.DEFAULT_DURATION_MINUTES)
+        self.spin_plan_duration.setSuffix(" min")
+        self.btn_plan_add = QPushButton("Add item")
+        self.btn_plan_delete = QPushButton("Delete selected")
+        self.btn_plan_delete.setToolTip("Delete the selected planner item or focus block")
+        form.addWidget(self.ed_plan_title, 2)
+        form.addWidget(self.cmb_plan_kind)
+        form.addWidget(self.ed_plan_date)
+        form.addWidget(self.ed_plan_due)
+        form.addWidget(self.cmb_plan_priority)
+        form.addWidget(self.ed_plan_category, 1)
+        form.addWidget(self.spin_plan_duration)
+        form.addWidget(self.btn_plan_add)
+        form.addWidget(self.btn_plan_delete)
+        l.addLayout(form)
+
+        block_form = QHBoxLayout()
+        self.ed_plan_block_title = QLineEdit()
+        self.ed_plan_block_title.setPlaceholderText("Study block title...")
+        self.spin_plan_block_start = QSpinBox()
+        self.spin_plan_block_start.setRange(0, 1439)
+        self.spin_plan_block_start.setValue(9 * 60)
+        self.spin_plan_block_start.setSuffix(" start min")
+        self.spin_plan_block_duration = QSpinBox()
+        self.spin_plan_block_duration.setRange(5, 1440)
+        self.spin_plan_block_duration.setValue(50)
+        self.spin_plan_block_duration.setSuffix(" block min")
+        self.btn_plan_add_block = QPushButton("Add time block")
+        block_form.addWidget(QLabel("Focus block"))
+        block_form.addWidget(self.ed_plan_block_title, 2)
+        block_form.addWidget(self.spin_plan_block_start)
+        block_form.addWidget(self.spin_plan_block_duration)
+        block_form.addWidget(self.btn_plan_add_block)
+        block_form.addStretch(1)
+        l.addLayout(block_form)
+
+        self.lbl_plan_summary = QLabel("")
+        self.lbl_plan_summary.setObjectName("MutedLabel")
+        l.addWidget(self.lbl_plan_summary)
+        self.plan_columns_wrap = QWidget()
+        columns = QHBoxLayout(self.plan_columns_wrap)
+        columns.setContentsMargins(0, 0, 0, 0)
+        columns.setSpacing(5)
+        self.plan_day_lists = {}
+        for offset in range(7):
+            card = QFrame()
+            card.setObjectName("SectionCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(5, 5, 5, 5)
+            card_layout.setSpacing(4)
+            day_label = QLabel("")
+            day_label.setObjectName("SectionTitle")
+            day_label.setAlignment(Qt.AlignCenter)
+            day_list = PlannerDayList(self, "", card)
+            day_list.setObjectName("CafeList")
+            day_list.itemClicked.connect(self._planner_item_clicked)
+            card_layout.addWidget(day_label)
+            card_layout.addWidget(day_list, 1)
+            columns.addWidget(card, 1)
+            self.plan_day_lists[offset] = (day_label, day_list)
+        l.addWidget(self.plan_columns_wrap, 1)
+
+        self._planner_week_start = personal_plan.week_key()
+        self._planner_drag_item_id = ""
+        self._planner_drag_source_day = ""
+        self.btn_plan_prev.clicked.connect(lambda: self._shift_planner_week(-7))
+        self.btn_plan_today.clicked.connect(self._planner_today)
+        self.btn_plan_next.clicked.connect(lambda: self._shift_planner_week(7))
+        self.btn_plan_add.clicked.connect(self._planner_add_item)
+        self.btn_plan_add_block.clicked.connect(self._planner_add_block)
+        self.btn_plan_delete.clicked.connect(self._planner_delete_selected)
+        self._refresh_plan()
+        return w
+
+    def _shift_planner_week(self, days: int):
+        anchor = QDate.fromString(self._planner_week_start, "yyyy-MM-dd").addDays(days)
+        self._planner_week_start = personal_plan.week_key(anchor.toString("yyyy-MM-dd"))
+        self._refresh_plan()
+
+    def _planner_today(self):
+        self._planner_week_start = personal_plan.week_key()
+        self._refresh_plan()
+
+    def _planner_add_item(self):
+        title = self.ed_plan_title.text().strip()
+        if not title:
+            return
+        scheduled = self.ed_plan_date.date().toString("yyyy-MM-dd")
+        due = self.ed_plan_due.date().toString("yyyy-MM-dd")
+        try:
+            personal_plan.create_item(
+                self.base_dir,
+                title,
+                kind=self.cmb_plan_kind.currentText(),
+                scheduled_date=scheduled,
+                due_date=due,
+                priority=self.cmb_plan_priority.currentText(),
+                category=self.ed_plan_category.text().strip() or "General",
+                duration_minutes=self.spin_plan_duration.value(),
+            )
+        except ValueError:
+            return
+        self.ed_plan_title.clear()
+        self._refresh_plan()
+        self._refresh_overview()
+
+    def _planner_add_block(self):
+        title = self.ed_plan_block_title.text().strip()
+        if not title:
+            return
+        try:
+            personal_plan.create_time_block(
+                self.base_dir,
+                title,
+                self.ed_plan_date.date().toString("yyyy-MM-dd"),
+                self.spin_plan_block_start.value(),
+                duration_minutes=self.spin_plan_block_duration.value(),
+            )
+        except ValueError:
+            return
+        self.ed_plan_block_title.clear()
+        self._refresh_plan()
+
+    def _planner_drop_item(self, item_id: str, day_key: str) -> bool:
+        item = personal_plan.update_item(self.base_dir, item_id, scheduled_date=day_key)
+        if item is None:
+            return False
+        self._refresh_plan()
+        self._refresh_overview()
+        return True
+
+    def _planner_delete_selected(self):
+        selected_id = ""
+        for _label, day_list in self.plan_day_lists.values():
+            row = day_list.currentItem()
+            if row is not None:
+                selected_id = str(row.data(Qt.UserRole) or "")
+                break
+        if not selected_id:
+            return
+        if selected_id.startswith("block:"):
+            deleted = personal_plan.delete_time_block(self.base_dir, selected_id[6:])
+        else:
+            deleted = personal_plan.delete_item(self.base_dir, selected_id)
+        if deleted:
+            self._refresh_plan()
+            self._refresh_overview()
+
+    def _planner_item_clicked(self, row: QListWidgetItem):
+        item_id = row.data(Qt.UserRole)
+        if not item_id or str(item_id).startswith("block:"):
+            return
+        item = personal_plan.load_plan(self.base_dir)
+        current = next((entry for entry in item["items"] if entry.get("id") == item_id), None)
+        if current is None:
+            return
+        if row.checkState() == Qt.Checked:
+            personal_plan.complete_item(self.base_dir, item_id, True)
+        elif current.get("completed"):
+            personal_plan.complete_item(self.base_dir, item_id, False)
+        self._refresh_plan()
+        self._refresh_overview()
+
+    def _refresh_plan(self):
+        if not hasattr(self, "plan_day_lists"):
+            return
+        week = personal_plan.items_for_week(self.base_dir, self._planner_week_start)
+        start = QDate.fromString(week["week_start"], "yyyy-MM-dd")
+        self.lbl_plan_week.setText(f"{week['week_start']} → {week['week_end']}")
+        completed = sum(1 for item in week["items"] if item.get("completed"))
+        self.lbl_plan_summary.setText(
+            f"{len(week['items'])} planned item(s) · {completed} completed · {len(week['time_blocks'])} focus block(s)"
+        )
+        for offset, (day_label, day_list) in self.plan_day_lists.items():
+            day = start.addDays(offset)
+            day_key = day.toString("yyyy-MM-dd")
+            day_label.setText(day.toString("ddd\\ndd MMM"))
+            day_list.day_key = day_key
+            day_list.clear()
+        course_names = {course.get("id"): course.get("name") for course in week["courses"]}
+        for item in week["items"]:
+            day_key = item.get("scheduled_date") or item.get("due_date") or ""
+            if not (week["week_start"] <= day_key <= week["week_end"]):
+                day_key = item.get("due_date") or item.get("scheduled_date") or ""
+            offset = start.daysTo(QDate.fromString(day_key, "yyyy-MM-dd"))
+            if offset not in self.plan_day_lists:
+                continue
+            row = QListWidgetItem(f"[{item.get('kind', 'task')}] {item.get('title', '')}")
+            row.setData(Qt.UserRole, item.get("id", ""))
+            row.setFlags(row.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
+            row.setCheckState(Qt.Checked if item.get("completed") else Qt.Unchecked)
+            course = course_names.get(item.get("course_id"))
+            details = f"{item.get('priority', 'medium')} · {item.get('category', 'General')}"
+            if course:
+                details += f" · {course}"
+            if item.get("due_date"):
+                details += f" · due {item['due_date']}"
+            row.setToolTip(details)
+            self.plan_day_lists[offset][1].addItem(row)
+        blocks_by_day = {}
+        for block in week["time_blocks"]:
+            blocks_by_day.setdefault(block.get("date"), []).append(block)
+        for day_key, blocks in blocks_by_day.items():
+            offset = start.daysTo(QDate.fromString(day_key, "yyyy-MM-dd"))
+            if offset not in self.plan_day_lists:
+                continue
+            day_list = self.plan_day_lists[offset][1]
+            for block in blocks:
+                row = QListWidgetItem(f"◷ {block.get('title', '')} · {block.get('duration_minutes', 0)}m")
+                row.setData(Qt.UserRole, f"block:{block.get('id', '')}")
+                row.setFlags(Qt.ItemIsEnabled)
+                row.setToolTip("Focus block")
+                day_list.addItem(row)
 
     def _build_tasks_page(self):
         w = QWidget()

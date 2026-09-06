@@ -105,6 +105,22 @@ class TestPersonalPlan(unittest.TestCase):
         self.assertEqual(plan["courses"], [])
         self.assertEqual(plan["time_blocks"], [])
 
+    def test_weekly_plan_is_registered_in_personal_palette(self):
+        from litebrowser.ui.dialogs.shell_palette import _PERSONAL_PAGES
+
+        keys = {key for key, _label, _glyph in _PERSONAL_PAGES}
+        self.assertIn("plan", keys)
+
+    def test_weekly_plan_uses_qdate_days_to_and_drop_mode(self):
+        import inspect
+
+        from litebrowser.ui.personal_window import PersonalWindow, PlannerDayList
+
+        page_source = inspect.getsource(PersonalWindow._refresh_plan)
+        day_source = inspect.getsource(PlannerDayList)
+        self.assertGreaterEqual(page_source.count("start.daysTo("), 2)
+        self.assertIn("self.DragDropMode.DragDrop", day_source)
+
 
 if __name__ == "__main__":
     unittest.main()

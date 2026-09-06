@@ -77,6 +77,13 @@ class TestAIRAGSmoke(unittest.TestCase):
         self.assertIn('self._external_context = ""', source)
         self.assertIn('self._external_context_label = "Workspace-wide"', source)
 
+    def test_provider_switch_discards_pending_screenshot(self):
+        from litebrowser.ui.ai_window import AIWindow
+
+        source = inspect.getsource(AIWindow._on_provider_change)
+        self.assertIn('self._pending_screenshot_b64 = ""', source)
+        self.assertIn('provider != "ollama"', source)
+
     def test_answer_query_only_routes_screenshot_to_local_ollama(self):
         with mock.patch.object(ai_service, "build_context", return_value=("context", [])), mock.patch.object(
             ai_service, "call_ollama_vision", return_value="vision answer"

@@ -322,6 +322,12 @@ class AIWindow(QMainWindow):
 
     def _on_provider_change(self):
         provider = self.cmb_provider.currentData()
+        if provider != "ollama" and self._pending_screenshot_b64:
+            # A screenshot is valid only for the local Ollama vision path.
+            # Discard it when the provider changes instead of silently losing
+            # the user's capture on the next request.
+            self._pending_screenshot_b64 = ""
+            self.lbl_vision.setText("Vision: none")
         self.ed_api_key.setVisible(provider == "openrouter")
         self.btn_capture_screenshot.setEnabled(provider == "ollama")
         self.btn_capture_screenshot.setToolTip(

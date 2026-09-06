@@ -188,10 +188,6 @@ def run_leak_test(parent, base_dir) -> None:
         box.setText(verdict)
         box.exec_()
 
-    from litebrowser.browser import (
-        new_tab_page,
-    )
-
     probe_view = QWebEngineView(parent)
 
     def _on_load(ok):

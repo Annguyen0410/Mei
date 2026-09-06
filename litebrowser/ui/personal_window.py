@@ -2106,9 +2106,14 @@ class PersonalWindow(QMainWindow):
         self.ed_plan_date = QDateEdit(QDate.currentDate())
         self.ed_plan_date.setCalendarPopup(True)
         self.ed_plan_date.setDisplayFormat("yyyy-MM-dd")
+        self.ed_plan_date.setToolTip("The day this item appears in the weekly planner")
         self.ed_plan_due = QDateEdit(QDate.currentDate())
         self.ed_plan_due.setCalendarPopup(True)
         self.ed_plan_due.setDisplayFormat("yyyy-MM-dd")
+        self.ed_plan_due.setToolTip("The deadline; it follows the planned date until you edit it")
+        self._planner_due_follows_schedule = True
+        self.ed_plan_date.dateChanged.connect(self._planner_sync_due_date)
+        self.ed_plan_due.dateChanged.connect(self._planner_due_date_edited)
         self.cmb_plan_priority = QComboBox()
         self.cmb_plan_priority.addItems(["low", "medium", "high", "urgent"])
         self.ed_plan_category = QLineEdit()
@@ -2118,6 +2123,7 @@ class PersonalWindow(QMainWindow):
         self.spin_plan_duration.setValue(personal_plan.DEFAULT_DURATION_MINUTES)
         self.spin_plan_duration.setSuffix(" min")
         self.btn_plan_add = QPushButton("Add item")
+        self.btn_plan_add.setToolTip("Create the item and show it on its planned day")
         self.btn_plan_delete = QPushButton("Delete selected")
         self.btn_plan_delete.setToolTip("Delete the selected planner item or focus block")
         form.addWidget(self.ed_plan_title, 2)
@@ -2143,6 +2149,7 @@ class PersonalWindow(QMainWindow):
         self.spin_plan_block_duration.setValue(50)
         self.spin_plan_block_duration.setSuffix(" block min")
         self.btn_plan_add_block = QPushButton("Add time block")
+        self.btn_plan_add_block.setToolTip("Add a focused study block to the selected planned day")
         block_form.addWidget(QLabel("Focus block"))
         block_form.addWidget(self.ed_plan_block_title, 2)
         block_form.addWidget(self.spin_plan_block_start)
@@ -2151,6 +2158,12 @@ class PersonalWindow(QMainWindow):
         block_form.addStretch(1)
         l.addLayout(block_form)
 
+        self.lbl_plan_guide = QLabel(
+            "Guide: choose a date, add an item, tick it when complete, drag it to reschedule, or select it and delete it."
+        )
+        self.lbl_plan_guide.setObjectName("MutedLabel")
+        self.lbl_plan_guide.setWordWrap(True)
+        l.addWidget(self.lbl_plan_guide)
         self.lbl_plan_summary = QLabel("")
         self.lbl_plan_summary.setObjectName("MutedLabel")
         l.addWidget(self.lbl_plan_summary)
@@ -2189,6 +2202,16 @@ class PersonalWindow(QMainWindow):
         self._refresh_plan()
         return w
 
+    def _planner_due_date_edited(self, _date):
+        self._planner_due_follows_schedule = False
+
+    def _planner_sync_due_date(self, scheduled_date):
+        if not self._planner_due_follows_schedule:
+            return
+        self.ed_plan_due.blockSignals(True)
+        self.ed_plan_due.setDate(scheduled_date)
+        self.ed_plan_due.blockSignals(False)
+
     def _shift_planner_week(self, days: int):
         anchor = QDate.fromString(self._planner_week_start, "yyyy-MM-dd").addDays(days)
         self._planner_week_start = personal_plan.week_key(anchor.toString("yyyy-MM-dd"))
@@ -2218,6 +2241,8 @@ class PersonalWindow(QMainWindow):
         except ValueError:
             return
         self.ed_plan_title.clear()
+        self._planner_due_follows_schedule = True
+        self._planner_sync_due_date(self.ed_plan_date.date())
         self._refresh_plan()
         self._refresh_overview()
 

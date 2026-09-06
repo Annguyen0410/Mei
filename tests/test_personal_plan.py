@@ -117,9 +117,12 @@ class TestPersonalPlan(unittest.TestCase):
         from litebrowser.ui.personal_window import PersonalWindow, PlannerDayList
 
         page_source = inspect.getsource(PersonalWindow._refresh_plan)
+        build_source = inspect.getsource(PersonalWindow._build_plan_page)
         day_source = inspect.getsource(PlannerDayList)
         self.assertGreaterEqual(page_source.count("start.daysTo("), 2)
         self.assertIn("self.DragDropMode.DragDrop", day_source)
+        self.assertIn("_planner_sync_due_date", build_source)
+        self.assertIn("Guide: choose a date", build_source)
 
 
 if __name__ == "__main__":

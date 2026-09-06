@@ -180,6 +180,17 @@ def _normalize_block(block: Any) -> dict | None:
     }
 
 
+def _normalize_collection(value: Any, normalizer) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for raw in value:
+        normalized = normalizer(raw)
+        if normalized is not None:
+            result.append(normalized)
+    return result
+
+
 def _default_plan() -> dict:
     return {
         "version": PLAN_VERSION,
@@ -202,9 +213,9 @@ def _normalize_plan(data: Any) -> dict:
             "end_date": _date_string(semester.get("end_date")),
         }
     plan["academic_week_start"] = "monday"
-    plan["items"] = [normalized for raw in source.get("items", []) for normalized in [_normalize_item(raw)] if normalized]
-    plan["courses"] = [normalized for raw in source.get("courses", []) for normalized in [_normalize_course(raw)] if normalized]
-    plan["time_blocks"] = [normalized for raw in source.get("time_blocks", []) for normalized in [_normalize_block(raw)] if normalized]
+    plan["items"] = _normalize_collection(source.get("items", []), _normalize_item)
+    plan["courses"] = _normalize_collection(source.get("courses", []), _normalize_course)
+    plan["time_blocks"] = _normalize_collection(source.get("time_blocks", []), _normalize_block)
     return plan
 
 

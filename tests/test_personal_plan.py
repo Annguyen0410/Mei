@@ -97,6 +97,14 @@ class TestPersonalPlan(unittest.TestCase):
             personal_plan.create_time_block(self.base, "Block", "not-a-date", 60)
         self.assertEqual(personal_plan.load_plan(self.base)["items"], [])
 
+    def test_malformed_collections_are_recovered_as_empty(self):
+        with open(personal_plan.plan_path(self.base), "w", encoding="utf-8") as handle:
+            handle.write('{"items": {"bad": true}, "courses": "bad", "time_blocks": null}')
+        plan = personal_plan.load_plan(self.base)
+        self.assertEqual(plan["items"], [])
+        self.assertEqual(plan["courses"], [])
+        self.assertEqual(plan["time_blocks"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

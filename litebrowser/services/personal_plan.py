@@ -124,7 +124,9 @@ def _normalize_item(item: Any) -> dict | None:
         "scheduled_date": scheduled_date,
         "due_date": due_date,
         "start_minutes": start_minutes,
-        "duration_minutes": _clean_minutes(item.get("duration_minutes")),
+        "duration_minutes": _clean_minutes(
+            item.get("duration_minutes", item.get("minutes"))
+        ),
         "priority": _clean_priority(item.get("priority")),
         "category": _clean_text(item.get("category"), 80) or "General",
         "tags": _clean_tags(item.get("tags")),
@@ -171,7 +173,9 @@ def _normalize_block(block: Any) -> dict | None:
         "title": title,
         "date": block_date,
         "start_minutes": start,
-        "duration_minutes": _clean_minutes(block.get("duration_minutes")),
+        "duration_minutes": _clean_minutes(
+            block.get("duration_minutes", block.get("minutes"))
+        ),
         "course_id": _clean_text(block.get("course_id"), 80),
         "item_id": _clean_text(block.get("item_id"), 80),
         "color": _clean_text(block.get("color"), 20) or "#c39d63",

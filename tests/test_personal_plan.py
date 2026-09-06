@@ -53,6 +53,20 @@ class TestPersonalPlan(unittest.TestCase):
         self.assertEqual(loaded["items"][0]["course_id"], course["id"])
         self.assertTrue(os.path.isfile(personal_plan.plan_path(self.base)))
 
+    def test_minutes_kwarg_is_aliased_to_duration_minutes(self):
+        item = personal_plan.create_item(self.base, "Study math", minutes=90)
+        self.assertEqual(item["duration_minutes"], 90)
+        stored = personal_plan.load_plan(self.base)["items"][0]
+        self.assertEqual(stored["duration_minutes"], 90)
+
+    def test_block_minutes_kwarg_is_aliased_to_duration_minutes(self):
+        block = personal_plan.create_time_block(
+            self.base, "Deep work", "2026-09-08", 540, minutes=60
+        )
+        self.assertEqual(block["duration_minutes"], 60)
+        stored = personal_plan.load_plan(self.base)["time_blocks"][0]
+        self.assertEqual(stored["duration_minutes"], 60)
+
     def test_week_query_includes_scheduled_or_due_items_and_blocks(self):
         personal_plan.create_item(self.base, "Monday task", scheduled_date="2026-09-07")
         personal_plan.create_item(self.base, "Friday deadline", due_date="2026-09-11")

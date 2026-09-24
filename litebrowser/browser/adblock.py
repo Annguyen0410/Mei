@@ -279,9 +279,6 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
                 return True
         return False
 
-    def _all_blocked(self):
-        return self._all_blocked_domains
-
     def _is_trusted_challenge_url(self, host: str) -> bool:
         host = (host or "").lower().rstrip(".")
         return any(host == domain or host.endswith("." + domain) for domain in _trusted_challenge_domains())

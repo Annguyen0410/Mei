@@ -443,8 +443,8 @@ def show_extensions_dialog(parent):
             new_config[item.text()] = (item.checkState() == Qt.Checked)
         with open(ext_conf_file, "w", encoding="utf-8") as f:
             json.dump(new_config, f, indent=4)
-        if hasattr(parent, "_user_extension_scripts_cache"):
-            parent._user_extension_scripts_cache = None
+        if hasattr(parent, "invalidate_extension_cache"):
+            parent.invalidate_extension_cache()
         if hasattr(parent, "browsers"):
             for browser in getattr(parent, "browsers", []):
                 try:

@@ -17,10 +17,18 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# Alternate Qt binding: the engine upgrade path (newer Chromium) is exercised by
+# installing these instead of PyQt5; litebrowser/qt_compat.py picks them up.
+qt6 = ["PyQt6>=6.6", "PyQt6-WebEngine>=6.6"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["litebrowser*"]
+
+# The chain manifest ships with the code so dev and a packaged build read the
+# same project chain (see litebrowser/core/app_paths.py).
+[tool.setuptools.package-data]
+litebrowser = ["data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

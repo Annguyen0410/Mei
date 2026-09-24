@@ -441,4 +441,4 @@ class MenusMixin:
 
         refresh()
         dialog.exec_()
-        self._user_extension_scripts_cache = None
+        self.invalidate_extension_cache()

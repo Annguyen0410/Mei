@@ -289,7 +289,7 @@ class HomeDashboardPage(QWidget):
         # Time-of-day greeting: the home hero greets like the new-tab page
         # does (v6.4 used a static tagline on Home only).
         try:
-            from litebrowser.browser.new_tab_page import cafe_greeting
+            from litebrowser.core.greetings import cafe_greeting
 
             _eyebrow, headline = cafe_greeting()
         except Exception:

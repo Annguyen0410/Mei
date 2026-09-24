@@ -7,7 +7,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import parse_qs, quote_plus, unquote_plus, urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 from PyQt5.QtCore import (
     QAbstractAnimation,
@@ -2514,9 +2514,30 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
                     title = ""
             history_service.log_event(self.base_dir, "browser-visit", title or url_str, url_str, {"url": url_str})
 
+    def _extension_cache_signature(self):
+        """Fingerprint of Extensions/ so edits invalidate the cache by themselves.
+
+        The cache used to live until the app restarted: editing a user script or
+        toggling it in extensions.json changed nothing for already-open tabs.
+        """
+        entries = []
+        try:
+            for file_name in sorted(os.listdir(self.ext_path)):
+                if not file_name.endswith(".js") and file_name != "extensions.json":
+                    continue
+                try:
+                    entries.append((file_name, os.path.getmtime(os.path.join(self.ext_path, file_name))))
+                except OSError:
+                    continue
+        except OSError:
+            return ()
+        return tuple(entries)
+
     def _get_cached_user_extension_scripts(self):
-        if self._user_extension_scripts_cache is not None:
-            return self._user_extension_scripts_cache
+        signature = self._extension_cache_signature()
+        cached = self._user_extension_scripts_cache
+        if cached is not None and cached[0] == signature:
+            return cached[1]
         scripts = []
         try:
             ext_conf_file = os.path.join(self.ext_path, "extensions.json")
@@ -2539,10 +2560,16 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
                     })
         except Exception as e:
             print("Extension load error:", e)
-        self._user_extension_scripts_cache = scripts
+        self._user_extension_scripts_cache = (signature, scripts)
         return scripts
 
     def invalidate_extension_cache(self):
+        """Drop the cached user scripts; the next page load re-reads Extensions/.
+
+        The cache already re-reads when the folder/config changes, but the
+        extension dialogs call this explicitly so a toggle or import takes effect
+        on the spot instead of waiting for the file mtime to settle.
+        """
         self._user_extension_scripts_cache = None
 
     def on_load_finished(self, ok, browser):
@@ -3134,32 +3161,6 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         if lowered.startswith(("http://", "https://", "file://", "about:")):
             return False
         return "." not in value or " " in value
-
-    def _extract_search_query(self, value: str) -> str:
-        text = (value or "").strip()
-        if not text:
-            return ""
-        if self._looks_like_search_query(text):
-            return text
-        try:
-            parsed = urlparse(text)
-        except Exception:
-            return ""
-        host = (parsed.netloc or "").lower()
-        params = parse_qs(parsed.query or "")
-        if "google." in host:
-            return unquote_plus((params.get("q") or [""])[0])
-        if "startpage.com" in host:
-            return unquote_plus((params.get("q") or [""])[0])
-        if "duckduckgo.com" in host:
-            return unquote_plus((params.get("q") or [""])[0])
-        if "bing.com" in host:
-            return unquote_plus((params.get("q") or [""])[0])
-        if "search.brave.com" in host:
-            return unquote_plus((params.get("q") or [""])[0])
-        if "ecosia.org" in host:
-            return unquote_plus((params.get("q") or [""])[0])
-        return ""
 
     def _on_search_engine_changed(self, index):
         if index < 0:

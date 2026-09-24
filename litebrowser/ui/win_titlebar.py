@@ -2,7 +2,9 @@
 import ctypes
 import sys
 
-from PyQt5.QtCore import QTimer
+from litebrowser.qt import QtCore
+
+QTimer = QtCore.QTimer
 
 
 def _set_windows_dark_titlebar(hwnd: int, enabled: bool = True) -> bool:

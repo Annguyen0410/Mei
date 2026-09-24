@@ -93,19 +93,12 @@ def show_quick_switcher(parent):
 
     # Slash-command registry (single source of truth in core.commands): the
     # palette generates entries — argument-taking commands get a trailing
-    # space so accepting one prefills the omnibar.
+    # space so accepting one prefills the omnibar. The linked-site commands used
+    # to be appended by hand here, which is exactly the drift the registry exists
+    # to prevent.
     from litebrowser.core.commands import COMMANDS as _REGISTRY
 
-    COMMANDS = tuple(
-        (cmd + (" " if takes_arg else ""), desc)
-        for cmd, takes_arg, desc in _REGISTRY
-    ) + (
-        ("/cql", "Cục Quản Lý"),
-        ("/mas", "MAS"),
-        ("/bimat", "Bí Mật"),
-        ("/boitoan", "Bói Toán"),
-        ("/leaderboard", "World Leaderboard"),
-    )
+    COMMANDS = tuple((cmd.completion(), cmd.description) for cmd in _REGISTRY)
 
     def build_results():
         q = search_edit.text().strip().lower()

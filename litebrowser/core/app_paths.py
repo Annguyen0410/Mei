@@ -28,9 +28,10 @@ LEGACY_BUNDLED_FOLDER_MARKERS = (
     "Cuc Quan Ly - Ban Day Du 1",
 )
 
-# The "project chain": six sibling web apps linked into the browser. Each entry
-# maps a stable ASCII key to (a) a human title and (b) the folder names the app
-# may live under — first the bundled web_support alias, then the live source folder.
+# The "project chain": the sibling web apps linked into the browser. Each entry
+# maps a stable ASCII key to (a) a human title and (b) the *fallback* folder names
+# the app may live under. The preferred folder and the deployed URL now come from
+# the packaged chain.json; these aliases only cover layouts it does not name.
 BUNDLED_SITES = (
     {
         "key": "linklumina",
@@ -79,19 +80,17 @@ BUNDLED_SITES = (
     },
 )
 
-# Deployed Personal Hub links. ``chain.json`` remains the primary source when
-# it contains a remote URL; these fallbacks keep the six public apps available
-# in fresh profiles and packaged builds even when the bundled manifest is blank.
-REMOTE_SITE_FALLBACKS: dict[str, str] = {
-    "linklumina": "https://graceful-kangaroo-4ebbee.netlify.app",
-    "cucquanly": "https://starlit-lily-f90e23.netlify.app",
-    "mas": "https://mahoraga-adapt-system-mas-v9-0.onrender.com",
-    "boitoan": "https://boitoanzaigame.netlify.app",
-    "worldleaderboard": "https://worldleaderboard.netlify.app",
-    "bimat": "https://personalfrequencys.netlify.app",
-}
-PROJECT_HUB_REMOTE = ""
 CHAIN_JSON_NAME = "chain.json"
+
+# The chain manifest is shipped INSIDE the package so every launch mode reads the
+# same file — dev checkout, the repo-root shim and the frozen .exe. Previously the
+# search order let a stray `chain.json` higher up the tree win in dev, so the dev
+# app and the released app could resolve different chains, and the six remote URLs
+# lived here as hard-coded fallbacks instead of in the manifest. Add or remove an
+# app by editing litebrowser/data/chain.json only.
+PACKAGED_CHAIN_MANIFEST = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "data", CHAIN_JSON_NAME)
+)
 
 
 def project_root() -> str:
@@ -242,13 +241,27 @@ def _bundled_site_search_roots(app_dir: str | None = None) -> list[str]:
     return roots
 
 
+def _folder_candidates(spec: dict, app_dir: str | None = None) -> tuple[str, ...]:
+    """Folders to try for one site: the manifest's choice first, then aliases."""
+    preferred = _chain_folder_by_id(app_dir).get(spec["key"], "")
+    names = ([preferred] if preferred else []) + list(spec["folders"])
+    seen: set[str] = set()
+    result: list[str] = []
+    for name in names:
+        marker = os.path.normcase(name)
+        if name and marker not in seen:
+            seen.add(marker)
+            result.append(name)
+    return tuple(result)
+
+
 def bundled_site_index_path(key: str, app_dir: str | None = None) -> str:
     """Absolute path to a bundled site's index.html ('' when not found)."""
     spec = next((item for item in BUNDLED_SITES if item["key"] == key), None)
     if not spec:
         return ""
     for root in _bundled_site_search_roots(app_dir):
-        for folder_name in spec["folders"]:
+        for folder_name in _folder_candidates(spec, app_dir):
             candidate = os.path.join(root, folder_name)
             if os.path.isfile(os.path.join(candidate, "index.html")):
                 return os.path.join(candidate, "index.html")
@@ -263,57 +276,98 @@ def bundled_site_url(key: str, app_dir: str | None = None) -> str:
 
 
 def chain_manifest_path(app_dir: str | None = None) -> str:
-    """Absolute path to the shared chain.json manifest ('' when missing)."""
+    """Absolute path to the chain.json manifest in force ('' when none is found).
+
+    The packaged manifest wins, so dev and a packaged build cannot drift. The
+    copies published beside the exe / in web_support are only a fallback for
+    layouts where the package data was not shipped, and use is logged.
+    """
+    if os.path.isfile(PACKAGED_CHAIN_MANIFEST):
+        return PACKAGED_CHAIN_MANIFEST
     for root in _bundled_site_search_roots(app_dir):
         candidate = os.path.join(root, CHAIN_JSON_NAME)
         if os.path.isfile(candidate):
+            get_logger("app_paths").warning(
+                "packaged chain manifest missing; falling back to %s", candidate
+            )
             return candidate
     return ""
 
 
+_chain_manifest_cache: dict[str, tuple[float, dict]] = {}
+
+
 def chain_manifest(app_dir: str | None = None) -> dict:
-    """Parsed chain.json — the single source of truth linking all seven apps."""
+    """Parsed chain.json — the single source of truth for the project chain.
+
+    Holds every chained app (six sites + the Project Hub) with its local folder
+    and deployed URL. Cached per path+mtime so the repeated lookups during
+    startup, the Sites page and the shell palette stay cheap.
+    """
     path = chain_manifest_path(app_dir)
-    if path:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("apps"), list):
-                return data
-        except (OSError, ValueError):
-            pass
-    return {}
+    if not path:
+        return {}
+    try:
+        stamp = os.path.getmtime(path)
+    except OSError:
+        return {}
+    cached = _chain_manifest_cache.get(path)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not (isinstance(data, dict) and isinstance(data.get("apps"), list)):
+        return {}
+    _chain_manifest_cache[path] = (stamp, data)
+    return data
+
+
+def manifest_apps(app_dir: str | None = None) -> list[dict]:
+    """Manifest entries that carry an id, in manifest order."""
+    apps = chain_manifest(app_dir).get("apps") or []
+    return [app for app in apps if isinstance(app, dict) and app.get("id")]
 
 
 def _chain_remote_by_id(app_dir: str | None = None) -> dict[str, str]:
-    manifest = chain_manifest(app_dir)
-    mapping: dict[str, str] = {}
-    for app in manifest.get("apps", []):
-        if isinstance(app, dict) and app.get("id") and app.get("remote"):
-            mapping[str(app["id"])] = str(app["remote"])
-    return mapping
+    return {
+        str(app["id"]): str(app["remote"])
+        for app in manifest_apps(app_dir)
+        if app.get("remote")
+    }
+
+
+def _chain_folder_by_id(app_dir: str | None = None) -> dict[str, str]:
+    return {
+        str(app["id"]): str(app["folder"])
+        for app in manifest_apps(app_dir)
+        if app.get("folder")
+    }
 
 
 def bundled_sites(app_dir: str | None = None) -> list[dict]:
-    """The six chained sites with resolved file:// URLs plus remote (deployed)
-    URLs from chain.json. ``url`` == '' when the local copy is missing."""
+    """The chained sites with resolved file:// URLs plus the deployed URLs from
+    chain.json. ``url`` == '' when the local copy is missing, ``remote`` == ''
+    when the manifest leaves that app unpublished."""
     remote_by_id = _chain_remote_by_id(app_dir)
     result: list[dict] = []
     for spec in BUNDLED_SITES:
         item = dict(spec)
         item["url"] = bundled_site_url(spec["key"], app_dir)
-        item["remote"] = remote_by_id.get(spec["key"]) or REMOTE_SITE_FALLBACKS.get(spec["key"], "")
+        item["remote"] = remote_by_id.get(spec["key"], "")
         result.append(item)
     return result
 
 
 def chain_remote_sites(app_dir: str | None = None) -> list[dict]:
-    """Deployed (cloud) versions of the six apps plus the hub, from chain.json.
+    """Deployed (cloud) versions of the chained apps plus the hub, from chain.json.
     Each item has url = remote URL so it can be registered as a Personal site."""
     remote_by_id = _chain_remote_by_id(app_dir)
     result: list[dict] = []
     for spec in BUNDLED_SITES:
-        remote = remote_by_id.get(spec["key"]) or REMOTE_SITE_FALLBACKS.get(spec["key"], "")
+        remote = remote_by_id.get(spec["key"], "")
         if not remote:
             continue
         result.append({

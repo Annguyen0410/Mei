@@ -130,16 +130,13 @@ class AppShell(QMainWindow):
         self.omnibar = QLineEdit()
         self.omnibar.setObjectName("ShellOmnibar")
         self.omnibar.setPlaceholderText("Search the web or run a command  ·  /task  /note  /ask")
-        self._omnibar_completer = QCompleter([
-            "/home", "/browser", "/history", "/ai", "/personal",
-            "/library", "/settings", "/cql", "/guide", "/help",
-            "/hub", "/linklumina", "/mas", "/leaderboard", "/bimat", "/boitoan",
-            "/task ", "/note ", "/board ", "/save-page", "/ask ",
-            "/read", "/reading-list",
-            "/focus ", "/status", "/cafe",
-            "/freeze", "/save-tabs ", "/summarize",
-            "/brief", "/agent ", "/group-tabs", "/sync",
-        ], self)
+        # Generated from core.commands: the autocomplete used to be a hand-written
+        # list that had drifted six commands behind the registry (/accent,
+        # /export, /review, /routines, /template, /theme) with no test able to
+        # tell. Adding a command is now a registry edit only.
+        from litebrowser.core.commands import completions as _command_completions
+
+        self._omnibar_completer = QCompleter(_command_completions(), self)
         self._omnibar_completer.setCaseSensitivity(Qt.CaseInsensitive)
         self._omnibar_completer.setFilterMode(Qt.MatchStartsWith)
         self.omnibar.setCompleter(self._omnibar_completer)
@@ -197,26 +194,12 @@ class AppShell(QMainWindow):
         self._top_bar = top_bar
         shell_layout.addWidget(top_bar)
 
-        # Omnibar hints from the shared registry (core.commands): descriptions
-        # stay in sync with the palette and docs automatically.
-        _hint_examples = {
-            "/task": "/task Prepare report",
-            "/note": "/note Work/Brief | body",
-            "/board": "/board Sprint map",
-            "/ask": "/ask …",
-            "/focus": "/focus 25 (minutes)",
-            "/save-tabs": "/save-tabs Research",
-            "/theme": "/theme matcha-day",
-            "/accent": "/accent matcha",
-            "/template": "/template daily",
-            "/agent": "/agent summary",
-        }
-        self._command_hints = {}
-        from litebrowser.core.commands import COMMANDS as _cmd_registry
+        # Omnibar hints come from the shared registry (core.commands) — both the
+        # description and the example, so hints cannot drift from the palette or
+        # the docs.
+        from litebrowser.core.commands import hints as _command_hints
 
-        for _cmd, _takes_arg, _desc in _cmd_registry:
-            _example = _hint_examples.get(_cmd, "")
-            self._command_hints[_cmd] = f"{_desc} · {_example}" if _example else _desc
+        self._command_hints = _command_hints()
 
         self.split = QSplitter(Qt.Horizontal)
         shell_layout.addWidget(self.split, 1)
@@ -425,13 +408,6 @@ class AppShell(QMainWindow):
         """Themed QSS for modal dialogs spawned from the shell (command
         palette, prompts, etc.). Mirrors SearchWindow._dialog_stylesheet."""
         return theme.dialog_qss(prefs.get_shell_theme(self.profile_dir), prefs.get_accent(self.profile_dir))
-
-    def _open_shell_palette(self):
-        """Modal feature-finder fallback (kept for reuse; the inline omnibar
-        popup is the primary entry point)."""
-        from litebrowser.ui.dialogs.shell_palette import show_shell_palette
-
-        show_shell_palette(self)
 
     def _open_omnibar_feature_finder(self):
         """Search-icon click: focus the omnibar and show the full feature list
@@ -895,6 +871,13 @@ class AppShell(QMainWindow):
         self._sync_auto_theme_timer()
 
     def _startup_update_check(self):
+        # A self-update keeps the previous build as ``.bak`` and downloads a
+        # ~170 MB copy of the installer. Sweep both before polling the channel so
+        # an update is space-neutral instead of slowly eating the disk.
+        try:
+            update_service.cleanup_old_artifacts()
+        except Exception:
+            pass
         self.run_update_check(manual=False)
 
     def open_release_page(self, url: str | None = None):
@@ -963,12 +946,16 @@ class AppShell(QMainWindow):
             notes = f"\n\nNotes:\n{info.notes}" if info.notes else ""
             self.update_status_text = f"A new version {info.latest_version} is available. You are on {info.current_version}."
             self.refresh_shell()
+            # Startup checks are automatic: default to "No" so a stray Enter can
+            # never start replacing the executable. Only an explicit
+            # "Check for updates" pre-selects Yes.
+            default_button = QMessageBox.Yes if manual else QMessageBox.No
             result = QMessageBox.question(
                 self,
                 "Update available",
                 f"Mei {info.latest_version} is available.{published}\nDownload: {info.download_url}{notes}\n\nDownload and install now?",
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
+                default_button,
             )
             if result == QMessageBox.Yes:
                 self.install_available_update()
@@ -997,7 +984,9 @@ class AppShell(QMainWindow):
         self.update_status_text = f"Downloaded {info.latest_version}. Applying update..."
         self.refresh_shell()
         try:
-            update_service.install_downloaded_update(package_path)
+            update_service.install_downloaded_update(
+                package_path, update_service.local_channel_packages()
+            )
         except Exception as exc:
             self.update_status_text = update_service.format_error(exc)
             self.refresh_shell()

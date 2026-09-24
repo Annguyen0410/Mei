@@ -3,6 +3,9 @@
 This document describes the current code structure and the **extension points** so future
 features can be added without touching code all over the place. Read it alongside `README.md`.
 
+Two companion docs: `docs/CAPABILITIES.md` (what is wired, what is deliberately reserved)
+and `docs/COMMAND_REFERENCE.md` (the slash-command surface).
+
 ---
 
 ## 1. Layers
@@ -10,7 +13,9 @@ features can be added without touching code all over the place. Read it alongsid
 ```text
 browser.py / litebrowser/main.py     Entry: profile + QApplication + 2 AppShell
         │
-litebrowser/ui/                       UI layer (PyQt5 / PyQt6 via qt_compat shim)
+litebrowser/qt.py                     Qt façade — the only sanctioned way in
+        │                             (PyQt5 / PyQt6 selected by qt_compat.py)
+litebrowser/ui/                       UI layer
    ├─ app_shell.py                    Master shell: rail + omnibar + insight panel
    ├─ main_window/window.py           SearchWindow (main browser)
    ├─ personal_window.py              Personal Hub (Notes/Tasks/Calendar/Boards/Files/Sites)
@@ -28,6 +33,7 @@ litebrowser/browser/                  Browser core (independent of the shell)
         │
 litebrowser/services/                 Data layer (never imports Qt widgets)
    ├─ prefs.py (core)                 All getters/setters + registry
+   ├─ update_service.py               Version check (product-tagged) + verified install
    ├─ life_service.py                 Tasks / Events / Boards / Saved pages
    ├─ personal_service.py             Notes (SafeVault) + personal root
    ├─ ai_service.py / retriever.py    RAG index + BM25 (+ cosine embed when Ollama)
@@ -39,10 +45,22 @@ litebrowser/services/                 Data layer (never imports Qt widgets)
    └─ ...                             download_mgr, password, security, ...
         │
 litebrowser/core/                     Foundation: paths, storage, lock, version
+   ├─ product.py                      Identity: PRODUCT_ID, version, update channel, asset
+   ├─ commands.py                      Slash-command registry (name / arg / kind / example)
+   ├─ app_paths.py                     Workspace chain manifest + profile paths
+   ├─ store.py / migrations.py        Versioned JSON stores + stepwise upgrades
+   ├─ greetings.py                    Shared cafe greeting (no services↔browser cycle)
+   └─ ...                             prefs, time_utils, log, profile_lock
+litebrowser/data/chain.json           Workspace-app manifest (shipped as package data)
 ```
 
-**Important rule:** `services/` and `core/` must **not** import `ui/`. All data flows through
-services; the UI only calls services and renders.
+**Important rules** (enforced by `tests/test_architecture_boundaries.py`, which also fails on
+orphan modules and stale allowlists):
+
+1. `services/` and `core/` must **not** import `ui/`. All data flows through services.
+2. `services/` must not import `browser/`, and `browser/` must not import `services/`
+   (shared helpers live in `core/`, e.g. `core/greetings.py`).
+3. The layer graph stays acyclic.
 
 ---
 
@@ -53,6 +71,25 @@ services; the UI only calls services and renders.
   → no risk of corrupting a file mid-write.
 - `core/profile_lock.py` is a **per-profile RLock** → services can nest locks safely
   (e.g. `add_task` locks, then calls `history_service.log_event` which locks again).
+
+### Versioned stores (`core/store.py`)
+
+A JSON store is described **once** and read/written through the store API:
+
+```python
+PLAN_STORE = StoreSpec(name="personal_plan.json", version=PLAN_VERSION, default=_default_plan)
+
+plan   = read_store(base_dir, PLAN_STORE)     # upgrades + persists once if older
+write  = write_store(base_dir, PLAN_STORE, payload)  # stamps version, atomic, locked
+```
+
+Guarantees: the per-profile lock is taken for you; every write is atomic and carries
+`"version"`; an older file is upgraded one version at a time via `core/migrations.py`
+and re-persisted exactly once; a file written by a **newer** build is left untouched
+(no silent downgrade); a missing migration hop logs and leaves the file alone instead of
+writing a half-upgraded payload. To change a shape: bump the version and add
+`@migrations.register("<file>", from_version=N)`, which returns the next version's payload.
+Covered by `tests/test_store_migrations.py`.
 
 ---
 
@@ -70,13 +107,29 @@ Add an entry to `theme.PALETTES` (a color dict with all tokens). No QSS edits ne
 Add a `(base, hover, soft, focus)` tuple to `theme.ACCENTS`.
 
 ### Add a slash command
-In `app_shell.py`:
-1. Add a suggestion to `_omnibar_completer` and `_command_hints`.
-2. Handle it in `_handle_omnibar_text`.
+Edit **exactly one place**: `litebrowser/core/commands.py` → append a `Command`.
+The omnibar completer, the hint line, the help dialog and the palette are all generated
+from that registry, and `tests/test_command_registry.py` fails if the registry and the
+documented command list (`docs/COMMAND_REFERENCE.md`) drift apart.
 
-Current slash commands: `/home /browser /history /ai /personal /library /settings`,
-`/note /task /board /save-page /freeze /save-tabs /summarize /brief`,
-`/agent summary|tasks|review /group-tabs /sync`.
+### Change the update channel or release asset
+Edit **exactly one place**: `litebrowser/core/product.py`. Every identity string
+(`PRODUCT_ID`, `APP_VERSION`, `ASSET_NAME`, channel path) lives there and nowhere else.
+A release channel JSON must declare `"product": "mei"`; `update_service.check_for_updates`
+refuses a channel that belongs to another product, and refuses an asset whose name is not
+`ASSET_NAME`. The installer verifies the download (exists, ≥ `MIN_PACKAGE_BYTES`, `MZ`
+header) before it touches the running `Mei.exe`, and keeps a `.bak` with a 15 s watchdog
+that rolls back. `tests/test_update_identity.py` covers all of it.
+
+### Ship an update without a server (self-replacing build)
+The channel is checked in this order: an explicit URL (tests/tooling) →
+`<exe dir>/update/update.json` → `product.DEFAULT_UPDATE_CHANNEL_URL`. So upgrading a
+machine that has no release server is: bump `APP_VERSION`, `build_exe.bat`, then
+`.venv\Scripts\python.exe tools\write_local_update.py dist` and copy that `dist/update`
+folder beside the installed `Mei.exe`. The next launch offers it, verifies it, replaces the
+executable (`.bak` + watchdog) and then deletes the old build, the `.bak` and the ~170 MB
+copy in `%TEMP%\Mei\updates` — `update_service.cleanup_old_artifacts()` runs on every
+startup so repeated updates never grow the disk usage.
 
 ### Add an extension user-script with match patterns
 `litebrowser/browser/extension_patterns.py` parses the `==UserScript==` header (`@match` / `@exclude`)
@@ -88,8 +141,19 @@ loop (`window.py`) calls `should_inject_for_url`.
 Endpoints: `POST {base}/api/sync/push` + `GET {base}/api/sync/latest`. Sample server: README → Self-hosted sync.
 
 ### Add a workspace app / AI provider
-- Workspace: `workspace_manager.py` + `app_shell.nav_sections`.
+- Workspace app: edit **`litebrowser/data/chain.json`** (id, name, glyph, subtitle, color,
+  `folder`, `remote`) and mirror it to `web_support/chain.json`. `core/app_paths.py` reads
+  the packaged manifest first and resolves `folder` against the dev sibling roots, so app
+  ids, folders and remote seeds are declared once — there is no hard-coded URL table left.
+  `tests/test_chain_manifest.py` checks the registry↔manifest contract.
 - AI provider: `ai_service.py` + `ai_window.cmb_provider` (data = key).
+
+### Migrate a module to the Qt façade
+Import `from litebrowser.qt import QtCore, QtWidgets, ...` instead of `PyQt5.*`, then drop
+the file from `QT5_ALLOWLIST` in `tests/test_qt_facade.py`. That test fails if a module
+imports the binding directly outside the allowlist **and** if the allowlist keeps a stale
+entry, so the migration can only move forward. Only `qt.py`, `qt_compat.py` and `main.py`
+(must set Chromium/GL env vars before `QApplication` exists) may import PyQt5 forever.
 
 ### Add a new indexed data type for AI
 `ai_service.collect_docs()` — add the source and the retriever indexes it automatically.
@@ -117,7 +181,13 @@ Endpoints: `POST {base}/api/sync/push` + `GET {base}/api/sync/latest`. Sample se
 | Rename "sync-ready" → local snapshot | ✅ Done (5.1) | honest UI |
 | Merge Guide/Control Center | ✅ Ready | only one `show_browser_control_center` |
 | Password manager export/import | ⏳ Not yet | depends on `cryptography` |
-| Update service wired to a real URL | ⏳ Not yet | set env `LITEBROWSER_UPDATE_METADATA_URL` |
+| Update channel ownership (P0) | ✅ Done | `core/product.py` + product-tagged metadata + verified install/rollback |
+| Serverless self-update + old-build cleanup | ✅ Done | `<exe dir>/update/` channel + `cleanup_old_artifacts()` |
+| Single chain manifest (P1) | ✅ Done | `litebrowser/data/chain.json` → `core/app_paths.py` |
+| Command registry (P2) | ✅ Done | `core/commands.py`, every surface generated |
+| Layer boundaries + no dead API (P3/P6) | ✅ Done | `test_architecture_boundaries.py`, `test_capability_ledger.py` |
+| Versioned stores + migrations (P4) | ✅ Done | `core/store.py`, `core/migrations.py` |
+| Qt façade for PyQt6 (P5) | ✅ In progress | `litebrowser/qt.py`; allowlist shrinks file by file |
 | Standardize 3 tab-set types | ⏳ Not yet | Search/Personal/AI differ slightly |
 | Morning Brief (6.0) | ✅ Done | `brief_service.py` + Home card + `/brief` |
 | AI Agent actions (6.0) | ✅ Done | `/agent summary/tasks`; `/agent review` (6.2) |
@@ -134,6 +204,20 @@ Endpoints: `POST {base}/api/sync/push` + `GET {base}/api/sync/latest`. Sample se
 
 ```bat
 cd /d "D:\Code folder\new browser\new browser"
-.venv\Scripts\python.exe -m py_compile litebrowser\core\*.py litebrowser\services\*.py litebrowser\browser\*.py litebrowser\ui\*.py litebrowser\ui\main_window\*.py litebrowser\ui\shell\*.py litebrowser\ui\dialogs\*.py
+
+REM full test suite (headless — no GPU/display needed)
+set QT_QPA_PLATFORM=offscreen
+set PYTHONDONTWRITEBYTECODE=1
+.venv\Scripts\python.exe -m pytest -p no:cacheprovider -q --no-header
+
+REM lint the layer rules
+.venv\Scripts\python.exe -m ruff check --select F401,F811,F841 litebrowser tests
+
+REM run the app
 .venv\Scripts\python.exe browser.py
 ```
+
+The suite includes the architecture gates (`test_architecture_boundaries.py`,
+`test_capability_ledger.py`, `test_qt_facade.py`), the product/update identity tests
+(`test_update_identity.py`), and the store/migration tests (`test_store_migrations.py`),
+so a green run is the contract this document describes.

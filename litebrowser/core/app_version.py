@@ -1,14 +1,31 @@
-import os
+"""App identity — historical import site, values now owned by ``core/product.py``.
 
-APP_NAME = "Mei"
-APP_VERSION = "0.6.9.0"
+Kept so the ~40 existing ``app_version.X`` call sites keep working while there is
+exactly one place that defines the product id, version, release channel and asset
+name.  Add new identity facts to ``product.py``, never here.
+"""
+from litebrowser.core.product import (
+    APP_NAME,
+    APP_VERSION,
+    ASSET_NAME,
+    DEFAULT_UPDATE_CHANNEL_URL,
+    MIN_PACKAGE_BYTES,
+    PRODUCT_ID,
+    PRODUCT_NAME,
+    RELEASES_PAGE_URL,
+    UPDATE_CHANNEL_PATH,
+    UPDATE_METADATA_URL,
+)
 
-# Auto-update channel: the app fetches this JSON to know when a new build exists.
-# Host the file `update.json` (see litebrowser-update/ beside the project) at this
-# URL, e.g. by dragging the litebrowser-update folder onto Netlify. Env vars still
-# override both values for forks / local testing.
-UPDATE_METADATA_URL = os.environ.get(
-    "LITEBROWSER_UPDATE_METADATA_URL",
-    "https://graceful-kangaroo-4ebbee.netlify.app/litebrowser-update/update.json",
-).strip()
-RELEASES_PAGE_URL = os.environ.get("LITEBROWSER_RELEASES_PAGE_URL", "").strip()
+__all__ = [
+    "APP_NAME",
+    "APP_VERSION",
+    "ASSET_NAME",
+    "DEFAULT_UPDATE_CHANNEL_URL",
+    "MIN_PACKAGE_BYTES",
+    "PRODUCT_ID",
+    "PRODUCT_NAME",
+    "RELEASES_PAGE_URL",
+    "UPDATE_CHANNEL_PATH",
+    "UPDATE_METADATA_URL",
+]

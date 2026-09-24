@@ -466,7 +466,8 @@ class TestAndroidBridgeHTTP(unittest.TestCase):
         )
         self.assertTrue(out["ok"])
         self.assertEqual(out["action"], "open_app")
-        self.assertEqual(out["result"]["url"], app_paths.REMOTE_SITE_FALLBACKS["mas"])
+        manifest_mas = next(s["url"] for s in app_paths.chain_remote_sites() if s["key"] == "mas")
+        self.assertEqual(out["result"]["url"], manifest_mas)
         from litebrowser.services import open_request
         reqs = open_request.drain_open_requests(self.base)
         self.assertEqual(len(reqs), 1)

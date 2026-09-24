@@ -30,6 +30,10 @@ from litebrowser.services import (
     personal_service,
 )
 
+# Contract version advertised to the phone app. Bump it when an action's payload
+# or result shape changes so a future client can negotiate instead of guessing.
+API_VERSION = 1
+
 SUPPORTED_ACTIONS = (
     "create_note",
     "append_to_library",
@@ -765,6 +769,7 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
                     "app": app_version.APP_NAME,
                     "bridge": "litebrowser-mobile",
                     "version": app_version.APP_VERSION,
+                    "protocol_version": API_VERSION,
                     "mode": mode,
                     "capabilities": list(SUPPORTED_ACTIONS),
                 },
@@ -776,7 +781,7 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
                 200,
                 {
                     "ok": True,
-                    "protocol_version": 1,
+                    "protocol_version": API_VERSION,
                     "actions": list(SUPPORTED_ACTIONS),
                     "auth": {"mode": "bearer"},
                     "upload": {

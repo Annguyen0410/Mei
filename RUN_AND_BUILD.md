@@ -1,4 +1,4 @@
-# Run & Build MeiBrowser (Desktop App)This guide is specifically about **running** and **packaging** MeiBrowser
+# Run & Build MeiBrowser (Desktop App)This guide is specifically about **running** and **packaging** MeiBrowser
 as a desktop app (.exe on Windows). For code / architecture content, see `README.md` and `ARCHITECTURE.md`.
 
 ---
@@ -136,7 +136,46 @@ Result: **`dist\MeiSetup.exe`** — running it installs Mei into
 `Program Files\Mei` (with the `web_support` folder), creates Start Menu + desktop
 shortcuts automatically, and provides an uninstaller in Control Panel.
 
-### 5.5 After building
+### 5.5 Let an installed Mei upgrade itself (no server, no Netlify)
+
+An installed `Mei.exe` looks for a local update channel **before** its remote default:
+
+```text
+<folder of the running exe>\update\update.json     ← wins if it exists
+<folder of the running exe>\update\Mei.exe
+```
+
+So the whole release loop is three commands:
+
+```powershell
+# 1. bump APP_VERSION in litebrowser\core\product.py (only a HIGHER version is offered)
+# 2. build the new exe
+.\build_exe.bat
+# 3. publish it as a local channel next to the exe
+.\.venv\Scripts\python.exe tools\write_local_update.py dist
+```
+
+Then copy `dist\update` beside the `Mei.exe` you already run and launch it. The app:
+
+1. reads `update\update.json` and refuses anything not tagged `"product": "mei"`;
+2. copies the package to `%TEMP%\Mei\updates` (the file you dropped is never moved);
+3. verifies it (size ≥ 1 MB, `MZ` header) **before** it touches the executable;
+4. replaces its own `Mei.exe` from a helper script that runs after it exits, keeping
+   `Mei.exe.bak` for a 15-second rollback window — if the new build does not come up, the
+   backup is restored and started instead;
+5. deletes the old build, the `.bak` and the downloaded copy once the new one is running,
+   and sweeps leftovers from crashed attempts on every startup
+   (`services\update_service.py` → `cleanup_old_artifacts`).
+
+`build_exe.bat` also prunes the space old builds were holding: stale
+`dist\PolarAppWin.exe` / `dist\browser.exe` / `dist\LiteBrowser.exe`, `*.old`, `*.bak` and
+the intermediate `build\Mei`, `build\LiteBrowser`, `build\browser` folders. `dist\Mei.exe`
+itself is never deleted before a build succeeds, so a failed build cannot cost you the app.
+
+> A `download_url` in `update.json` may be a local path (`"D:\\builds\\Mei.exe"`), a
+> `file:///…` URL, or an https link — all three work.
+
+### 5.6 After building
 - App data (profile, notes, BrowserData…) is created **outside the exe**:
   - running from source: `runtime_data/profiles/...`
   - running the exe: `%LOCALAPPDATA%\Mei\runtime_data/profiles/...`
@@ -155,8 +194,10 @@ run.bat                     ← quick launcher (prefers .venv)
 litebrowser/main.py         ← QApplication + 2 AppShell + proxy flag
 litebrowser/qt_compat.py    ← PyQt5 → PyQt6 shim
 litebrowser/core/app_paths.py ← runtime_data / profile locations
-litebrowser/core/app_version.py ← APP_VERSION (currently: 6.4.0)
-build_exe.bat                ← one-click PyInstaller exe build
+litebrowser/core/product.py  ← APP_VERSION + update channel + release asset name
+litebrowser/core/app_version.py ← re-exports product.py (older import sites)
+build_exe.bat                ← one-click PyInstaller exe build (prunes old builds)
+tools/write_local_update.py  ← write dist\update (serverless self-update channel)
 create_desktop_shortcut.ps1 ← create an icon desktop shortcut
 installer.iss               ← Inno Setup: real installer (MeiSetup.exe)
 ```

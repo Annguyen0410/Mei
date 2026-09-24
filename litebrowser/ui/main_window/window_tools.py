@@ -188,13 +188,6 @@ class WindowToolsMixin:
         except AttributeError:
             return QWebEnginePage.FindBackward
 
-    def _find_flags_count(self):
-        from PyQt5.QtWebEngineWidgets import QWebEnginePage
-        try:
-            return QWebEnginePage.FindFlag.FindCaseSensitively
-        except AttributeError:
-            return 0
-
     def _on_find_text_changed(self, text):
         browser = self.current_browser()
         if not browser:

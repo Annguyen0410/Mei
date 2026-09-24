@@ -5,16 +5,17 @@ keeps saved research sessions inexpensive to keep around and lets the UI
 restore inactive tabs in a hibernated state.
 """
 
-import os
 import time
 import uuid
 from collections.abc import Iterable
 from typing import Any
 
+from litebrowser.core import migrations
 from litebrowser.core.profile_lock import profile_locked
-from litebrowser.core.storage_utils import read_json, write_json
+from litebrowser.core.store import StoreSpec, read_store, write_store
 
 SCHEMA_VERSION = 2
+TAB_SETS_FILENAME = "tab_sets.json"
 VALID_KINDS = {"search", "personal", "ai", "workspace", "collection"}
 MAX_TAB_SETS = 80
 MAX_AUTO_TAB_SETS = 18
@@ -101,15 +102,34 @@ def _trim_sets(tab_sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return (manual + automatic)[:MAX_TAB_SETS]
 
 
-def tab_sets_path(base_dir: str) -> str:
-    return os.path.join(base_dir, "tab_sets.json")
+# One description of the on-disk contract; reads upgrade older files through the
+# migration registry below and writes stamp the current version.
+TAB_SETS_STORE = StoreSpec(
+    name=TAB_SETS_FILENAME,
+    version=SCHEMA_VERSION,
+    default=lambda: {"sets": []},
+)
+
+
+@migrations.register(TAB_SETS_FILENAME, from_version=1)
+def _migrate_v1_to_v2(data: dict) -> dict:
+    """v1 sets had no ``kind``; v2 gives every set an explicit collection kind."""
+    rows = data.get("sets")
+    migrated = []
+    for item in rows if isinstance(rows, list) else []:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        row.setdefault("kind", "collection")
+        migrated.append(row)
+    data = dict(data)
+    data["sets"] = migrated
+    return data
 
 
 def load_tab_sets(base_dir: str) -> dict[str, Any]:
-    data = read_json(tab_sets_path(base_dir), {"version": SCHEMA_VERSION, "sets": []})
-    if not isinstance(data, dict):
-        return {"version": SCHEMA_VERSION, "sets": []}
-    raw_sets = data.get("sets", [])
+    data = read_store(base_dir, TAB_SETS_STORE)
+    raw_sets = data.get("sets", []) if isinstance(data, dict) else []
     if not isinstance(raw_sets, list):
         raw_sets = []
     normalized = [item for item in (_normalize_set(tab_set) for tab_set in raw_sets) if item]
@@ -119,11 +139,9 @@ def load_tab_sets(base_dir: str) -> dict[str, Any]:
 def save_tab_sets(base_dir: str, data: dict[str, Any]) -> None:
     raw_sets = data.get("sets", []) if isinstance(data, dict) else []
     payload = {
-        "version": SCHEMA_VERSION,
         "sets": _trim_sets([item for item in (_normalize_set(tab_set) for tab_set in raw_sets) if item]),
     }
-    with profile_locked(base_dir):
-        write_json(tab_sets_path(base_dir), payload)
+    write_store(base_dir, TAB_SETS_STORE, payload)
 
 
 def add_tab_set(
@@ -161,11 +179,7 @@ def add_tab_set(
             "tabs": normalize_tabs(tabs),
         }
         data["sets"].append(tab_set)
-        payload = {
-            "version": SCHEMA_VERSION,
-            "sets": _trim_sets(data["sets"]),
-        }
-        write_json(tab_sets_path(base_dir), payload)
+        write_store(base_dir, TAB_SETS_STORE, {"sets": _trim_sets(data["sets"])})
         return tab_set
 
 
@@ -192,7 +206,7 @@ def rename_tab_set(base_dir: str, set_id: str, title: str) -> bool:
             if item.get("id") == set_id:
                 item["title"] = normalized_title
                 item["updated_at"] = int(time.time())
-                write_json(tab_sets_path(base_dir), {"version": SCHEMA_VERSION, "sets": _trim_sets(data["sets"])})
+                write_store(base_dir, TAB_SETS_STORE, {"sets": _trim_sets(data["sets"])})
                 return True
     return False
 
@@ -201,5 +215,4 @@ def remove_tab_set(base_dir: str, set_id: str) -> None:
     with profile_locked(base_dir):
         data = load_tab_sets(base_dir)
         data["sets"] = [item for item in data.get("sets", []) if item.get("id") != set_id]
-        payload = {"version": SCHEMA_VERSION, "sets": _trim_sets(data["sets"])}
-        write_json(tab_sets_path(base_dir), payload)
+        write_store(base_dir, TAB_SETS_STORE, {"sets": _trim_sets(data["sets"])})

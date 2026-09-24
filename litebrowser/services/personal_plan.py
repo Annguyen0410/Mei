@@ -8,13 +8,12 @@ for assignments, tasks, courses, and time blocks.
 from __future__ import annotations
 
 import copy
-import os
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any
 
 from litebrowser.core.profile_lock import profile_locked
-from litebrowser.core.storage_utils import read_json, write_json
+from litebrowser.core.store import StoreSpec, read_store, store_path, write_store
 
 PLAN_VERSION = 1
 PLAN_FILENAME = "personal_plan.json"
@@ -27,7 +26,7 @@ MAX_TAGS = 24
 
 
 def plan_path(base_dir: str) -> str:
-    return os.path.join(base_dir, PLAN_FILENAME)
+    return store_path(base_dir, PLAN_STORE)
 
 
 def _today() -> date:
@@ -206,6 +205,16 @@ def _default_plan() -> dict:
     }
 
 
+# The planner's on-disk contract: versioned reads/writes, one writer, atomic.
+# Bumping PLAN_VERSION requires a migration step for the old version (see
+# core/migrations.py) so an existing profile upgrades instead of being guess-read.
+PLAN_STORE = StoreSpec(
+    name=PLAN_FILENAME,
+    version=PLAN_VERSION,
+    default=_default_plan,
+)
+
+
 def _normalize_plan(data: Any) -> dict:
     source = data if isinstance(data, dict) else {}
     plan = _default_plan()
@@ -224,15 +233,24 @@ def _normalize_plan(data: Any) -> dict:
 
 
 def load_plan(base_dir: str) -> dict:
-    """Load and normalize the plan, returning a detached mutable copy."""
-    return copy.deepcopy(_normalize_plan(read_json(plan_path(base_dir), _default_plan())))
+    """Load and normalize the plan, returning a detached mutable copy.
+
+    Reading goes through the versioned store, so a profile written by an older
+    build is upgraded (and persisted) before it is normalized.
+    """
+    return copy.deepcopy(_normalize_plan(read_store(base_dir, PLAN_STORE)))
+
+
+def _persist_plan(base_dir: str, plan: dict) -> dict:
+    """Single writer for the planner file: versioned, atomic, locked."""
+    return write_store(base_dir, PLAN_STORE, _normalize_plan(plan))
 
 
 def save_plan(base_dir: str, plan: dict) -> dict:
-    normalized = _normalize_plan(plan)
+    normalized = copy.deepcopy(_normalize_plan(plan))
     with profile_locked(base_dir):
-        write_json(plan_path(base_dir), normalized)
-    return copy.deepcopy(normalized)
+        _persist_plan(base_dir, normalized)
+    return normalized
 
 
 def update_plan_settings(base_dir: str, *, semester: dict | None = None) -> dict:
@@ -244,7 +262,7 @@ def update_plan_settings(base_dir: str, *, semester: dict | None = None) -> dict
                 "start_date": _date_string(semester.get("start_date")),
                 "end_date": _date_string(semester.get("end_date")),
             }
-        write_json(plan_path(base_dir), _normalize_plan(plan))
+        _persist_plan(base_dir, plan)
     return load_plan(base_dir)
 
 
@@ -255,7 +273,7 @@ def create_item(base_dir: str, title: str, **fields) -> dict:
     with profile_locked(base_dir):
         plan = load_plan(base_dir)
         plan["items"].append(item)
-        write_json(plan_path(base_dir), _normalize_plan(plan))
+        _persist_plan(base_dir, plan)
     return item
 
 
@@ -272,7 +290,7 @@ def update_item(base_dir: str, item_id: str, **changes) -> dict | None:
             if updated is None:
                 return None
             plan["items"][index] = updated
-            write_json(plan_path(base_dir), _normalize_plan(plan))
+            _persist_plan(base_dir, plan)
             return updated
     return None
 
@@ -289,7 +307,7 @@ def delete_item(base_dir: str, item_id: str) -> bool:
         plan["time_blocks"] = [block for block in plan["time_blocks"] if block.get("item_id") != item_id]
         if len(plan["items"]) == before:
             return False
-        write_json(plan_path(base_dir), _normalize_plan(plan))
+        _persist_plan(base_dir, plan)
         return True
 
 
@@ -300,7 +318,7 @@ def create_course(base_dir: str, name: str, **fields) -> dict:
     with profile_locked(base_dir):
         plan = load_plan(base_dir)
         plan["courses"].append(course)
-        write_json(plan_path(base_dir), _normalize_plan(plan))
+        _persist_plan(base_dir, plan)
     return course
 
 
@@ -317,7 +335,7 @@ def update_course(base_dir: str, course_id: str, **changes) -> dict | None:
             if updated is None:
                 return None
             plan["courses"][index] = updated
-            write_json(plan_path(base_dir), _normalize_plan(plan))
+            _persist_plan(base_dir, plan)
             return updated
     return None
 
@@ -335,7 +353,7 @@ def delete_course(base_dir: str, course_id: str) -> bool:
         for block in plan["time_blocks"]:
             if block.get("course_id") == course_id:
                 block["course_id"] = ""
-        write_json(plan_path(base_dir), _normalize_plan(plan))
+        _persist_plan(base_dir, plan)
         return True
 
 
@@ -352,7 +370,7 @@ def create_time_block(base_dir: str, title: str, block_date: Any, start_minutes:
     with profile_locked(base_dir):
         plan = load_plan(base_dir)
         plan["time_blocks"].append(block)
-        write_json(plan_path(base_dir), _normalize_plan(plan))
+        _persist_plan(base_dir, plan)
     return block
 
 
@@ -369,7 +387,7 @@ def update_time_block(base_dir: str, block_id: str, **changes) -> dict | None:
             if updated is None:
                 return None
             plan["time_blocks"][index] = updated
-            write_json(plan_path(base_dir), _normalize_plan(plan))
+            _persist_plan(base_dir, plan)
             return updated
     return None
 
@@ -381,7 +399,7 @@ def delete_time_block(base_dir: str, block_id: str) -> bool:
         plan["time_blocks"] = [block for block in plan["time_blocks"] if block.get("id") != block_id]
         if len(plan["time_blocks"]) == before:
             return False
-        write_json(plan_path(base_dir), _normalize_plan(plan))
+        _persist_plan(base_dir, plan)
         return True
 
 

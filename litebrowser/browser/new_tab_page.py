@@ -24,28 +24,11 @@ def escape_html(text):
 
 # Café-themed, time-of-day greetings for the speed-dial hero. Each is a
 # (eyebrow, headline) pair so the home page feels alive and on-brand.
-_CAFE_GREETINGS = {
-    "morning": ("Slow Start", "Warm cup, clear mind."),
-    "noon": ("Midday Brew", "Focus fuel is served."),
-    "afternoon": ("Golden Hour", "Pour a cup, stay a while."),
-    "evening": ("Evening Wind-Down", "Low-tide light, soft foam."),
-    "night": ("Late Decaf Call", "Closing time is quiet time."),
-}
-
-
-def cafe_greeting(hour=None):
-    """Return a (headline, subtitle) greeting keyed to the local hour."""
-    if hour is None:
-        from datetime import datetime as _dt
-        hour = _dt.now().hour
-    period = (
-        "night" if hour >= 22 or hour < 5 else
-        "evening" if hour >= 18 else
-        "afternoon" if hour >= 12 else
-        "noon" if hour >= 11 else
-        "morning"
-    )
-    return _CAFE_GREETINGS[period]
+# Greetings are plain text and live in core so the data layer (brief_service),
+# the new-tab page and the Home hero all read one definition. Re-exported here
+# because this module is the historical home of the helper.
+from litebrowser.core.greetings import CAFE_GREETINGS as _CAFE_GREETINGS  # noqa: E402,F401
+from litebrowser.core.greetings import cafe_greeting  # noqa: E402,F401
 
 
 def _safe_link_url(url):

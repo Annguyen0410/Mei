@@ -12,8 +12,9 @@ from collections import Counter
 from datetime import datetime
 from urllib.parse import urlparse
 
-from litebrowser.browser.new_tab_page import cafe_greeting
+# Greetings come from core: the data layer must not import the browser layer.
 from litebrowser.core import prefs
+from litebrowser.core.greetings import cafe_greeting
 from litebrowser.core.log import get_logger
 from litebrowser.services import focus_service, life_service, personal_service
 

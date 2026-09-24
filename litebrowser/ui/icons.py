@@ -4,8 +4,17 @@ Qt stylesheets cannot recolor icons, so theme-following icons are painted
 with QPainter into a pixmap and re-generated whenever the theme/accent
 changes (the shell does this in refresh_shell).
 """
-from PyQt5.QtCore import QPointF, QRectF, Qt
-from PyQt5.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from litebrowser.qt import QtCore, QtGui
+
+Qt = QtCore.Qt
+QPointF, QRectF = QtCore.QPointF, QtCore.QRectF
+QColor, QIcon, QPainter, QPen, QPixmap = (
+    QtGui.QColor,
+    QtGui.QIcon,
+    QtGui.QPainter,
+    QtGui.QPen,
+    QtGui.QPixmap,
+)
 
 __all__ = ["search_icon"]
 

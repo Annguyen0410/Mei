@@ -726,17 +726,6 @@ def set_strip_client_hints(base_dir, value):
     save_prefs(base_dir, data)
 
 
-def get_block_webrtc_leak(base_dir):
-    """Block WebRTC mDNS / public IP leaks (off by default — breaks video calls)."""
-    return bool(load_prefs(base_dir).get("block_webrtc_leak", False))
-
-
-def set_block_webrtc_leak(base_dir, value):
-    data = load_prefs(base_dir)
-    data["block_webrtc_leak"] = bool(value)
-    save_prefs(base_dir, data)
-
-
 def get_chrome_compat_shim(base_dir):
     return bool(load_prefs(base_dir).get("chrome_compat_shim", True))
 

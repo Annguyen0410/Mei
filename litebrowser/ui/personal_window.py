@@ -3509,9 +3509,14 @@ class PersonalWindow(QMainWindow):
 
 
 def _format_ts(ts_value: int) -> str:
-    if not ts_value:
-        return "-"
-    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts_value))
+    """Backward-compatible alias; the canonical helper lives in core.time_utils.
+
+    This used to be a hand-rolled copy without the int()/exception guards the
+    shared helper has, so a malformed timestamp raised instead of showing "-".
+    """
+    from litebrowser.core.time_utils import format_ts
+
+    return format_ts(ts_value)
 
 
 def stats_text(stats: dict) -> str:

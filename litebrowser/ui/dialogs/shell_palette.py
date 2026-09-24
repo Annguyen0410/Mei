@@ -6,23 +6,10 @@ Boards, ... Enter (or a click) executes the highlighted row through the
 shell's own dispatch, so password-protected workspaces (AI / Personal)
 prompt for the passcode first and then enter automatically.
 """
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QKeySequence
-from PyQt5.QtWidgets import (
-    QDialog,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
-    QShortcut,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QWidget
 
 from litebrowser.core import app_paths, prefs
 from litebrowser.core.commands import COMMANDS
-from litebrowser.ui.dialogs.common import _stylesheet
 
 _WORKSPACES = (
     ("home", "Home", "🏠"),
@@ -112,15 +99,15 @@ def _build_entries(parent) -> list[dict]:
             "payload": None,
         }
     )
-    for cmd, takes_arg, desc in COMMANDS:
+    for command in COMMANDS:
         entries.append(
             {
-                "title": cmd,
-                "category": desc,
-                "keywords": "%s %s" % (cmd, desc),
+                "title": command.name,
+                "category": command.description,
+                "keywords": "%s %s" % (command.name, command.description),
                 "glyph": "⚡",
                 "kind": "command",
-                "payload": cmd + (" " if takes_arg else ""),
+                "payload": command.completion(),
             }
         )
     return entries
@@ -194,56 +181,3 @@ def clear_feature_rows(list_widget: QListWidget) -> None:
         del item
 
 
-def show_shell_palette(parent) -> None:
-    """Open the modal feature-finder; ``parent`` must expose
-    ``_dialog_stylesheet()`` and ``_execute_shell_palette(entry)``."""
-    base = _base_dir(parent)
-    entries = _build_entries(parent)
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Search features — Mei")
-    dialog.setWindowModality(Qt.WindowModal)
-    dialog.setMinimumSize(560, 460)
-    dialog.setStyleSheet(_stylesheet(parent))
-
-    layout = QVBoxLayout(dialog)
-    layout.setContentsMargins(10, 10, 10, 10)
-    layout.setSpacing(6)
-
-    search = QLineEdit()
-    search.setPlaceholderText("Search features — e.g.  b  → Browser, Bí Mật, Bói Toán, Boards …")
-    search.setMinimumHeight(34)
-    layout.addWidget(search)
-
-    list_widget = QListWidget()
-    list_widget.setObjectName("CafeList")
-    list_widget.setUniformItemSizes(True)
-    layout.addWidget(list_widget, 1)
-
-    state = {"rows": []}  # [(entry, QListWidgetItem)]
-
-    def _rebuild():
-        q = search.text().strip().lower()
-        clear_feature_rows(list_widget)
-        state["rows"] = []
-        for entry in filter_feature_entries(entries, q):
-            state["rows"].append((entry, add_feature_row(list_widget, entry, base)))
-        if state["rows"]:
-            list_widget.setCurrentRow(0)
-
-    def _execute():
-        row = list_widget.currentRow()
-        if row < 0 or row >= len(state["rows"]):
-            dialog.accept()
-            return
-        entry = state["rows"][row][0]
-        dialog.accept()
-        parent._execute_shell_palette(entry)
-
-    search.textChanged.connect(_rebuild)
-    list_widget.itemDoubleClicked.connect(lambda _i: _execute())
-    QShortcut(QKeySequence(Qt.Key_Return), dialog).activated.connect(_execute)
-    QShortcut(QKeySequence(Qt.Key_Enter), dialog).activated.connect(_execute)
-    QShortcut(QKeySequence(Qt.Key_Escape), dialog).activated.connect(dialog.reject)
-    _rebuild()
-    search.setFocus()
-    dialog.exec_()

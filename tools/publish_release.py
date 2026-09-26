@@ -231,7 +231,8 @@ class _ProgressReader:
         self._sent += len(chunk)
         if self._sent >= self._next_report or (not chunk and self._total):
             shown = 100.0 * self._sent / max(self._total, 1)
-            print(f"    … {self._sent / (1024 * 1024):.0f} MB of {self._total / (1024 * 1024):.0f} MB ({shown:.0f}%)")
+            # ASCII only: this prints in cmd.exe, which decodes in the OEM code page.
+            print(f"    ... {self._sent / (1024 * 1024):.0f} MB of {self._total / (1024 * 1024):.0f} MB ({shown:.0f}%)")
             self._next_report = self._sent + 16 * 1024 * 1024
         return chunk
 
@@ -268,7 +269,7 @@ def _upload_asset(repo: str, release_id: int, path: str, token: str, replace: bo
             return
         _request("DELETE", f"{API_ROOT}/repos/{repo}/releases/assets/{asset['id']}", token)
     query = urllib.parse.urlencode({"name": name})
-    print(f"  {name}: uploading {size / (1024 * 1024):.1f} MB …")
+    print(f"  {name}: uploading {size / (1024 * 1024):.1f} MB ...")
     _request(
         "POST",
         f"{UPLOAD_ROOT}/repos/{repo}/releases/{release_id}/assets?{query}",
@@ -295,7 +296,7 @@ def publish(
     if not os.path.isfile(exe):
         raise FileNotFoundError(f"{exe} — build first: build_exe.bat")
     facts = verify_build(exe)
-    print(f"{product.PRODUCT_NAME} {version}: {facts['size'] / (1024 * 1024):.1f} MB, sha256 {facts['sha256'][:16]}…")
+    print(f"{product.PRODUCT_NAME} {version}: {facts['size'] / (1024 * 1024):.1f} MB, sha256 {facts['sha256'][:16]}...")
 
     site_zip = os.path.join(out_dir or os.path.dirname(os.path.abspath(exe)), web_support_name(version))
     site_url = ""

@@ -23,10 +23,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # One shell-ready argument list per binding: quoting the whole string
+          # makes pip see a single bogus requirement ("PyQt5>=5.15
+          # PyQtWebEngine>=5.15"), which is how this workflow first failed.
           - binding: PyQt5
-            qt: "PyQt5>=5.15 PyQtWebEngine>=5.15"
+            qt: '"PyQt5>=5.15" "PyQtWebEngine>=5.15"'
           - binding: PyQt6
-            qt: "PyQt6>=6.6 PyQt6-WebEngine>=6.6"
+            qt: '"PyQt6>=6.6" "PyQt6-WebEngine>=6.6"'
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONIOENCODING: utf-8

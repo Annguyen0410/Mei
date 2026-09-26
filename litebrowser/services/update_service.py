@@ -360,7 +360,7 @@ def verify_package(package_path: str, expected_sha256: str = "") -> None:
         if actual != digest:
             raise ValueError(
                 "The downloaded update does not match its release manifest "
-                f"(sha256 {actual[:12]}… but the channel declared {digest[:12]}…). "
+                f"(sha256 {actual[:12]}... but the channel declared {digest[:12]}...). "
                 "The download is corrupted or was tampered with — refusing to install it."
             )
 

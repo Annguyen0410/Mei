@@ -23,11 +23,16 @@ PRODUCT_NAME = "Mei"
 APP_NAME = PRODUCT_NAME
 APP_VERSION = "0.7.0.0"
 
-# Release channel owned by this product. The web app (LinkLumina) publishes to
-# .../litebrowser-update/update.json — deliberately a different path so the two
-# products can no longer overwrite each other's releases.
-UPDATE_CHANNEL_PATH = "mei-update/update.json"
-DEFAULT_UPDATE_CHANNEL_URL = "https://graceful-kangaroo-4ebbee.netlify.app/" + UPDATE_CHANNEL_PATH
+# Release channel owned by this product. It used to point at a Netlify path
+# (…/mei-update/update.json) that was never deployed — the only thing that host
+# actually served was the LinkLumina web app's channel — so every installed Mei
+# polled a 404 and could never upgrade itself. The channel is now the
+# ``update.json`` asset of the newest GitHub Release, which resolves for as long
+# as the repository lives and needs no server of its own.
+RELEASES_REPO = "Annguyen0410/Mei"
+UPDATE_CHANNEL_PATH = "releases/latest/download/update.json"
+RELEASES_BASE_URL = "https://github.com/" + RELEASES_REPO + "/"
+DEFAULT_UPDATE_CHANNEL_URL = RELEASES_BASE_URL + UPDATE_CHANNEL_PATH
 
 # Only this asset name may be installed by the self-updater.
 ASSET_NAME = "Mei.exe"
@@ -37,7 +42,9 @@ ASSET_NAME = "Mei.exe"
 MIN_PACKAGE_BYTES = 1_000_000
 
 UPDATE_METADATA_URL = os.environ.get("LITEBROWSER_UPDATE_METADATA_URL", DEFAULT_UPDATE_CHANNEL_URL).strip()
-RELEASES_PAGE_URL = os.environ.get("LITEBROWSER_RELEASES_PAGE_URL", "").strip()
+# "Open release page" used to be an empty string, so the button could only tell
+# the user that no release page was configured. It now opens this release line.
+RELEASES_PAGE_URL = os.environ.get("LITEBROWSER_RELEASES_PAGE_URL", RELEASES_BASE_URL + "releases/latest").strip()
 
 __all__ = [
     "PRODUCT_ID",
@@ -46,6 +53,8 @@ __all__ = [
     "APP_VERSION",
     "ASSET_NAME",
     "MIN_PACKAGE_BYTES",
+    "RELEASES_REPO",
+    "RELEASES_BASE_URL",
     "UPDATE_CHANNEL_PATH",
     "DEFAULT_UPDATE_CHANNEL_URL",
     "UPDATE_METADATA_URL",

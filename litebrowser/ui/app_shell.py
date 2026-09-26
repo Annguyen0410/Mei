@@ -987,12 +987,14 @@ class AppShell(QMainWindow):
                 "Update",
                 "Auto-update that replaces the executable only works in a built .exe. The Python version can only open the release page.",
             )
-            self.open_release_page(info.download_url)
+            self.open_release_page(info.release_url or info.download_url)
             return
         self._update_install_running = True
         self.update_status_text = f"Downloading {info.latest_version}..."
         self.refresh_shell()
-        future = self._executor.submit(update_service.download_update_package, info.download_url, info.latest_version)
+        future = self._executor.submit(
+            update_service.download_update_package, info.download_url, info.latest_version, info.sha256
+        )
         future.add_done_callback(lambda done: self.update_downloaded.emit(done, info))
 
     def _finish_update_check(self, future, manual: bool):
@@ -1055,7 +1057,7 @@ class AppShell(QMainWindow):
         self.refresh_shell()
         try:
             update_service.install_downloaded_update(
-                package_path, update_service.local_channel_packages()
+                package_path, update_service.local_channel_packages(), info.sha256
             )
         except Exception as exc:
             self.update_status_text = update_service.format_error(exc)

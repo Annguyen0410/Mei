@@ -1,0 +1,52 @@
+name: CI
+
+# The suite is the project's whole safety net (603 tests, including the gates
+# that keep the layers, the capability ledger and the command registry honest),
+# and until this workflow existed it only ever ran on the machine that wrote it.
+# Both Qt bindings are exercised: the shipped .exe is built with PyQt6 (the shim
+# rewrites PyQt5 imports onto it), while a source checkout often only has PyQt5.
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests · ${{ matrix.binding }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - binding: PyQt5
+            qt: "PyQt5>=5.15 PyQtWebEngine>=5.15"
+          - binding: PyQt6
+            qt: "PyQt6>=6.6 PyQt6-WebEngine>=6.6"
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies (${{ matrix.binding }})
+        # The package is not installed: pytest reads `pythonpath = ["."]` from
+        # pyproject.toml, and installing it would drag in PyQt5 on the Qt6 job.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "${{ matrix.qt }}" "cryptography>=40.0.0" "segno>=1.6.0" "pytest>=7.0" "ruff>=0.5"
+
+      - name: Lint (unused imports, shadowed names, dead locals)
+        run: python -m ruff check --select F401,F811,F841,F821 litebrowser tests tools
+
+      - name: Tests
+        run: python -m pytest -p no:cacheprovider --no-header -q

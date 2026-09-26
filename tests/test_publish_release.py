@@ -1,0 +1,206 @@
+"""Publishing: the release a user downloads must match the app's own identity.
+
+The channel manifest, the release notes and the tag are all derived from
+``core/product.py`` and ``docs/CHANGELOG.md``; a mismatch ships an update nobody
+is ever offered (the updater compares the build's version, the tag names the
+asset URL) or notes that describe a different release. These tests cover the
+derivations and every refusal path — nothing here touches the network, and the
+CLI is exercised with ``--dry-run``.
+"""
+import json
+import os
+import tempfile
+import unittest
+
+import litebrowser  # noqa: F401  activates the Qt compatibility shim
+from litebrowser.core import product
+from litebrowser.services import update_service
+
+from tools import publish_release, write_local_update
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _fake_build(path: str) -> str:
+    """A file that passes ``verify_package``: MZ header and a plausible size."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(b"MZ" + b"\0" * product.MIN_PACKAGE_BYTES)
+    return path
+
+
+class TestTagAndAssetNames(unittest.TestCase):
+    def test_tag_accepts_both_spellings(self):
+        self.assertEqual(publish_release.version_from_tag("v0.7.0.0"), product.APP_VERSION)
+        self.assertEqual(publish_release.version_from_tag(" 0.7.0.0 "), product.APP_VERSION)
+
+    def test_tag_must_be_the_build_in_this_tree(self):
+        publish_release.assert_tag_matches_build(f"v{product.APP_VERSION}")
+        with self.assertRaises(ValueError) as ctx:
+            publish_release.assert_tag_matches_build("v0.6.9.0")
+        self.assertIn("core/product.py", str(ctx.exception))
+
+    def test_download_url_is_the_release_asset(self):
+        url = publish_release.asset_download_url(product.RELEASES_REPO, "v0.7.0.0", product.ASSET_NAME)
+        self.assertEqual(
+            url,
+            f"https://github.com/{product.RELEASES_REPO}/releases/download/v0.7.0.0/Mei.exe",
+        )
+        self.assertTrue(update_service.asset_is_ours(url))
+
+    def test_web_support_zip_name_carries_the_version(self):
+        self.assertEqual(publish_release.web_support_name("0.7.0.0"), "Mei-0.7.0.0-web_support.zip")
+
+
+class TestReleaseNotes(unittest.TestCase):
+    def setUp(self):
+        with open(os.path.join(ROOT, "docs", "CHANGELOG.md"), encoding="utf-8-sig") as handle:
+            self.changelog = handle.read()
+
+    def test_the_section_is_this_version_only(self):
+        section = publish_release.changelog_section(self.changelog, product.APP_VERSION)
+        self.assertIn(product.APP_VERSION, section)
+        # The block ends where the next milestone heading starts.
+        body_lines = [line for line in section.splitlines() if line.strip().startswith("> ##")]
+        self.assertEqual(len(body_lines), 1, section[:200])
+
+    def test_an_undocumented_version_is_refused(self):
+        with self.assertRaises(ValueError):
+            publish_release.changelog_section(self.changelog, "9.9.9.9")
+
+    def test_the_body_opens_in_vietnamese_and_quotes_the_changelog(self):
+        body = publish_release.build_release_body(
+            product.APP_VERSION, product.ASSET_NAME, "Mei-0.7.0.0-web_support.zip", self.changelog
+        )
+        self.assertTrue(body.startswith("**Tải về:**"))
+        self.assertIn(product.ASSET_NAME, body)
+        self.assertIn("Mei-0.7.0.0-web_support.zip", body)
+        self.assertIn(product.APP_VERSION, body)
+
+
+class TestManifest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.exe = _fake_build(os.path.join(self._tmp.name, product.ASSET_NAME))
+
+    def test_manifest_carries_identity_size_and_hash(self):
+        manifest = publish_release.build_manifest(
+            version=product.APP_VERSION,
+            exe_path=self.exe,
+            download_url="https://h/x/Mei.exe",
+            notes="hello",
+            published_at="2026-09-26",
+        )
+        self.assertEqual(manifest["product"], product.PRODUCT_ID)
+        self.assertEqual(manifest["version"], product.APP_VERSION)
+        self.assertEqual(manifest["size"], os.path.getsize(self.exe))
+        self.assertEqual(manifest["sha256"], update_service.file_sha256(self.exe))
+        self.assertEqual(manifest["published_at"], "2026-09-26")
+        self.assertNotIn("web_support", manifest)
+
+    def test_manifest_records_the_site_zip_when_one_is_shipped(self):
+        site = os.path.join(self._tmp.name, "Mei-0.7.0.0-web_support.zip")
+        with open(site, "wb") as handle:
+            handle.write(b"PK\3\4payload")
+        manifest = publish_release.build_manifest(
+            version=product.APP_VERSION,
+            exe_path=self.exe,
+            download_url="https://h/x/Mei.exe",
+            web_support_path=site,
+            web_support_url="https://h/x/Mei-0.7.0.0-web_support.zip",
+        )
+        self.assertEqual(manifest["web_support"]["size"], os.path.getsize(site))
+        self.assertEqual(manifest["web_support"]["sha256"], update_service.file_sha256(site))
+
+    def test_the_local_channel_and_the_release_agree_on_the_shape(self):
+        manifest = write_local_update.manifest_for(self.exe, self.exe, "notes")
+        self.assertEqual(manifest["sha256"], update_service.file_sha256(self.exe))
+        self.assertEqual(manifest["size"], os.path.getsize(self.exe))
+        self.assertEqual(manifest["product"], product.PRODUCT_ID)
+
+    def test_a_non_build_is_refused_before_it_is_published(self):
+        junk = os.path.join(self._tmp.name, "junk.exe")
+        with open(junk, "wb") as handle:
+            handle.write(b"<html>404</html>")
+        with self.assertRaises(ValueError):
+            publish_release.verify_build(junk)
+
+
+class TestWebSupportZip(unittest.TestCase):
+    def test_logs_are_left_out_and_nested_files_are_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "web_support")
+            os.makedirs(os.path.join(src, "boitoan"))
+            for rel, name in (("index.html", "index.html"), ("boitoan/app.js", "app.js"), ("run.log", "run.log")):
+                with open(os.path.join(src, rel), "w", encoding="utf-8") as handle:
+                    handle.write("x")
+            out = os.path.join(tmp, "site.zip")
+            publish_release.zip_web_support(src, out)
+            import zipfile
+
+            with zipfile.ZipFile(out) as bundle:
+                names = bundle.namelist()
+        self.assertIn("index.html", names)
+        self.assertIn("boitoan/app.js", names, "zip member names are always forward-slashed")
+        self.assertNotIn("run.log", names)
+
+
+class TestPublishRefusals(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.exe = _fake_build(os.path.join(self._tmp.name, product.ASSET_NAME))
+
+    def _publish(self, **overrides):
+        payload = dict(
+            tag=f"v{product.APP_VERSION}",
+            repo=product.RELEASES_REPO,
+            exe=self.exe,
+            web_support="",
+            notes="",
+            token="",
+            out_dir=self._tmp.name,
+            skip_upload=True,
+        )
+        payload.update(overrides)
+        return publish_release.publish(**payload)
+
+    def test_a_mismatched_tag_never_reaches_the_network(self):
+        with self.assertRaises(ValueError):
+            self._publish(tag="v0.6.9.0")
+
+    def test_a_missing_build_is_refused(self):
+        with self.assertRaises(FileNotFoundError):
+            self._publish(exe=os.path.join(self._tmp.name, "nope.exe"))
+
+    def test_a_dry_run_writes_a_verifiable_manifest_and_uploads_nothing(self):
+        result = self._publish()
+        self.assertFalse(result["uploaded"])
+        manifest_path = result["manifest_path"]
+        self.assertTrue(os.path.isfile(manifest_path))
+        with open(manifest_path, encoding="utf-8") as handle:
+            written = json.load(handle)
+        self.assertEqual(written["sha256"], update_service.file_sha256(self.exe))
+        self.assertEqual(written["download_url"], publish_release.asset_download_url(
+            product.RELEASES_REPO, f"v{product.APP_VERSION}", product.ASSET_NAME
+        ))
+        self.assertEqual(written["release_url"], publish_release.release_page_url(product.RELEASES_REPO))
+
+    def test_publishing_without_a_token_says_which_variable_to_set(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._publish(skip_upload=False)
+        self.assertIn("GITHUB_TOKEN", str(ctx.exception))
+
+    def test_the_cli_dry_run_succeeds_without_a_token(self):
+        code = publish_release.main(
+            ["--tag", f"v{product.APP_VERSION}", "--exe", self.exe, "--no-web-support", "--dry-run"]
+        )
+        self.assertEqual(code, 0)
+
+    def test_the_cli_explains_itself_without_arguments(self):
+        self.assertEqual(publish_release.main([]), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

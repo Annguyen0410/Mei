@@ -51,6 +51,8 @@ accepted alternative to deleting the code.
 | Background work relay | `AppShell.run_in_background` → `background_done` signal → page callbacks on the GUI thread |
 | Loop memoization | `study_flow._memoized` (1 s TTL + store signature) → `reset_flow_cache` for callers that must see a write immediately |
 | Brief markdown export | `brief_service.brief_markdown` → Home “📝 Save as note” |
+| Release integrity | `update_service.file_sha256` / `verify_package(expected_sha256)` → the manifest `tools/publish_release.py` (and `tools/write_local_update.py`) writes, verified after every download |
+| Release channel | `product.DEFAULT_UPDATE_CHANNEL_URL` (`releases/latest/download/update.json`) → `update_service.check_for_updates` → Settings “Updates” card; `product.RELEASES_PAGE_URL` → “Open release page” |
 | Qt binding selection | `litebrowser/qt.py` over `qt_compat.py` |
 
 ## 2. Reserved API (reachable, no desktop caller yet)

@@ -1,5 +1,7 @@
 # Mei
 
+[![CI](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml/badge.svg)](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml)
+
 **Mei** is a café-themed, multi-workspace desktop browser and personal hub built on **PyQt5/PyQt6 + QtWebEngine** (Chromium). It runs on both Qt bindings through the `litebrowser/qt_compat.py` shim — when PyQt6-WebEngine 6.8 (Chromium 122) is installed it uses that; otherwise it falls back to PyQt5.
 
 It is not just a browsing window: one app holds a full Chromium browser, a Personal Hub (notes, tasks, flashcards, calendar, boards, files, sites), an AI workspace, a library, and a settings center — all linked by a search box that can find and jump to any feature in the app.
@@ -16,12 +18,13 @@ It is not just a browsing window: one app holds a full Chromium browser, a Perso
 
 ## Table of contents
 
-1. [Highlights](#highlights)
-2. [Requirements & installation](#requirements--installation)
-3. [First launch](#first-launch)
-4. [The shell](#the-shell)
-5. [The omnibar & feature finder](#the-omnibar--feature-finder)
-6. [Workspaces](#workspaces)
+1. [Download & install](#download--install-no-python-needed)
+2. [Highlights](#highlights)
+3. [Requirements & installation](#requirements--installation)
+4. [First launch](#first-launch)
+5. [The shell](#the-shell)
+6. [The omnibar & feature finder](#the-omnibar--feature-finder)
+7. [Workspaces](#workspaces)
    - [Home](#home)
    - [Browser](#browser)
    - [History](#history)
@@ -29,15 +32,42 @@ It is not just a browsing window: one app holds a full Chromium browser, a Perso
    - [Personal Hub](#personal-hub)
    - [Library](#library)
    - [Settings](#settings)
-7. [Themes & accents](#themes--accents)
-8. [Focus & wellbeing](#focus--wellbeing)
-9. [Privacy & security](#privacy--security)
-10. [Data & local-first](#data--local-first)
-11. [Text is copyable everywhere](#text-is-copyable-everywhere)
-12. [Automation & interop](#automation--interop)
-13. [Keyboard shortcuts](#keyboard-shortcuts)
-14. [Development](#development)
-15. [Troubleshooting](#troubleshooting)
+8. [Themes & accents](#themes--accents)
+9. [Focus & wellbeing](#focus--wellbeing)
+10. [Privacy & security](#privacy--security)
+11. [Data & local-first](#data--local-first)
+12. [Text is copyable everywhere](#text-is-copyable-everywhere)
+13. [Automation & interop](#automation--interop)
+14. [Keyboard shortcuts](#keyboard-shortcuts)
+15. [Development](#development)
+16. [Troubleshooting](#troubleshooting)
+
+---
+
+## Download & install (no Python needed)
+
+Every version is published as a GitHub Release with three files:
+
+| File | What it is |
+|---|---|
+| `Mei.exe` | the whole app in one file (~170 MB) — run it, no installer |
+| `Mei-<version>-web_support.zip` | the offline site folders Mei serves locally (~10 MB). **Unpack it next to `Mei.exe`**, so the folder reads `web_support\…` |
+| `update.json` | the update manifest — version, download URL and the `sha256` of the exe |
+
+Download from **[Releases](https://github.com/Annguyen0410/Mei/releases/latest)**. Data lives outside the exe
+(`%LOCALAPPDATA%\Mei\runtime_data`), so replacing the file never touches your profile.
+
+**Self-update.** From 0.7.0.0 on, Settings → *Updates* polls
+`releases/latest/download/update.json`. A new build is offered as a dialog (a manual
+*Check for updates* pre-selects **Yes**, a startup check pre-selects **No**), the download
+is verified against the `sha256` published in the manifest **before** anything is replaced,
+and the swap keeps `Mei.exe.bak` for a 15-second rollback window. A machine with no
+internet can upgrade from a folder instead: copy `update.json` + `Mei.exe` into
+`update\` next to the exe (`RUN_AND_BUILD.md` §5.5).
+
+> Releases before 0.7.0.0 pointed at an update URL that was never deployed, so those
+> installs cannot self-update — download 0.7.0.0 (or newer) once by hand; from there the
+> channel works.
 
 ---
 

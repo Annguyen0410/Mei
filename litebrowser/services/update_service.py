@@ -11,12 +11,15 @@ Three guarantees this module now enforces (each one was violated before):
    desktop app previously polled the LinkLumina web app's channel, read version
    ``6.2.4``, considered it newer than Mei ``0.6.9.0`` and offered to install a
    completely different product over ``Mei.exe``.
-2. **Package identity** — the download URL must point at ``Mei.exe`` and the
-   downloaded file must be a plausible Windows executable (size + MZ header), so
-   an HTML error page can never be written over the running app.
+2. **Package identity** — the download URL must point at ``Mei.exe``, the
+   downloaded file must be a plausible Windows executable (size + MZ header), and
+   when the channel declares a ``sha256`` the bytes must match it, so neither an
+   HTML error page nor a corrupted/tampered download can be written over the
+   running app.
 3. **Reversibility** — installing keeps a ``.bak`` next to the executable and a
    watchdog script restores it when the new build fails to come up.
 """
+import hashlib
 import json
 import os
 import shutil
@@ -61,6 +64,36 @@ class UpdateInfo:
     published_at: str
     has_update: bool
     product: str = ""
+    # Integrity facts from the channel manifest. ``sha256`` is empty for an older
+    # manifest that predates hashing; ``size`` is what the publisher measured.
+    sha256: str = ""
+    size: int = 0
+    # A human-facing release page, when the channel carries one.
+    release_url: str = ""
+
+
+def file_sha256(path: str, chunk_size: int = 1024 * 1024) -> str:
+    """Hash a (possibly 170 MB) file without holding it in memory.
+
+    Publishers stamp this into ``update.json``; the updater recomputes it after
+    the download, and the two must agree before the executable is replaced.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _manifest_sha256(metadata: dict) -> str:
+    """The declared hash, lowercased; accepts ``sha256`` or the shorter ``hash``."""
+    declared = str(metadata.get("sha256") or metadata.get("hash") or "").strip()
+    if declared.lower().startswith("sha256:"):
+        declared = declared.split(":", 1)[1].strip()
+    return declared.lower()
 
 
 def _normalize_version(version: str):
@@ -214,14 +247,18 @@ def check_for_updates(metadata_url: str | None = None, app_dir: str = "") -> Upd
     if not latest_version:
         raise ValueError("Missing version in update metadata")
 
-    download_url = str(
-        metadata.get("download_url")
-        or metadata.get("installer_url")
-        or metadata.get("release_url")
-        or app_version.RELEASES_PAGE_URL
-    ).strip()
+    # Only asset-shaped keys become a download URL. ``release_url`` is a page, so
+    # it is kept aside — inventing a download from it would offer the releases
+    # page as if it were Mei.exe (and the asset check would then refuse it).
+    download_url = str(metadata.get("download_url") or metadata.get("installer_url") or "").strip()
+    release_url = str(metadata.get("release_url") or "").strip()
     notes = str(metadata.get("notes") or metadata.get("changelog") or "").strip()
     published_at = str(metadata.get("published_at") or metadata.get("date") or "").strip()
+    sha256 = _manifest_sha256(metadata)
+    try:
+        size = int(metadata.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
     current_version = app_version.APP_VERSION
     has_update = _version_is_newer(latest_version, current_version)
 
@@ -240,10 +277,13 @@ def check_for_updates(metadata_url: str | None = None, app_dir: str = "") -> Upd
         published_at=published_at,
         has_update=has_update,
         product=declared,
+        sha256=sha256,
+        size=size,
+        release_url=release_url,
     )
 
 
-def download_update_package(download_url: str, version: str) -> str:
+def download_update_package(download_url: str, version: str, expected_sha256: str = "") -> str:
     if not download_url:
         raise ValueError("Missing download URL")
     if not asset_is_ours(download_url):
@@ -260,7 +300,7 @@ def download_update_package(download_url: str, version: str) -> str:
         # Already on this machine: copy, never move — the user's build stays put,
         # and the swap script is the only thing allowed to delete it.
         shutil.copyfile(local, target_path)
-        return target_path
+        return _accept_download(target_path, expected_sha256)
     request = urllib.request.Request(
         download_url,
         headers={"User-Agent": f"{app_version.APP_NAME}/{app_version.APP_VERSION}"},
@@ -271,14 +311,34 @@ def download_update_package(download_url: str, version: str) -> str:
             if not chunk:
                 break
             output.write(chunk)
-    return target_path
+    return _accept_download(target_path, expected_sha256)
 
 
-def verify_package(package_path: str) -> None:
+def _accept_download(path: str, expected_sha256: str = "") -> str:
+    """Verify a finished download and drop it when it cannot be a build.
+
+    Failing here (instead of at install time) keeps a corrupt download from
+    sitting in ``%TEMP%`` as if it were a usable update, and reports the reason
+    while the user still has the download in front of them.
+    """
+    try:
+        verify_package(path, expected_sha256)
+    except Exception:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def verify_package(package_path: str, expected_sha256: str = "") -> None:
     """Reject anything that cannot be a real build before it touches the exe.
 
     A truncated download, an HTML error page saved as ``.exe`` or a random file
-    would otherwise be copied over the running application.
+    would otherwise be copied over the running application.  When the channel
+    declared a hash, the bytes must match it too — that is what turns "probably
+    the right file" into the exact file the publisher measured.
     """
     if not os.path.isfile(package_path):
         raise FileNotFoundError(package_path)
@@ -293,6 +353,15 @@ def verify_package(package_path: str) -> None:
             raise ValueError(
                 "Downloaded update is not a Windows executable (missing MZ header). "
                 "Refusing to install it."
+            )
+    digest = (expected_sha256 or "").strip().lower()
+    if digest:
+        actual = file_sha256(package_path)
+        if actual != digest:
+            raise ValueError(
+                "The downloaded update does not match its release manifest "
+                f"(sha256 {actual[:12]}… but the channel declared {digest[:12]}…). "
+                "The download is corrupted or was tampered with — refusing to install it."
             )
 
 
@@ -413,8 +482,8 @@ start "" "%TARGET%"
 """
 
 
-def install_downloaded_update(package_path: str, stale_paths=()) -> None:
-    verify_package(package_path)
+def install_downloaded_update(package_path: str, stale_paths=(), expected_sha256: str = "") -> None:
+    verify_package(package_path, expected_sha256)
     if not getattr(sys, "frozen", False):
         raise RuntimeError("Auto-replace only supports a built .exe.")
 

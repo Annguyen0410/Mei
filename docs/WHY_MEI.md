@@ -57,10 +57,19 @@ Companion docs: [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (layers and extension
 - **Five cross-cutting planes.** Every study store travels through backup/import, self-hosted
   sync, the AI index, library search, and the Morning Brief. Adding a source is one
   `SYNC_ENTITIES` entry plus one row here — the planes are the contract.
-- **Two gates keep it honest.** `test_capability_ledger.py` deletes-by-default: public API
+- **Gates keep it honest.** `test_capability_ledger.py` deletes-by-default: public API
   either has a caller or is listed in `CAPABILITIES.md` with a test. `test_command_registry.py`
   generates the omnibar autocomplete, the hint line, the palette, the in-app guide and the
-  command docs from one tuple. Nothing is documented that is not dispatched.
+  command docs from one tuple. Nothing is documented that is not dispatched. To those the
+  0.7.0.0 round added the ones a shipped product needs: `test_version_consistency.py`
+  (pyproject, `product.py` and the changelog must agree), `test_ui_wiring.py` (no control
+  that no layout shows, no verb wired to nothing) and `test_publish_release.py` (the tag,
+  the manifest hash and the release notes come from the build).
+- **Updates are published, verified and reversible.** The channel is an asset of the
+  newest GitHub Release, so it resolves for as long as the repository does; the manifest
+  carries the `sha256` of the build and the updater recomputes it before the swap; the swap
+  keeps `Mei.exe.bak` and a watchdog restores it when the new build never comes up. GitHub
+  Actions runs ruff and the whole suite on Windows for both Qt bindings.
 
 ## 2. Against browsers (Chrome, Edge, Firefox, Brave, Arc, Vivaldi, Opera GX)
 
@@ -122,8 +131,11 @@ the planner item and writes the line the brief reports tomorrow — no copy-past
 - **Ecosystem.** No Chrome Web Store, no mobile app, no team/collab features.
 - **Single profile, single machine.** Self-hosted sync exists and merges sanely, but it is
   one-way-at-a-time snapshot sync, not real-time multi-device CRDT.
-- **Distribution.** Built and shipped as a PyInstaller `--onefile` exe by hand; no signed
-  auto-update channel beyond the local `update/` folder.
+- **Distribution.** Built as a PyInstaller `--onefile` exe and published by a script
+  (`tools/publish_release.py`): GitHub Release + a verified update channel, CI on every
+  push. Still **unsigned** (no code-signing certificate, so SmartScreen will warn) and still
+  a one-file build of ~170 MB plus a `web_support` folder beside it that the updater does
+  not replace.
 - **GUI test coverage.** Service-layer tests are extensive and headless; GUI tests are
   offscreen smoke tests on Windows. A real cross-platform UI regression suite is future work.
 
@@ -151,3 +163,6 @@ the planner item and writes the line the brief reports tomorrow — no copy-past
 | The loop across backup / sync / AI / brief / cascades | `tests/test_study_flow_surfaces.py` |
 | The loop's desktop wiring | `tests/test_study_loop_ui.py` |
 | Minutes are credited once, and only from a real pour | `tests/test_study_session_service.py`, `tests/test_study_session.py` |
+| Package metadata, the app and the changelog agree on one version | `tests/test_version_consistency.py` |
+| No control that no layout shows, no verb wired to nothing | `tests/test_ui_wiring.py` |
+| Only this product's channel and asset may be installed, hash first | `tests/test_update_identity.py`, `tests/test_publish_release.py` |

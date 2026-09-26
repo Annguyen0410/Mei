@@ -1,0 +1,56 @@
+name: Bug report
+description: Something in Mei behaves wrong, crashes, or a page will not open.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. A report that names the version and the exact
+        action is worth ten that say "it broke".
+  - type: input
+    id: version
+    attributes:
+      label: Mei version
+      description: Settings → Updates shows it; the release page names it too.
+      placeholder: "0.7.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: How are you running Mei?
+      options:
+        - Mei.exe (the downloaded build)
+        - Installed with MeiSetup.exe
+        - From source (.venv + browser.py)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Weekly Plan
+        2. Press ▶ Study on an overdue item
+        3. …
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics bundle (optional)
+      description: |
+        Settings → Diagnostics → **Export diagnostics zip** writes a small archive
+        with the log, the version of every component and the size/schema of each
+        store — no note text, no passwords, no vault contents. Drag it here.
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2"

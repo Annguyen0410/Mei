@@ -147,6 +147,12 @@ An installed `Mei.exe` looks for a local update channel **before** its remote de
 <folder of the running exe>\update\Mei.exe
 ```
 
+The manifest now records the `sha256` and `size` of the build it offers, and the updater
+recomputes the hash after the download — a truncated or swapped file is refused and
+deleted instead of replacing the exe. The same manifest shape is what
+`tools\publish_release.py` uploads to GitHub (§5.6), so the folder channel and the
+release channel verify identical facts.
+
 So the whole release loop is three commands:
 
 ```powershell
@@ -185,7 +191,59 @@ ASCII-only rule for `build_exe.bat`.
 > A `download_url` in `update.json` may be a local path (`"D:\\builds\\Mei.exe"`), a
 > `file:///…` URL, or an https link — all three work.
 
-### 5.6 After building
+### 5.6 Publish it as a GitHub Release (the channel every install polls)
+
+`core/product.py` points the app at
+`https://github.com/Annguyen0410/Mei/releases/latest/download/update.json`, so a release
+is what makes an installed Mei offer an upgrade. `tools\publish_release.py` creates the
+release and attaches the three files it needs:
+
+```powershell
+# 1. bump APP_VERSION in litebrowser\core\product.py, then build
+.\build_exe.bat
+
+# 2. a fine-grained token with "Contents: read and write" on the repo
+$env:GITHUB_TOKEN = "github_pat_…"
+
+# 3. dry run first: prints the plan, writes dist\update.json, uploads nothing
+.\.venv\Scripts\python.exe tools\publish_release.py --tag v0.7.0.0 --dry-run
+
+# 4. for real (adds to the release if the tag already has one; --replace overwrites assets)
+.\.venv\Scripts\python.exe tools\publish_release.py --tag v0.7.0.0
+```
+
+| Flag | Effect |
+|---|---|
+| `--tag v0.7.0.0` | required; must equal `APP_VERSION`, or the script refuses (a tag nobody is offered is worse than no release) |
+| `--web-support dist\web_support` | zips the folder (logs excluded) as `Mei-<version>-web_support.zip`; `--no-web-support` skips it |
+| `--notes "text"` | overrides the manifest note; the release **body** is always taken from `docs\CHANGELOG.md` |
+| `--draft` / `--replace` | publish as draft / overwrite assets that already exist |
+| `--dry-run` | verify the build, write `dist\update.json`, upload nothing |
+| `--local-only` | skip GitHub entirely: write `dist\update\update.json` (see §5.5) |
+
+Without a token the script prints the same three files for a manual upload in the
+release UI. The published manifest looks like this:
+
+```json
+{
+  "product": "mei",
+  "version": "0.7.0.0",
+  "download_url": "https://github.com/Annguyen0410/Mei/releases/download/v0.7.0.0/Mei.exe",
+  "sha256": "…",
+  "size": 167209965,
+  "notes": "0.7.0.0 — Mei desktop build.",
+  "published_at": "2026-09-26",
+  "release_url": "https://github.com/Annguyen0410/Mei/releases/latest",
+  "web_support": { "download_url": "…", "size": …, "sha256": "…" }
+}
+```
+
+> The updater replaces **`Mei.exe` only**. `web_support` ships as its own asset because it
+> lives beside the exe on purpose (it is ~10 MB of site folders, not part of the binary):
+> a user who never uses those offline pages does not need to re-download it, but a release
+> that changes them should say so in its notes.
+
+### 5.7 After building
 - App data (profile, notes, BrowserData…) is created **outside the exe**:
   - running from source: `runtime_data/profiles/...`
   - running the exe: `%LOCALAPPDATA%\Mei\runtime_data/profiles/...`
@@ -208,6 +266,8 @@ litebrowser/core/product.py  ← APP_VERSION + update channel + release asset na
 litebrowser/core/app_version.py ← re-exports product.py (older import sites)
 build_exe.bat                ← one-click PyInstaller exe build (prunes old builds)
 tools/write_local_update.py  ← write dist\update (serverless self-update channel)
+tools/publish_release.py     ← publish Mei.exe + web_support + update.json as a GitHub Release
+.github/workflows/ci.yml     ← ruff + the whole suite on Windows, both Qt bindings
 tools/sync_web_support.py    ← mirror web_support\ → dist\web_support (skips the dead legacy hub copy)
 create_desktop_shortcut.ps1 ← create an icon desktop shortcut
 installer.iss               ← Inno Setup: real installer (MeiSetup.exe)

@@ -6,6 +6,7 @@ other product's binary.
 """
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -75,8 +76,22 @@ class TestChannelOwnership(unittest.TestCase):
         self.assertIn(product.ASSET_NAME, str(ctx.exception))
 
     def test_default_channel_is_not_the_web_app_channel(self):
-        self.assertIn("/mei-update/", product.DEFAULT_UPDATE_CHANNEL_URL)
-        self.assertNotIn("/litebrowser-update/", product.DEFAULT_UPDATE_CHANNEL_URL)
+        # It used to point at a Netlify path that was never deployed (the host
+        # only served LinkLumina's channel), so every install polled a 404.
+        self.assertNotIn("litebrowser-update", product.DEFAULT_UPDATE_CHANNEL_URL)
+        self.assertNotIn("netlify", product.DEFAULT_UPDATE_CHANNEL_URL)
+
+    def test_default_channel_is_the_newest_release_asset(self):
+        self.assertTrue(product.DEFAULT_UPDATE_CHANNEL_URL.startswith(product.RELEASES_BASE_URL))
+        self.assertTrue(product.DEFAULT_UPDATE_CHANNEL_URL.endswith("/" + product.UPDATE_CHANNEL_PATH))
+        self.assertEqual(product.UPDATE_CHANNEL_PATH, "releases/latest/download/update.json")
+        self.assertIn(product.RELEASES_REPO, product.DEFAULT_UPDATE_CHANNEL_URL)
+
+    def test_release_page_is_configured(self):
+        # An empty default made the Settings button say "no release page is
+        # configured" in every published build.
+        self.assertTrue(product.RELEASES_PAGE_URL.startswith("https://"))
+        self.assertEqual(product.RELEASES_PAGE_URL, product.RELEASES_BASE_URL + "releases/latest")
 
     def test_local_metadata_file_is_product_tagged(self):
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -85,6 +100,107 @@ class TestChannelOwnership(unittest.TestCase):
 
     def test_wrong_channel_message_is_user_readable(self):
         self.assertIn("not Mei", update_service.format_error(update_service._wrong_channel_error("")))
+
+
+class TestManifestHash(unittest.TestCase):
+    """The channel can declare sha256; the updater must then hold the bytes to it.
+
+    Size + MZ only prove "this is some Windows executable". A hash proves it is
+    *the* build the publisher measured — the difference between a bad download
+    and a swapped one.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.package = os.path.join(self._tmp.name, product.ASSET_NAME)
+        with open(self.package, "wb") as handle:
+            handle.write(b"MZ" + b"\0" * product.MIN_PACKAGE_BYTES)
+        self.digest = update_service.file_sha256(self.package)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _check(self, metadata):
+        with mock.patch.object(update_service, "_read_remote_json", return_value=metadata):
+            return update_service.check_for_updates("https://example.invalid/update.json")
+
+    def test_manifest_hash_reaches_the_update_info(self):
+        info = self._check(
+            {
+                "product": product.PRODUCT_ID,
+                "version": _newer_than_current(),
+                "download_url": "https://h/p/v/Mei.exe",
+                "sha256": self.digest.upper(),
+                "size": os.path.getsize(self.package),
+            }
+        )
+        self.assertEqual(info.sha256, self.digest, "hash is compared lowercased")
+        self.assertEqual(info.size, os.path.getsize(self.package))
+
+    def test_hash_accepts_the_sha256_prefix(self):
+        info = self._check(
+            {
+                "product": product.PRODUCT_ID,
+                "version": _newer_than_current(),
+                "download_url": "https://h/p/v/Mei.exe",
+                "hash": "sha256:" + self.digest,
+            }
+        )
+        self.assertEqual(info.sha256, self.digest)
+
+    def test_matching_hash_is_accepted(self):
+        update_service.verify_package(self.package, self.digest)  # must not raise
+
+    def test_wrong_hash_is_refused_and_explains_why(self):
+        with self.assertRaises(ValueError) as ctx:
+            update_service.verify_package(self.package, "0" * 64)
+        self.assertIn("sha256", str(ctx.exception))
+
+    def test_channel_without_a_hash_still_verifies_size_and_header(self):
+        info = self._check(
+            {"product": product.PRODUCT_ID, "version": _newer_than_current(), "download_url": ""}
+        )
+        self.assertEqual(info.sha256, "")
+        update_service.verify_package(self.package)  # must not raise
+
+    def test_a_release_page_is_not_mistaken_for_a_download(self):
+        info = self._check(
+            {
+                "product": product.PRODUCT_ID,
+                "version": _newer_than_current(),
+                "release_url": "https://github.com/Annguyen0410/Mei/releases/latest",
+            }
+        )
+        self.assertEqual(info.download_url, "")
+        self.assertEqual(info.release_url, "https://github.com/Annguyen0410/Mei/releases/latest")
+
+    def test_a_corrupt_download_is_deleted_and_not_returned(self):
+        with self.assertRaises(ValueError):
+            update_service.download_update_package(self.package, "9.9.9", "0" * 64)
+        stale = os.path.join(tempfile.gettempdir(), app_version.APP_NAME, "updates", "Mei-9.9.9.exe")
+        self.assertFalse(os.path.isfile(stale), "a failed download must not linger as an update")
+
+    def test_install_refuses_when_the_hash_does_not_match(self):
+        with self.assertRaises(ValueError):
+            update_service.install_downloaded_update(self.package, (), "0" * 64)
+
+    def test_local_channel_hash_is_honoured(self):
+        channel_dir = os.path.join(self._tmp.name, "app", update_service.LOCAL_CHANNEL_DIRNAME)
+        os.makedirs(channel_dir)
+        dropped = os.path.join(channel_dir, product.ASSET_NAME)
+        shutil.copyfile(self.package, dropped)
+        manifest = {
+            "product": product.PRODUCT_ID,
+            "version": _newer_than_current(),
+            "download_url": dropped,
+            "sha256": "0" * 64,
+        }
+        with open(os.path.join(channel_dir, update_service.LOCAL_CHANNEL_FILENAME), "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        info = update_service.check_for_updates(app_dir=os.path.join(self._tmp.name, "app"))
+        self.assertEqual(info.sha256, "0" * 64)
+        with self.assertRaises(ValueError):
+            update_service.download_update_package(info.download_url, info.latest_version, info.sha256)
 
 
 class TestVersionComparison(unittest.TestCase):

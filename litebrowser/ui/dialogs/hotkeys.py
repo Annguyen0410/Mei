@@ -2,17 +2,15 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QDialog,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QVBoxLayout,
 )
 
 from litebrowser.core import app_version
-from litebrowser.ui.dialogs.common import _stylesheet
+from litebrowser.ui.dialogs.common import _stylesheet, dialog_footer
 
 # (shortcut, scope, description) — mirrors the QShortcut registrations.
 HOTKEYS = (
@@ -91,10 +89,7 @@ def show_hotkeys_hub(parent):
     hint = QLabel("Tip: every shortcut works inside its workspace scope. Type to filter.")
     hint.setObjectName("MutedLabel")
     layout.addWidget(hint)
-    row = QHBoxLayout()
-    row.addStretch()
-    btn_close = QPushButton("Close")
-    btn_close.clicked.connect(dialog.accept)
-    row.addWidget(btn_close)
-    layout.addLayout(row)
+    # A reference table has no action of its own: the footer is just the way out,
+    # painted by the shared dialog vocabulary like every other dialog's Close.
+    dialog_footer(layout, close=dialog.accept)
     dialog.exec_()

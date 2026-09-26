@@ -55,6 +55,8 @@ USAGE = (
 API_ROOT = "https://api.github.com"
 UPLOAD_ROOT = "https://uploads.github.com"
 CHANGELOG = os.path.join("docs", "CHANGELOG.md")
+# Written beside the manifest so a manual upload can paste the body verbatim.
+BODY_FILENAME = "RELEASE_BODY.md"
 DEFAULT_WEB_SUPPORT = os.path.join("dist", "web_support")
 DEFAULT_EXE = os.path.join("dist", product.ASSET_NAME)
 
@@ -323,17 +325,31 @@ def publish(
         web_support_url=site_url,
         release_url=release_page_url(repo),
     )
-    manifest_path = os.path.join(os.path.dirname(os.path.abspath(exe)), "update.json")
+    out = os.path.dirname(os.path.abspath(exe))
+    manifest_path = os.path.join(out, "update.json")
     with open(manifest_path, "w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2)
         handle.write("\n")
     print(f"  manifest: {manifest_path}")
 
+    # The body is written out as well: uploading by hand (no token on the release
+    # machine) then means pasting this file, not retyping the release notes.
+    body_path = os.path.join(out, BODY_FILENAME)
+    with open(body_path, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    print(f"  release body: {body_path}")
+
     if skip_upload:
         print("Dry run — nothing was uploaded. The release would carry:")
-        for path in filter(None, (exe, site_zip, manifest_path)):
+        for path in filter(None, (exe, site_zip, manifest_path, body_path)):
             print(f"    {os.path.basename(path)}  ({os.path.getsize(path) / (1024 * 1024):.1f} MB)")
-        return {"manifest": manifest, "manifest_path": manifest_path, "body": body, "uploaded": False}
+        return {
+            "manifest": manifest,
+            "manifest_path": manifest_path,
+            "body": body,
+            "body_path": body_path,
+            "uploaded": False,
+        }
 
     if not token:
         raise ValueError("Set GITHUB_TOKEN (fine-grained token with Contents: read and write) to publish.")
@@ -344,7 +360,15 @@ def publish(
     for path in filter(None, (exe, site_zip, manifest_path)):
         _upload_asset(repo, release_id, path, token, replace)
     print(f"Published: {release_page_url(repo)}")
-    return {"manifest": manifest, "manifest_path": manifest_path, "body": body, "release": release, "uploaded": True}
+    return {
+        "manifest": manifest,
+        "manifest_path": manifest_path,
+        "body_path": body_path,
+        "body": body,
+        "body_path": body_path,
+        "release": release,
+        "uploaded": True,
+    }
 
 
 def _arg_value(args: list, flag: str, default: str = "") -> str:

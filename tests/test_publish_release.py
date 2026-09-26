@@ -186,6 +186,13 @@ class TestPublishRefusals(unittest.TestCase):
             product.RELEASES_REPO, f"v{product.APP_VERSION}", product.ASSET_NAME
         ))
         self.assertEqual(written["release_url"], publish_release.release_page_url(product.RELEASES_REPO))
+        # The body is written out too, so a hand upload (no token on the release
+        # machine) pastes a file instead of retyping the notes.
+        self.assertTrue(os.path.isfile(result["body_path"]))
+        with open(result["body_path"], encoding="utf-8") as handle:
+            body = handle.read()
+        self.assertTrue(body.startswith("**Tải về:**"))
+        self.assertIn(product.APP_VERSION, body)
 
     def test_publishing_without_a_token_says_which_variable_to_set(self):
         with self.assertRaises(ValueError) as ctx:

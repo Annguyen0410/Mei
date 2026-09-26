@@ -14,12 +14,17 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPushButton,
     QVBoxLayout,
 )
 
 from litebrowser.core import prefs
-from litebrowser.ui.dialogs.common import _stylesheet
+from litebrowser.ui.dialogs.common import (
+    _stylesheet,
+    dialog_footer,
+    ghost_button,
+    icon_button,
+    primary_button,
+)
 
 
 def show_workspace_dialog(parent):
@@ -33,7 +38,7 @@ def show_workspace_dialog(parent):
     for w in workspace_manager.get_workspaces_list(base_dir):
         list_widget.addItem("%s (%s)" % (w["name"], w["id"]))
     layout.addWidget(list_widget)
-    btn_row = QHBoxLayout()
+
     def add_ws():
         name, ok = QInputDialog.getText(dialog, "New workspace", "Workspace name:")
         if ok and name.strip():
@@ -63,14 +68,40 @@ def show_workspace_dialog(parent):
             parent._refresh_workspace_combo()
         if hasattr(parent, "_apply_workspace_filter"):
             parent._apply_workspace_filter()
-    btn_add = QPushButton("Add workspace")
+    def rename_ws():
+        row = list_widget.currentRow()
+        wlist = workspace_manager.get_workspaces_list(base_dir)
+        if row < 0 or row >= len(wlist):
+            return
+        target = wlist[row]
+        name, ok = QInputDialog.getText(
+            dialog, "Rename workspace", "Workspace name:", text=target.get("name", "")
+        )
+        if not ok or not (name or "").strip():
+            return
+        if not workspace_manager.rename_workspace(base_dir, target["id"], name.strip()):
+            return
+        list_widget.item(row).setText("%s (%s)" % (name.strip(), target["id"]))
+        # The combo and the tab filter both render these names, so both need a nudge.
+        if hasattr(parent, "_refresh_workspace_combo"):
+            parent._refresh_workspace_combo()
+        if hasattr(parent, "_apply_workspace_filter"):
+            parent._apply_workspace_filter()
+
+    # Adding is the action; renaming and removing act on one selected row, so
+    # double-click renames and the menu owns the rest.
+    btn_add = primary_button("Add workspace")
     btn_add.clicked.connect(add_ws)
-    btn_remove = QPushButton("Remove selected")
-    btn_remove.clicked.connect(remove_ws)
-    btn_row.addWidget(btn_add)
-    btn_row.addWidget(btn_remove)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
+    list_widget.itemDoubleClicked.connect(lambda _item: rename_ws())
+    dialog_footer(
+        layout,
+        primary=btn_add,
+        menu=(
+            ("Rename the selected workspace…", rename_ws),
+            (None, None),
+            ("🗑  Remove the selected workspace", remove_ws),
+        ),
+    )
     dialog.exec_()
 
 
@@ -242,18 +273,14 @@ def show_routines_dialog(parent):
         routines_service.delete_routine(base_dir, item.data(Qt.UserRole))
         refresh()
 
-    btn_row = QHBoxLayout()
-    btn_add = QPushButton("Add routine")
+    btn_add = primary_button("Add routine")
     btn_add.clicked.connect(add_routine)
-    btn_del = QPushButton("Remove selected")
-    btn_del.clicked.connect(remove_routine)
-    btn_close = QPushButton("Close")
-    btn_close.clicked.connect(dialog.accept)
-    btn_row.addWidget(btn_add)
-    btn_row.addWidget(btn_del)
-    btn_row.addStretch()
-    btn_row.addWidget(btn_close)
-    layout.addLayout(btn_row)
+    dialog_footer(
+        layout,
+        primary=btn_add,
+        menu=(("🗑  Remove the selected routine", remove_routine),),
+        close=dialog.accept,
+    )
     refresh()
     dialog.exec_()
 
@@ -275,16 +302,11 @@ def show_export_dialog(parent):
     info.setObjectName("MutedLabel")
     info.setWordWrap(True)
     layout.addWidget(info)
-    btn_md = QPushButton("Export Markdown bundle (.zip)")
-    btn_html = QPushButton("Export HTML mini-site (.zip)")
-    layout.addWidget(btn_md)
-    layout.addWidget(btn_html)
-    row = QHBoxLayout()
-    row.addStretch()
-    btn_close = QPushButton("Close")
-    btn_close.clicked.connect(dialog.accept)
-    row.addWidget(btn_close)
-    layout.addLayout(row)
+    # The two formats are one verb with a choice of file type, not two actions
+    # of equal weight: Markdown leads, HTML sits beside it.
+    btn_md = primary_button("Export Markdown bundle (.zip)")
+    btn_html = ghost_button("Export HTML mini-site (.zip)")
+    dialog_footer(layout, primary=btn_md, secondary=(btn_html,), close=dialog.accept)
 
     def _do(kind: str):
         default = os.path.join(base_dir, f"mei-export-{kind}-{time.strftime('%Y%m%d')}.zip")
@@ -319,21 +341,16 @@ def show_feeds_dialog(parent):
     add_row = QHBoxLayout()
     ed_feed = QLineEdit()
     ed_feed.setPlaceholderText("Paste a feed or site URL (RSS/Atom)...")
-    btn_add = QPushButton("Subscribe")
+    btn_add = ghost_button("Subscribe", "Start following this feed")
     add_row.addWidget(ed_feed, 1)
     add_row.addWidget(btn_add)
     layout.addLayout(add_row)
     list_widget = QListWidget()
     layout.addWidget(list_widget, 1)
-    row = QHBoxLayout()
-    btn_refresh = QPushButton("↻ Refresh all")
-    btn_remove = QPushButton("Unsubscribe")
-    btn_open = QPushButton("Open selected")
-    row.addWidget(btn_refresh)
-    row.addWidget(btn_remove)
-    row.addWidget(btn_open)
-    row.addStretch()
-    layout.addLayout(row)
+    # Opening an article is the reason to be here; refreshing is a glyph next
+    # to it and unsubscribing belongs to the feed row, so it lives in the menu.
+    btn_refresh = icon_button("↻", "Fetch every subscribed feed now")
+    btn_open = primary_button("Open selected")
 
     def refresh():
         list_widget.clear()
@@ -394,10 +411,17 @@ def show_feeds_dialog(parent):
             refresh()
 
     btn_add.clicked.connect(on_add)
+    ed_feed.returnPressed.connect(on_add)
     btn_refresh.clicked.connect(on_refresh)
-    btn_remove.clicked.connect(on_remove)
     btn_open.clicked.connect(on_open)
     list_widget.itemDoubleClicked.connect(lambda _i: on_open())
+    dialog_footer(
+        layout,
+        primary=btn_open,
+        secondary=(btn_refresh,),
+        menu=(("🗑  Unsubscribe from the selected feed", on_remove),),
+        default=False,  # Enter in the URL field must subscribe, not open
+    )
     refresh()
     dialog.exec_()
 
@@ -481,18 +505,16 @@ def show_downloads_dialog(parent):
 
     refresh()
     list_widget.itemDoubleClicked.connect(lambda _item: open_selected())
-    btn_row = QHBoxLayout()
-    btn_row.addStretch()
-    btn_open_file = QPushButton("Open file")
+    btn_open_file = primary_button("Open file")
     btn_open_file.clicked.connect(open_file)
-    btn_open_folder = QPushButton("Open folder")
-    btn_open_folder.clicked.connect(open_folder)
-    btn_remove = QPushButton("Remove from list")
-    btn_remove.clicked.connect(remove_item)
-    btn_row.addWidget(btn_open_file)
-    btn_row.addWidget(btn_open_folder)
-    btn_row.addWidget(btn_remove)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
+    dialog_footer(
+        layout,
+        primary=btn_open_file,
+        menu=(
+            ("Reveal the file in its folder", open_folder),
+            (None, None),
+            ("🗑  Remove from the list", remove_item),
+        ),
+    )
     dialog.exec_()
 

@@ -12,6 +12,17 @@ A day-to-day walkthrough of the app. For the full command and shortcut list see
 - **Top bar** — brand, the **omnibar** (search box), Snapshot / Insights buttons.
 - **Bottom status strip** — theme pill, sync state, status hints.
 
+### Dialogs have one main button
+
+Every window that opens from a button ends in the same row: the action it exists
+for on the right (filled, and Enter runs it), at most one or two secondary
+buttons beside it, a subdued **Close**, and a **“⋯ More”** menu holding the
+occasional verbs — deleting history, importing bookmarks, renaming a tab set or a
+workspace, the VPN leak test, and so on. Verbs you press rarely live in that menu;
+destructive ones are marked with 🗑 and kept apart from the safe ones. Row-level chores
+(tick a task off, remove a subscription, clear a board) are glyph buttons on the
+list they act on.
+
 ### The omnibar is the command center
 
 | What you type | What happens |
@@ -61,6 +72,15 @@ recommendation, in the daily note you can save with one click), the **planner** 
 with `next: 🧠 Review 3 due card(s)` once a session is credited, and the **AI index** stores
 the loop as a document, so `/ask what should I do next?` answers from your real state.
 
+**This Week** (bottom of Home) is the reflect station with numbers: a seven-day text spark,
+minutes poured, days studied, your streak, and the rows that got *nothing* this week —
+"overdue 3d", "never studied". **▶ Study the oldest one** turns that reading into a pour.
+
+**Mei will also start the step for you.** Settings → **Study reminders** picks how often a
+native toast may carry the loop's next step (Off, 30 min … 8 h; default every 2 h). The loop
+keeps its manners: it stays silent while a pour is running and between 22:00 and 08:00, and
+if you already poured today and nothing is due, it says nothing at all.
+
 ---
 
 ## 3. Browser workspace
@@ -105,6 +125,10 @@ The left rail inside Personal has its own collapse/expand (click the «/≫ butt
 ## 5. AI workspace
 
 - Providers: **RAG local only**, **OpenRouter**, **Ollama**, **llama.cpp**.
+- **👁 Read my browser** (on by default) attaches the page you are reading — its real text, plus
+the open tabs — to every question, labelled untrusted so the assistant reads it without obeying
+it. Turn it off for purely local questions.
+- **Capture tab** (Ollama only) grabs the visible page as an in-memory screenshot for local vision.
 - `/ask your question` asks with the current workspace context; the Insights panel shows what the AI is reading.
 - The workspace is passcode-gated: the first time you open it you set a passcode; later opens prompt for it.
 
@@ -126,12 +150,16 @@ The left rail inside Personal has its own collapse/expand (click the «/≫ butt
 - **Adblock** — filter lists, subscriptions, https-only, third-party cookie blocking.
 - **Password vault** — save passwords after logins; master-passcode protected.
 - **Permissions manager** — per-origin camera/mic/notifications decisions.
+- **Google account** (Settings) — device-code sign-in; Mei never sees your password, and
+  **Verify token** reuses the cached token without a network call whenever it is still fresh.
+- **Passcode lock** (Settings) — **Lock now** re-locks Personal and AI without restarting Mei.
 
 ## 8. Sync, export & automation
 
 - **Snapshot** (top bar) — flush local state to disk.
 - **Routines** — schedule daily automations (`/routines`), e.g. a 07:30 daily plan note.
-- **Page monitor** — “Monitor this page” toasts when a watched page changes.
+- **Page monitor** — “Monitor this page” toasts when a watched page changes; the list and
+  removal live in Settings → **Watched pages**.
 - **Export center** `/export` — notes → Markdown zip or a themed static HTML site.
 - **The loop travels with your data** — planner items, courses, time blocks, flashcards and
   the link table ride backups (zip format v4) and self-hosted sync, so a restored profile

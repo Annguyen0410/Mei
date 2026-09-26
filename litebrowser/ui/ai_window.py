@@ -148,6 +148,13 @@ class AIWindow(QMainWindow):
         badge_row.addWidget(self.lbl_provider)
         badge_row.addWidget(self.lbl_vision)
         badge_row.addStretch(1)
+        self.chk_browser_context = QCheckBox("👁 Read my browser")
+        self.chk_browser_context.setChecked(True)
+        self.chk_browser_context.setToolTip(
+            "Attach the page open in the browser (its full text) plus every open tab to each question.\n"
+            "The content is labelled untrusted context, so the assistant reads it but never follows it."
+        )
+        badge_row.addWidget(self.chk_browser_context)
         self.chk_show_context = QCheckBox("Show sources")
         self.chk_show_context.setChecked(True)
         badge_row.addWidget(self.chk_show_context)
@@ -265,6 +272,7 @@ class AIWindow(QMainWindow):
             center = max(320, width - left - right - 24)
             body.setSizes([left, center, right])
         self.chk_show_context.setVisible(not tiny)
+        self.chk_browser_context.setVisible(not narrow)
         self.btn_to_note.setVisible(not narrow)
         self.btn_to_task.setVisible(not narrow)
         self.btn_save_set.setVisible(not tiny)
@@ -277,6 +285,7 @@ class AIWindow(QMainWindow):
         self.ed_api_key.setText(data.get("openrouter_api_key", ""))
         self._refresh_model_value()
         self.chk_show_context.setChecked(bool(data.get("show_sources", True)))
+        self.chk_browser_context.setChecked(bool(data.get("read_browser", True)))
         self._on_provider_change()
 
     def _on_ollama_models_ready(self, models):
@@ -306,6 +315,7 @@ class AIWindow(QMainWindow):
             "provider": provider,
             "openrouter_api_key": self.ed_api_key.text().strip(),
             "show_sources": self.chk_show_context.isChecked(),
+            "read_browser": self.chk_browser_context.isChecked(),
         }
         if provider == "openrouter":
             payload["openrouter_model"] = self.ed_model.text().strip() or "openai/gpt-4o-mini"
@@ -391,7 +401,74 @@ class AIWindow(QMainWindow):
         context_label, context = self._external_context_label, self._external_context
         self._external_context_label = "Workspace-wide"
         self._external_context = ""
+        if self.chk_browser_context.isChecked() and context_label == "Workspace-wide":
+            self._ask_with_browser(question, context)
+            return
         self.run_assistant_query(question, context_label, context)
+
+    def _host_browser_page(self):
+        """The shell's browser workspace (tab list included), if this pane is embedded."""
+        current = self.parentWidget()
+        while current is not None:
+            browser_page = getattr(current, "browser_page", None)
+            if browser_page is not None and hasattr(browser_page, "get_current_tab_state"):
+                return browser_page
+            current = current.parentWidget()
+        return None
+
+    def _browser_tab_lines(self) -> list[str]:
+        """Open tabs as context lines: the assistant should see the session, not one page."""
+        page = self._host_browser_page()
+        if page is None:
+            return []
+        try:
+            tabs = page.get_current_tab_state() or []
+        except Exception:
+            return []
+        lines = []
+        for tab in tabs[:20]:
+            title = (tab.get("title") or "").strip()[:120]
+            url = (tab.get("url") or "").strip()[:200]
+            if not url:
+                continue
+            marker = "* " if tab.get("active") or tab.get("current") else "- "
+            lines.append(f"{marker}{title or url} — {url}")
+        return lines
+
+    def _ask_with_browser(self, question: str, extra_context: str = ""):
+        """Attach the *visible text* of the page being read, plus every open tab.
+
+        The read happens in the page (JavaScript innerText), so the assistant is
+        looking at what the user is looking at rather than at a cached title.
+        """
+        browser = self._host_browser()
+        if browser is None or browser.page() is None:
+            self.run_assistant_query(question, "Workspace-wide", extra_context)
+            return
+        tabs = self._browser_tab_lines()
+        self.lbl_context_scope.setText("Context: reading the browser…")
+
+        def _on_text(text):
+            try:
+                title = browser.title() or browser.url().toString() or "Current page"
+                url = browser.url().toString()
+            except RuntimeError:
+                # The tab (or the pane) went away while the page was answering.
+                return
+            page_text = (text or "").strip()
+            parts = [extra_context.strip()] if extra_context.strip() else []
+            parts.append(f"[Page open in browser: {title} — {url} (full text)]\n{page_text[:9000]}")
+            if tabs:
+                parts.append("[Open tabs in this window]\n" + "\n".join(tabs))
+            if not page_text and not tabs:
+                self.run_assistant_query(question, "Workspace-wide", extra_context)
+                return
+            self.run_assistant_query(question, "Browser page + open tabs", "\n\n".join(parts))
+
+        browser.page().runJavaScript(
+            "(function(){try{return (document.body && document.body.innerText) || '';}catch(e){return '';}})();",
+            _on_text,
+        )
 
     def _host_browser(self):
         """Return the shell's selected browser tab, if this AI pane is embedded."""

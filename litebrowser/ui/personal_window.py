@@ -103,6 +103,12 @@ from litebrowser.services import (
     tab_sets,
 )
 from litebrowser.ui import components, theme, win_titlebar
+from litebrowser.ui.dialogs.common import (
+    ghost_button,
+    icon_button,
+    more_menu,
+    primary_button,
+)
 from litebrowser.ui.focus_heatmap import FocusHeatmap
 
 MAX_NOTE_WATCH_DIRS = 64
@@ -2342,10 +2348,16 @@ class PersonalWindow(QMainWindow):
         self.btn_plan_next = QPushButton("›")
         self.lbl_plan_week = QLabel("")
         self.lbl_plan_week.setObjectName("MutedLabel")
+        self.btn_plan_settings = QPushButton("⚙ Semester")
+        self.btn_plan_settings.setToolTip(
+            "Semester name and dates — the planner keeps its term settings in the plan store"
+        )
+        self.btn_plan_settings.clicked.connect(self._edit_plan_settings)
         header.addWidget(self.btn_plan_prev)
         header.addWidget(self.btn_plan_today)
         header.addWidget(self.btn_plan_next)
         header.addWidget(self.lbl_plan_week)
+        header.addWidget(self.btn_plan_settings)
         l.addLayout(header)
 
         form = QHBoxLayout()
@@ -2372,11 +2384,12 @@ class PersonalWindow(QMainWindow):
         self.spin_plan_duration.setRange(5, 1440)
         self.spin_plan_duration.setValue(personal_plan.DEFAULT_DURATION_MINUTES)
         self.spin_plan_duration.setSuffix(" min")
-        self.btn_plan_add = QPushButton("Add item")
+        # The form row is mostly fields; the two row chores are glyphs now, so
+        # the only filled control in it is the one that creates the item.
+        self.btn_plan_add = primary_button("Add item")
         self.btn_plan_add.setToolTip("Create the item and show it on its planned day")
-        self.btn_plan_delete = QPushButton("Delete selected")
-        self.btn_plan_delete.setToolTip("Delete the selected planner item or focus block")
-        self.btn_plan_study = QPushButton("▶ Study")
+        self.btn_plan_delete = icon_button("🗑", "Delete the selected planner item or focus block")
+        self.btn_plan_study = ghost_button("▶ Study")
         self.btn_plan_study.setToolTip(
             "Pour a focus session for the selected item or block; the minutes are credited back"
         )
@@ -2405,7 +2418,7 @@ class PersonalWindow(QMainWindow):
         self.spin_plan_block_duration.setSuffix(" block min")
         self.cmb_plan_block_course = QComboBox()
         self.cmb_plan_block_course.setToolTip("Optional course for this focus block")
-        self.btn_plan_add_block = QPushButton("Add time block")
+        self.btn_plan_add_block = ghost_button("Add time block")
         self.btn_plan_add_block.setToolTip("Add a focused study block to the selected planned day")
         block_form.addWidget(QLabel("Focus block"))
         block_form.addWidget(self.ed_plan_block_title, 2)
@@ -2426,11 +2439,11 @@ class PersonalWindow(QMainWindow):
             components.section_header("Courses", "Give every item and block a course to belong to")
         )
         courses_header.addStretch(1)
-        self.btn_plan_course_add = QPushButton("＋ Course")
-        self.btn_plan_course_edit = QPushButton("Edit")
-        self.btn_plan_course_edit.setToolTip("Edit the selected course")
-        self.btn_plan_course_delete = QPushButton("Delete")
-        self.btn_plan_course_delete.setToolTip("Delete the selected course; its items are kept, just detached")
+        self.btn_plan_course_add = ghost_button("＋ Course", "Add a course to plan items against")
+        self.btn_plan_course_edit = icon_button("✎", "Edit the selected course")
+        self.btn_plan_course_delete = icon_button(
+            "🗑", "Delete the selected course; its items are kept, just detached"
+        )
         courses_header.addWidget(self.btn_plan_course_add)
         courses_header.addWidget(self.btn_plan_course_edit)
         courses_header.addWidget(self.btn_plan_course_delete)
@@ -2736,6 +2749,56 @@ class PersonalWindow(QMainWindow):
         self._refresh_plan()
         self._refresh_overview()
 
+    def _edit_plan_settings(self):
+        """Term settings for the planner: name plus the dates the weeks are read against."""
+        semester = personal_plan.load_plan(self.base_dir).get("semester") or {}
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Semester settings - {app_version.APP_NAME}")
+        if hasattr(self, "_dialog_stylesheet"):
+            dialog.setStyleSheet(self._dialog_stylesheet())
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Semester name"))
+        ed_name = QLineEdit(semester.get("name", ""))
+        ed_name.setPlaceholderText("HK1 2026-2027")
+        layout.addWidget(ed_name)
+        editors = []
+        for label, key in (("Start date", "start_date"), ("End date", "end_date")):
+            layout.addWidget(QLabel(label))
+            editor = QDateEdit(QDate.currentDate())
+            editor.setCalendarPopup(True)
+            editor.setDisplayFormat("yyyy-MM-dd")
+            parsed = QDate.fromString(semester.get(key, ""), "yyyy-MM-dd")
+            if parsed.isValid():
+                editor.setDate(parsed)
+            layout.addWidget(editor)
+            editors.append(editor)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        btn_cancel = QPushButton("Cancel")
+        btn_save = QPushButton("Save")
+        btn_save.setObjectName("TopAccentButton")
+        btn_cancel.clicked.connect(dialog.reject)
+        btn_save.clicked.connect(dialog.accept)
+        row.addWidget(btn_cancel)
+        row.addWidget(btn_save)
+        layout.addLayout(row)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        name = ed_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Semester", "Give the semester a name first.")
+            return
+        personal_plan.update_plan_settings(
+            self.base_dir,
+            semester={
+                "name": name,
+                "start_date": editors[0].date().toString("yyyy-MM-dd"),
+                "end_date": editors[1].date().toString("yyyy-MM-dd"),
+            },
+        )
+        self._refresh_plan()
+        self._flash(f"Semester set — {name}")
+
     def _refresh_plan(self):
         if not hasattr(self, "plan_day_lists"):
             return
@@ -2744,6 +2807,10 @@ class PersonalWindow(QMainWindow):
         self._refresh_plan_courses(week["courses"])
         start = QDate.fromString(week["week_start"], "yyyy-MM-dd")
         self.lbl_plan_week.setText(f"{week['week_start']} → {week['week_end']}")
+        # The term settings are part of the plan store, so the button that opens
+        # them also reports them (with no name set it stays a plain invitation).
+        semester_name = (personal_plan.load_plan(self.base_dir).get("semester") or {}).get("name", "")
+        self.btn_plan_settings.setText(f"⚙ {semester_name}" if semester_name else "⚙ Semester")
         completed = sum(1 for item in week["items"] if item.get("completed"))
         self.lbl_plan_summary.setText(
             f"{len(week['items'])} planned item(s) · {completed} completed · {len(week['time_blocks'])} focus block(s)"
@@ -2844,14 +2911,17 @@ class PersonalWindow(QMainWindow):
         self.ed_task_title.setPlaceholderText("New task...")
         self.cmb_task_bucket = QComboBox()
         self.cmb_task_bucket.addItems(["personal", "work", "study"])
-        self.btn_add_task = QPushButton("Add task")
-        self.btn_toggle_task = QPushButton("Toggle done")
-        self.btn_remove_task = QPushButton("Delete")
+        # Row verbs on a task are glyphs: they act on the selected line, so
+        # three full boxes competed with the field you actually type in.
+        self.btn_add_task = primary_button("Add task")
+        self.btn_toggle_task = icon_button("✓", "Tick the selected task off (or put it back)")
+        self.btn_remove_task = icon_button("🗑", "Delete the selected task")
         top_row.addWidget(self.ed_task_title, 1)
         top_row.addWidget(self.cmb_task_bucket)
         top_row.addWidget(self.btn_add_task)
         top_row.addWidget(self.btn_toggle_task)
         top_row.addWidget(self.btn_remove_task)
+        self.ed_task_title.returnPressed.connect(self._add_task)
         l.addLayout(top_row)
         self.tasks_list = QListWidget()
         self.tasks_list.setObjectName("CafeList")
@@ -2904,16 +2974,17 @@ class PersonalWindow(QMainWindow):
         l.setSpacing(6)
         l.addWidget(components.page_header("Calendar", "Events and your day view"))
         row = QHBoxLayout()
-        self.btn_add_event = QPushButton("Add event")
-        self.btn_remove_event = QPushButton("Delete")
-        self.btn_today = QPushButton("Today")
-        self.btn_ics_import = QPushButton("⇩ Import .ics")
-        self.btn_ics_export = QPushButton("⇧ Export .ics")
+        # Adding is the action; deleting one event is a row chore, and the two
+        # .ics verbs are a pair of icon buttons instead of two more full boxes.
+        self.btn_add_event = primary_button("Add event")
+        self.btn_today = ghost_button("Today", "Jump back to today")
+        self.btn_ics_import = icon_button("⇩", "Import events from an .ics file")
+        self.btn_ics_export = icon_button("⇧", "Export your calendar as .ics")
         row.addWidget(self.btn_add_event)
-        row.addWidget(self.btn_remove_event)
         row.addWidget(self.btn_today)
         row.addWidget(self.btn_ics_import)
         row.addWidget(self.btn_ics_export)
+        row.addWidget(more_menu((("🗑  Delete the selected event", self._remove_event),), tooltip="Calendar chores"))
         row.addStretch(1)
         l.addLayout(row)
         body = QHBoxLayout()
@@ -2950,7 +3021,6 @@ class PersonalWindow(QMainWindow):
         body.addLayout(right_col, 1)
         l.addLayout(body, 1)
         self.btn_add_event.clicked.connect(self._add_event)
-        self.btn_remove_event.clicked.connect(self._remove_event)
         self.btn_today.clicked.connect(self._jump_calendar_today)
         self.btn_ics_import.clicked.connect(self._import_ics)
         self.btn_ics_export.clicked.connect(self._export_ics)
@@ -3063,13 +3133,14 @@ class PersonalWindow(QMainWindow):
         l.setContentsMargins(12, 10, 12, 12)
         l.setSpacing(6)
         l.addWidget(components.page_header("Idea Boards", "Sticky cards, pan, and draw"))
+        # Eleven equal boxes in one row became: the verb you came for, three
+        # mode chips (they are a state, not an action), the pen settings, and a
+        # menu holding the round chores (new/delete board, clear ink/links, save).
         row = QHBoxLayout()
-        self.btn_add_board = QPushButton("New board")
-        self.btn_delete_board = QPushButton("Delete board")
-        self.btn_add_card = QPushButton("Add sticky")
-        self.btn_mode_pan = QPushButton("Pan")
-        self.btn_mode_draw = QPushButton("Draw")
-        self.btn_mode_link = QPushButton("Link")
+        self.btn_add_card = primary_button("Add sticky")
+        self.btn_mode_pan = components.chip("Pan")
+        self.btn_mode_draw = components.chip("Draw")
+        self.btn_mode_link = components.chip("Link")
         self.cmb_pen_color = QComboBox()
         self.cmb_pen_color.addItem("Espresso", "#6f4e37")
         self.cmb_pen_color.addItem("Caramel", "#a36a3c")
@@ -3080,29 +3151,31 @@ class PersonalWindow(QMainWindow):
         self.cmb_pen_width.addItem("Fine", 2.0)
         self.cmb_pen_width.addItem("Medium", 4.0)
         self.cmb_pen_width.addItem("Bold", 6.0)
-        self.btn_clear_ink = QPushButton("Clear ink")
-        self.btn_clear_links = QPushButton("Clear links")
-        self.btn_save_board = QPushButton("Save board")
-        self.btn_mode_pan.setCheckable(True)
-        self.btn_mode_draw.setCheckable(True)
-        self.btn_mode_link.setCheckable(True)
         self.board_mode_group = QButtonGroup(self)
         self.board_mode_group.setExclusive(True)
         self.board_mode_group.addButton(self.btn_mode_pan)
         self.board_mode_group.addButton(self.btn_mode_draw)
         self.board_mode_group.addButton(self.btn_mode_link)
-        row.addWidget(self.btn_add_board)
-        row.addWidget(self.btn_delete_board)
         row.addWidget(self.btn_add_card)
         row.addWidget(self.btn_mode_pan)
         row.addWidget(self.btn_mode_draw)
         row.addWidget(self.btn_mode_link)
         row.addWidget(self.cmb_pen_color)
         row.addWidget(self.cmb_pen_width)
-        row.addWidget(self.btn_clear_ink)
-        row.addWidget(self.btn_clear_links)
-        row.addWidget(self.btn_save_board)
         row.addStretch(1)
+        row.addWidget(
+            more_menu(
+                (
+                    ("New board…", self._add_board),
+                    ("Delete this board", self._delete_board),
+                    (None, None),
+                    ("Clear the ink on this board", self._clear_board_ink),
+                    ("Clear every link", self._clear_board_links),
+                    ("Save the card positions", self._save_current_board_positions),
+                ),
+                tooltip="Board chores: create, delete, clear, save",
+            )
+        )
         l.addLayout(row)
         self.lbl_board_hint = QLabel("Keep it simple: pan the canvas, drop sticky cards, or switch to Draw to sketch directly.")
         self.lbl_board_hint.setObjectName("MutedLabel")
@@ -3132,18 +3205,13 @@ class PersonalWindow(QMainWindow):
         split.setSizes([200, 860])
         l.addWidget(split, 1)
 
-        self.btn_add_board.clicked.connect(self._add_board)
-        self.btn_delete_board.clicked.connect(self._delete_board)
         self.btn_add_card.clicked.connect(self._add_board_card)
         self.btn_mode_pan.clicked.connect(lambda: self._set_board_mode("pan"))
         self.btn_mode_draw.clicked.connect(lambda: self._set_board_mode("draw"))
         self.btn_mode_link.clicked.connect(lambda: self._set_board_mode("link"))
         self.cmb_pen_color.currentIndexChanged.connect(self._apply_board_pen)
         self.cmb_pen_width.currentIndexChanged.connect(self._apply_board_pen)
-        self.btn_clear_ink.clicked.connect(self._clear_board_ink)
-        self.btn_clear_links.clicked.connect(self._clear_board_links)
         self.board_view.link_created.connect(self._add_board_edge)
-        self.btn_save_board.clicked.connect(self._save_current_board_positions)
         self.btn_mode_pan.setChecked(True)
         self._apply_board_pen()
         return w

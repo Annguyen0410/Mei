@@ -41,6 +41,60 @@ def palette(mode: str | None = None, accent: str | None = None) -> dict:
     return _palette(mode or resolved_mode(), accent)
 
 
+# ---------- 6.7 dialog verbs: one action, one row --------------------------
+# Dialogs had grown rows of five to seven identical buttons, so the action the
+# dialog existed for was indistinguishable from "Delete everything" two pixels
+# away. ``ui/dialogs/common.py`` now gives every verb a role: exactly one filled
+# primary per dialog, ghosts for the verbs worth keeping visible, subdued quiet
+# buttons (Close), and the occasional verbs inside one "⋯ More" menu. Kept as a
+# single block appended to both sheets so the dialog chrome cannot drift from
+# the full workspace.
+_VERB_QSS = """
+QPushButton#PrimaryButton {
+    background-color: %(ACCENT)s;
+    color: %(MAIN_BG)s;
+    border: 1px solid %(ACCENT)s;
+    border-radius: %(RADIUS_SM)s;
+    padding: 6px 16px;
+    font-weight: 800;
+}
+QPushButton#PrimaryButton:hover { background-color: %(ACCENT_HOVER)s; border-color: %(ACCENT_HOVER)s; }
+QPushButton#PrimaryButton:disabled {
+    background-color: %(MAIN_BG_ALT)s; color: %(TEXT_DIM)s; border-color: %(BORDER_SOFT)s;
+}
+QPushButton#GhostButton {
+    background-color: transparent;
+    color: %(TEXT_MUTED)s;
+    border: 1px solid %(BORDER_SOFT)s;
+    border-radius: %(RADIUS_SM)s;
+    padding: 6px 13px;
+    font-weight: 700;
+}
+QPushButton#GhostButton:hover { background-color: %(ITEM_HOVER)s; border-color: %(ACCENT)s; color: %(TEXT)s; }
+QPushButton#QuietButton {
+    background-color: transparent;
+    color: %(TEXT_MUTED)s;
+    border: 1px solid transparent;
+    border-radius: %(RADIUS_SM)s;
+    padding: 5px 12px;
+    font-weight: 700;
+}
+QPushButton#QuietButton:hover { background-color: %(ITEM_HOVER)s; color: %(TEXT)s; }
+QPushButton#DangerButton {
+    background-color: transparent;
+    color: %(DANGER)s;
+    border: 1px solid %(BORDER_SOFT)s;
+    border-radius: %(RADIUS_SM)s;
+    padding: 6px 13px;
+    font-weight: 700;
+}
+QPushButton#DangerButton:hover { background-color: %(DANGER)s; border-color: %(DANGER)s; color: %(MAIN_BG)s; }
+QMenu#DialogOverflowMenu { padding: 6px; }
+QMenu#DialogOverflowMenu::item { padding: 6px 22px 6px 12px; }
+QMenu#DialogOverflowMenu::separator { height: 1px; margin: 5px 8px; background-color: %(BORDER_SOFT)s; }
+"""
+
+
 def main_qss(mode: str = "cafe-night", accent: str | None = None):
     p = _palette(mode, accent)
     return """
@@ -1111,7 +1165,7 @@ QToolButton::menu-indicator {
     width: 0;
     height: 0;
 }
-""" % p
+""" % p + _VERB_QSS % p
 
 
 def dialog_qss(mode: str = "cafe-night", accent: str | None = None):
@@ -1210,7 +1264,7 @@ def dialog_qss(mode: str = "cafe-night", accent: str | None = None):
         background-color: %(MENU_BG)s; color: %(TEXT)s;
         border: 1px solid %(INPUT_BORDER)s; border-radius: 8px; padding: 6px 10px;
     }
-    """ % p
+    """ % p + _VERB_QSS % p
 
 
 def dynamic_main_widget_css(mode: str, phase: int, accent: str | None = None) -> str:

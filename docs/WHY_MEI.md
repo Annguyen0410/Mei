@@ -38,6 +38,20 @@ Companion docs: [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (layers and extension
   next?* — with one action that Home, `/flow`, the Morning Brief and the planner all render.
   A recommendation that four surfaces share cannot drift the way four separate "suggestions"
   would.
+- **The loop also reads backwards and outwards.** `weekly_review()` turns the same stores into
+  the week it actually had — minutes, streak, and the rows nothing touched — which the Home
+  “This Week” card renders and the AI index stores as a document, so reflection is evidence
+  rather than a feeling. `reminder()` is the loop speaking first: one native toast when there
+  is a next step worth interrupting for, and silence during a pour, at night, or once today
+  already has minutes in it.
+- **The assistant can look at the browser.** The AI workspace attaches the page you are reading
+  (its real text, via `innerText`) and the open tabs as *untrusted* context, so "what is this
+  page about?" works from the assistant itself — not only from the inline panel. Local Ollama
+  vision remains the only path a screenshot can take.
+- **The loop is memoized, not recomputed.** `build_flow` was ~20 ms of JSON parsing on a
+  200-note profile and Home asked for it on every refresh; it now shares one memo keyed on a
+  cheap store signature, with `reset_flow_cache()` for callers that must see a write
+  immediately. Measured: 28 ms cold → 0.7 ms warm.
 - **Stores are versioned, migrations are registered.** `core/store.py` + `core/migrations.py`;
   a new field is a numbered step, not a best-effort `setdefault`.
 - **Five cross-cutting planes.** Every study store travels through backup/import, self-hosted

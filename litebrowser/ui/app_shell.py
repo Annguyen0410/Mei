@@ -63,6 +63,7 @@ class AppShell(QMainWindow):
     update_downloaded = pyqtSignal(object, object)
     sync_finished = pyqtSignal(bool, str)
     monitor_checked = pyqtSignal(object)
+    background_done = pyqtSignal(object, object)
 
     def __init__(self, profile_dir: str, app_dir: str = None, window_slot: str = "primary", browser_workspace_id: str | None = None):
         super().__init__()
@@ -84,6 +85,7 @@ class AppShell(QMainWindow):
         self.update_downloaded.connect(self._finish_downloaded_update)
         self.sync_finished.connect(self._show_sync_result)
         self.monitor_checked.connect(self._on_monitor_checked)
+        self.background_done.connect(self._deliver_background_result)
         title_suffix = "Workspace 1" if self.window_slot == "primary" else "Workspace 2"
         # Brand comes from core/product.py: the taskbar used to spell out a name
         # the exe, installer and data folder did not share.
@@ -706,6 +708,7 @@ class AppShell(QMainWindow):
                 QTimer.singleShot(900, lambda: self._safe_onboarding())
             self._init_tray()
             self._init_break_reminders()
+            self._init_study_reminder()
             self._init_routines_timer()
             self._init_page_monitor()
 
@@ -844,6 +847,63 @@ class AppShell(QMainWindow):
             tray.notify(title, message)
         else:
             self._flash_status(f"{title} — {message}")
+
+    def _init_study_reminder(self):
+        """The loop, out loud: Mei starts the recommendation instead of waiting.
+
+        The break timer watches the pour; this one watches the *day* and asks
+        ``study_flow`` whether anything is worth a native toast. Prefs hold the
+        gap (0 disables it); quiet hours and the silence during a running pour
+        are the loop's own rules, so every surface keeps the same manners.
+        """
+        self._last_study_nudge = 0.0
+        self._study_reminder_timer = QTimer(self)
+        self._study_reminder_timer.setInterval(60 * 1000)
+        self._study_reminder_timer.timeout.connect(self._check_study_reminder)
+        self._study_reminder_timer.start()
+
+    def _check_study_reminder(self):
+        try:
+            minutes = prefs.get_study_reminder_minutes(self.profile_dir)
+            if not minutes:
+                return
+            from litebrowser.services import study_flow
+
+            nudge = study_flow.reminder(
+                self.profile_dir, last_sent=self._last_study_nudge, min_gap_minutes=minutes
+            )
+            if not nudge:
+                return
+            self._last_study_nudge = time.time()
+            self.system_notify(nudge.get("title", "Study loop"), nudge.get("message", ""))
+        except Exception as exc:
+            # A timer slot that raises can abort the whole process on PyQt5, and a
+            # reminder is never worth that: log it and stay quiet until the next tick.
+            from litebrowser.core.log import get_logger
+
+            get_logger("app_shell").debug("study reminder failed: %s", exc)
+
+    def run_in_background(self, work, on_done=None):
+        """Run blocking work (network, disk sweeps) off the GUI thread.
+
+        ``on_done`` is invoked back on the GUI thread with the finished future,
+        which is the only safe way for a page to touch widgets from work that
+        had to leave the main thread (Google sign-in, token refresh, sync).
+        """
+        future = self._executor.submit(work)
+        if on_done is not None:
+            future.add_done_callback(lambda done: self.background_done.emit(done, on_done))
+        return future
+
+    def _deliver_background_result(self, future, callback):
+        if self._closing:
+            return
+        try:
+            callback(future)
+        except Exception as exc:  # a page callback must never kill the shell
+            from litebrowser.core.log import get_logger
+
+            get_logger("app_shell").debug("background callback failed: %s", exc)
 
     def _init_break_reminders(self):
         """20-20-20 eye rest + a nudge when a focus pour ends (30s check)."""

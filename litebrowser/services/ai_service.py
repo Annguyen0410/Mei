@@ -15,6 +15,7 @@ from litebrowser.core.storage_utils import read_json, write_json
 from litebrowser.services import (
     download_mgr,
     flashcard_service,
+    focus_service,
     life_service,
     personal_plan,
     personal_service,
@@ -89,7 +90,7 @@ def _index_signature(base_dir: str) -> str:
         prefs.bookmarks_path(base_dir), prefs.history_path(base_dir), prefs.downloads_list_path(base_dir),
         life_service.tasks_path(base_dir), life_service.calendar_path(base_dir), life_service.boards_path(base_dir),
         life_service.saved_pages_path(base_dir), personal_plan.plan_path(base_dir),
-        flashcard_service.cards_path(base_dir),
+        flashcard_service.cards_path(base_dir), focus_service.sessions_path(base_dir),
     )
     rows = []
     for path in paths:
@@ -292,6 +293,22 @@ def collect_docs(base_dir: str) -> list[AIDoc]:
                 },
             )
         )
+
+    # The reflect step is a document too: "how much did I study this week?" is
+    # answered from the same numbers the Home card renders, not re-derived.
+    review = study_flow.weekly_review(base_dir)
+    docs.append(
+        AIDoc(
+            "study_week",
+            (
+                f"Study week — {review['minutes_total']} min poured, "
+                f"{review['days_poured']}/{review['days']} days, {review['streak']}-day streak"
+            ),
+            "",
+            study_flow.review_line(review).replace("\n", " · "),
+            {"days": review["days"], "minutes": review["minutes_total"]},
+        )
+    )
 
     return docs
 

@@ -18,18 +18,22 @@ from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QDialog,
-    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPushButton,
     QVBoxLayout,
 )
 
 from litebrowser.core import prefs
 from litebrowser.ui.dialogs import sessions as sessions_dialog
-from litebrowser.ui.dialogs.common import _stylesheet
+from litebrowser.ui.dialogs.common import (
+    _stylesheet,
+    danger_button,
+    dialog_footer,
+    ghost_button,
+    primary_button,
+)
 
 
 def _test_proxy_connection(host: str, port: int, kind: str, timeout: float = 6.0) -> tuple[bool, str]:
@@ -292,12 +296,10 @@ def show_vpn_hub(parent) -> None:
 
     layout.addWidget(list_w)
 
-    fetch_row = QHBoxLayout()
+    # One checkbox instead of checkbox + button: the fetch verb lives in the
+    # footer menu, and the tick below still gates it.
     chk_risk = QCheckBox("I understand the risks and want to load a public HTTPS proxy list")
-    fetch_btn = QPushButton("Load free proxies (HTTPS)")
-    fetch_row.addWidget(chk_risk, 1)
-    fetch_row.addWidget(fetch_btn)
-    layout.addLayout(fetch_row)
+    layout.addWidget(chk_risk)
 
     chk_auto = QCheckBox("Auto-connect this proxy every time Mei starts")
     chk_auto.setChecked(prefs.get_auto_connect_vpn(base_dir))
@@ -310,7 +312,11 @@ def show_vpn_hub(parent) -> None:
 
     def on_fetch():
         if not chk_risk.isChecked():
-            QMessageBox.warning(dlg, "VPN hub", "Tick the risk acknowledgment before loading the list.")
+            QMessageBox.warning(
+                dlg,
+                "VPN hub",
+                "Tick \u201cI understand the risks\u201d above before loading a public list.",
+            )
             return
         try:
             lines = _fetch_public_https_proxies(40)
@@ -332,24 +338,6 @@ def show_vpn_hub(parent) -> None:
             list_w.addItem(item)
             added += 1
         QMessageBox.information(dlg, "VPN hub", f"Added {added} new proxies. Select one line, then click Connect.")
-
-    fetch_btn.clicked.connect(on_fetch)
-
-    btn_row = QHBoxLayout()
-    btn_test = QPushButton("Test connection")
-    btn_leak = QPushButton("Run leak test")
-    btn_connect = QPushButton("Connect (select 1 line)")
-    btn_disconnect = QPushButton("Disconnect proxy")
-    btn_manual = QPushButton("Detailed form…")
-    btn_close = QPushButton("Close")
-    btn_row.addWidget(btn_test)
-    btn_row.addWidget(btn_leak)
-    btn_row.addWidget(btn_connect)
-    btn_row.addWidget(btn_disconnect)
-    btn_row.addWidget(btn_manual)
-    btn_row.addStretch()
-    btn_row.addWidget(btn_close)
-    layout.addLayout(btn_row)
 
     def _selected_meta() -> dict[str, Any] | None:
         item = list_w.currentItem()
@@ -384,9 +372,6 @@ def show_vpn_hub(parent) -> None:
             QMessageBox.information(dlg, title, body)
         else:
             QMessageBox.warning(dlg, title, body)
-
-    btn_test.clicked.connect(on_test)
-    btn_leak.clicked.connect(lambda: run_leak_test(parent, base_dir))
 
     def apply_cfg(cfg: dict[str, Any]) -> None:
         prefs.set_proxy_config(base_dir, cfg)
@@ -473,14 +458,32 @@ def show_vpn_hub(parent) -> None:
                 "Proxy disabled.\nRestart Mei so web tabs no longer route through the proxy.",
             )
 
-    btn_connect.clicked.connect(on_connect)
-    btn_disconnect.clicked.connect(on_disconnect)
     def _open_manual():
         dlg.accept()
         sessions_dialog.show_vpn_dialog(parent)
 
-    btn_manual.clicked.connect(_open_manual)
-    btn_close.clicked.connect(dlg.reject)
+    # Six equal buttons became: one verb worth looking at, one probe, and a menu
+    # for the occasional ones (leak test, public list, detailed form, teardown).
+    btn_test = ghost_button("Test connection", "Try the selected preset with a real CONNECT handshake")
+    btn_test.clicked.connect(on_test)
+    # Turning protection off is a real verb people hunt for, and it used to hide
+    # between Connect and Close — tinted now instead of buried.
+    btn_disconnect = danger_button("Disconnect", "Stop routing through the proxy and relaunch")
+    btn_disconnect.clicked.connect(on_disconnect)
+    btn_connect = primary_button("Connect")
+    btn_connect.clicked.connect(on_connect)
+    dialog_footer(
+        layout,
+        primary=btn_connect,
+        secondary=(btn_test, btn_disconnect),
+        menu=(
+            ("Load free proxies (HTTPS)", on_fetch),
+            ("Run DNS leak test", lambda: run_leak_test(parent, base_dir)),
+            (None, None),
+            ("Detailed form…", _open_manual),
+        ),
+        close=dlg.reject,
+    )
 
     presets_hint = QLabel(
         "Custom presets (JSON): add a vpn_quick_presets.json file in the profile with an array "

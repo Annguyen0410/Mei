@@ -10,12 +10,17 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMessageBox,
-    QPushButton,
     QVBoxLayout,
 )
 
 from litebrowser.core import prefs
-from litebrowser.ui.dialogs.common import _stylesheet
+from litebrowser.ui.dialogs.common import (
+    _stylesheet,
+    dialog_footer,
+    ghost_button,
+    icon_button,
+    primary_button,
+)
 
 
 def show_profiles_dialog(parent, app_dir):
@@ -29,7 +34,7 @@ def show_profiles_dialog(parent, app_dir):
     for name in prefs.list_profiles(app_dir):
         list_widget.addItem(name)
     layout.addWidget(list_widget)
-    btn_row = QHBoxLayout()
+
     def add_profile():
         name, ok = QInputDialog.getText(dialog, "New profile", "Profile name:")
         if ok and name.strip():
@@ -65,18 +70,20 @@ def show_profiles_dialog(parent, app_dir):
                 QMessageBox.information(dialog, "Selected", "Profile \"%s\" set. Restart Mei to use it." % name)
         else:
             dialog.accept()
-    btn_add = QPushButton("Create profile")
-    btn_add.clicked.connect(add_profile)
-    btn_del = QPushButton("Delete selected")
-    btn_del.clicked.connect(delete_profile)
-    btn_use = QPushButton("Use this profile")
-    btn_use.setObjectName("TopAccentButton")
+    # Opening a profile is the reason this dialog exists; creating and deleting
+    # profiles are one-off chores, so they fold into the menu.
+    btn_use = primary_button("Use this profile")
     btn_use.clicked.connect(use_selected)
-    btn_row.addWidget(btn_add)
-    btn_row.addWidget(btn_del)
-    btn_row.addWidget(btn_use)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
+    list_widget.itemDoubleClicked.connect(lambda _item: use_selected())
+    dialog_footer(
+        layout,
+        primary=btn_use,
+        menu=(
+            ("Create a profile…", add_profile),
+            (None, None),
+            ("🗑  Delete this profile", delete_profile),
+        ),
+    )
     dialog.exec_()
 
 
@@ -144,7 +151,7 @@ def show_privacy_dialog(parent):
     edit_filter.setText(prefs.get_adblock_filter_file(base_dir) or "")
     edit_filter.setMinimumHeight(32)
     row_file.addWidget(edit_filter, 1)
-    btn_browse = QPushButton("Browse...")
+    btn_browse = ghost_button("Browse…", "Pick a filter file from disk")
     btn_browse.setMinimumWidth(80)
     btn_browse.setMinimumHeight(32)
     def browse_filter():
@@ -185,9 +192,10 @@ def show_privacy_dialog(parent):
         subs.append({"name": name, "url": url})
         prefs.set_adblock_subscriptions(base_dir, subs)
         subs_list.addItem(name)
-    btn_add_sub = QPushButton("+ Add")
+    btn_add_sub = ghost_button("+ Add subscribed list", "Add the chosen list to your filters")
     btn_add_sub.clicked.connect(add_subscription)
     subs_row.addWidget(btn_add_sub)
+
     def remove_subscription():
         row = subs_list.currentRow()
         if row < 0:
@@ -197,7 +205,9 @@ def show_privacy_dialog(parent):
             subs.pop(row)
             prefs.set_adblock_subscriptions(base_dir, subs)
             subs_list.takeItem(row)
-    btn_remove_sub = QPushButton("Remove")
+    # Removing one subscription is a row-level chore: a glyph on the list
+    # instead of a third box competing with the checkbox column above it.
+    btn_remove_sub = icon_button("🗑", "Remove the selected subscription")
     btn_remove_sub.clicked.connect(remove_subscription)
     subs_row.addWidget(btn_remove_sub)
     layout.addLayout(subs_row)
@@ -215,9 +225,7 @@ def show_privacy_dialog(parent):
     layout.addWidget(note_crypto)
 
     layout.addSpacing(18)
-    btn_row = QHBoxLayout()
-    btn_row.addStretch()
-    btn = QPushButton("Save")
+    btn = primary_button("Save")
     btn.setMinimumWidth(120)
     btn.setMinimumHeight(36)
     def save_privacy():
@@ -253,9 +261,7 @@ def show_privacy_dialog(parent):
         QMessageBox.information(dialog, "Saved", "Security preferences applied.")
         dialog.accept()
     btn.clicked.connect(save_privacy)
-    btn_row.addWidget(btn)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
+    dialog_footer(layout, primary=btn)
     dialog.exec_()
 
 
@@ -303,9 +309,9 @@ def show_save_password_dialog(parent):
             dialog.accept()
         else:
             QMessageBox.warning(dialog, "Error", "Could not save (check the master password).")
-    btn = QPushButton("Save")
+    btn = primary_button("Save")
     btn.clicked.connect(do_save)
-    layout.addWidget(btn)
+    dialog_footer(layout, primary=btn)
     dialog.exec_()
 
 
@@ -333,7 +339,6 @@ def show_permissions_manager(parent):
     layout.addWidget(QLabel("Decisions you made for site features. Allow = grant, Deny = block permanently."))
     list_widget = QListWidget()
     layout.addWidget(list_widget, 1)
-    btn_row = QHBoxLayout()
 
     def refresh():
         list_widget.clear()
@@ -400,23 +405,22 @@ def show_permissions_manager(parent):
         prefs.set_permission(base_dir, origin.strip(), feature_key, policy)
         refresh()
 
-    btn_add = QPushButton("Add rule")
-    btn_add.clicked.connect(add_rule)
-    btn_flip = QPushButton("Allow ⇄ Deny")
+    # Flipping one decision is the whole interaction; the three verbs that are
+    # not that (add / remove / reset) hide behind the menu, and double-clicking
+    # a row flips it like the button does.
+    btn_flip = primary_button("Allow ⇄ Deny")
     btn_flip.clicked.connect(flip)
-    btn_remove = QPushButton("Remove rule")
-    btn_remove.clicked.connect(remove_rule)
-    btn_reset = QPushButton("Reset all")
-    btn_reset.clicked.connect(lambda: (prefs.save_permissions(base_dir, {}), refresh()))
-    for b in (btn_add, btn_flip, btn_remove, btn_reset):
-        btn_row.addWidget(b)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
-    close_row = QHBoxLayout()
-    close_row.addStretch()
-    btn_close = QPushButton("Close")
-    btn_close.clicked.connect(dialog.accept)
-    close_row.addWidget(btn_close)
-    layout.addLayout(close_row)
+    list_widget.itemDoubleClicked.connect(lambda _item: flip())
+    dialog_footer(
+        layout,
+        primary=btn_flip,
+        menu=(
+            ("Add a rule for a site…", add_rule),
+            ("Remove the selected rule", remove_rule),
+            (None, None),
+            ("Reset every decision", lambda: (prefs.save_permissions(base_dir, {}), refresh())),
+        ),
+        close=dialog.accept,
+    )
     refresh()
     dialog.exec_()

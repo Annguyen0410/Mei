@@ -128,6 +128,8 @@ The search box at the top is the command center of the whole app:
 
 The dashboard: time-of-day greeting, a **“Your Week”** 7-day activity chart, quick-launch tiles, version badge, recent notes / today's tasks / recently closed pages, and a “Where time goes” breakdown. Everything scrolls naturally — no squished cards.
 
+Home also carries a **This Week** card — the reflect station with numbers: a seven-day text spark, minutes poured, days studied, your streak, and the rows nothing touched this week ("overdue 3d", "never studied"), with **▶ Study the oldest one** turning that reading into a pour.
+
 The **Today** card is the entrance to the loop: one merged agenda (planner deadlines, planner time blocks, quick inbox rows — overdue first, each badged *Planner* / *Inbox*), the loop line (*“1 overdue · 5 card(s) due · next: ▶ Study “Late essay” (40 min)”*), **▶ Continue** (runs the recommended step — including starting the pour) and **→ Planner** (promotes the selected inbox row into the Weekly Plan, keeping a task↔item link). Double-click any row to open it where it lives. The **Morning Brief** below ends with **▶ Next step** and **📝 Save as note** writes the whole briefing — next step included — into the vault.
 
 ### 🌐 Browser

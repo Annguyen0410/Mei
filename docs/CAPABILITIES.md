@@ -39,6 +39,17 @@ accepted alternative to deleting the code.
 | Unified Home agenda | `life_service.today_agenda` → Home “Today” card (planner deadlines + quick-task inbox) |
 | The study loop (one next step) | `services/study_flow.py` → Home “▶ Continue”, `/flow`, the brief's `next_step` line and the planner study hint |
 | Inbox → planner promotion | `study_flow.promote_task` → Home “→ Planner” (task and item stay linked) |
+| Proactive study reminders | `study_flow.reminder` → `AppShell._check_study_reminder` (60 s tick) → `system_notify` toast; gap from `prefs.get_study_reminder_minutes`, Settings combo |
+| Weekly reflection | `study_flow.weekly_review` / `review_line` → Home “This Week” card (spark, streak, skipped rows) and the AI index (`study_week` doc) |
+| Term settings | `personal_plan.update_plan_settings` → Weekly Plan “⚙ Semester” dialog |
+| Google sign-in | `google_auth.sign_in_via_device_code` / `ensure_valid_token` + `prefs.get/set_google_token_cache` → Settings “Google account” card (background thread, `AppShell.run_in_background`) |
+| Passcode re-lock | `security.lock` → Settings “Lock now” |
+| Watched pages management | `page_monitor.remove_monitor` → Settings “Watched pages” card |
+| Tab-set rename | `tab_sets.rename_tab_set` → Tab Sets dialog “⋯ More → Rename…” |
+| Workspace rename | `workspace_manager.rename_workspace` → Manage Workspaces dialog “⋯ More → Rename the selected workspace…” (double-click also renames) |
+| One action per dialog | `ui/dialogs/common.py::dialog_footer` + the Primary/Ghost/Quiet/Danger roles → every dialog footer, `theme.py` §6.7 |
+| Background work relay | `AppShell.run_in_background` → `background_done` signal → page callbacks on the GUI thread |
+| Loop memoization | `study_flow._memoized` (1 s TTL + store signature) → `reset_flow_cache` for callers that must see a write immediately |
 | Brief markdown export | `brief_service.brief_markdown` → Home “📝 Save as note” |
 | Qt binding selection | `litebrowser/qt.py` over `qt_compat.py` |
 
@@ -49,15 +60,11 @@ bundle, or a future UI, and are intentionally *not* dead:
 
 | Capability | API | Reachable from | Why kept |
 |---|---|---|---|
-| Planner settings | `personal_plan.update_plan_settings` | phone bridge | Semester/week settings persist with no Settings panel yet |
-| Monitor removal | `page_monitor.remove_monitor` | phone bridge | Add/list are wired; removal arrived with the bridge contract |
-| Tab-set rename | `tab_sets.rename_tab_set` | — | Sessions dialog saves and deletes sets; rename is the missing menu action |
-| Workspace rename | `workspace_manager.rename_workspace` | — | Workspaces are created automatically; renaming is a future Settings affordance |
-| Google token cache | `prefs.get_google_token_cache` / `set_google_token_cache` | `google_auth` | Written after sign-in, read by the refresh path |
-| Google token refresh | `google_auth.ensure_valid_token` | `google_auth.sign_in_via_device_code` | Reuses a fresh token without network, refreshes or drops a stale one |
-| Device-code sign-in | `google_auth.sign_in_via_device_code` | — | One-shot wrapper over `request_device_code` + `poll_device_token` for the upcoming "Sign in with Google" button |
-| Passcode lock | `security.lock` | Settings | Unlock/verify are wired; re-locking without restart is the missing piece |
 | Cục Quản Lý support URL | `app_paths.cuc_quan_ly_support_url` | — | Resolves the bundled copy's `index.html`; wired when the packaged copy is missing |
+
+The Google, planner-settings, rename, monitor-removal and passcode rows that used to
+live here were promoted into §1 (Settings, the Weekly Plan header, the Tab Sets dialog
+and the Manage Workspaces dialog) — the ledger only shrinks.
 
 ## 3. Promoting or dropping an entry
 

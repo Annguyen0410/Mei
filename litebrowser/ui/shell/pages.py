@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -40,13 +41,17 @@ from litebrowser.services import (
     android_bridge_service,
     brief_service,
     focus_service,
+    google_auth,
     history_service,
     life_service,
+    page_monitor,
     personal_service,
     retriever,
+    security,
     study_flow,
 )
 from litebrowser.ui import components, dialogs, theme
+from litebrowser.ui.dialogs.common import ghost_button, menu_action, more_menu, primary_button, quiet_button
 
 
 def _dedupe_library_items(items: list) -> list:
@@ -447,6 +452,7 @@ class HomeDashboardPage(QWidget):
         sections.addWidget(tasks_card, 1)
         sections.addWidget(closed_card, 1)
         layout.addLayout(sections, 1)
+        layout.addWidget(self._reflect_card())
 
         self.btn_browser, self.btn_ai, self.btn_personal, self.btn_task, self.btn_focus, self.btn_library, self.btn_history, self.btn_settings, self.btn_guide = self._launch_tiles
 
@@ -529,8 +535,78 @@ class HomeDashboardPage(QWidget):
         layout.addWidget(self.recent_tasks, 1)
         return card
 
+    def _reflect_card(self):
+        """The week's evidence: what was poured, what the streak is, what was skipped.
+
+        The loop's last station used to be prose in the brief; reading the four
+        stores that study, review and plan already write lets the dashboard say
+        what *happened* instead of only what is due — and name the one row that
+        has been waiting the longest.
+        """
+        card = QFrame()
+        card.setObjectName("SectionCard")
+        card.setMaximumHeight(230)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(6)
+        self.btn_reflect_study = QPushButton("▶ Study the oldest one")
+        self.btn_reflect_study.setToolTip("Pour a focus session for the item that has waited longest")
+        self.btn_reflect_study.clicked.connect(self._study_neglected)
+        layout.addWidget(
+            components.section_header(
+                "This Week", "Reflect — poured minutes, streaks, and what got skipped", self.btn_reflect_study
+            )
+        )
+        self.lbl_reflect = QLabel("")
+        self.lbl_reflect.setObjectName("MutedLabel")
+        self.lbl_reflect.setWordWrap(True)
+        layout.addWidget(self.lbl_reflect)
+        self.reflect_items = QListWidget()
+        self.reflect_items.setObjectName("CafeList")
+        self.reflect_items.setMaximumHeight(96)
+        self.reflect_items.setToolTip("Double-click a row to open it in the Weekly Plan")
+        self.reflect_items.itemDoubleClicked.connect(self._open_reflect_item)
+        layout.addWidget(self.reflect_items)
+        return card
+
+    def _refresh_reflect(self):
+        """One call fills the reflection: the line, the list, and the button."""
+        review = study_flow.weekly_review(self.shell.profile_dir)
+        self._reflect = review
+        self.lbl_reflect.setText(study_flow.review_line(review))
+        self.reflect_items.clear()
+        for row in review.get("neglected", []):
+            item = QListWidgetItem(f"{row.get('title', '')} — {row.get('detail', '')}")
+            item.setData(Qt.UserRole, {"kind": row.get("kind", "planner-item"), "id": row.get("id", "")})
+            self.reflect_items.addItem(item)
+        if self.reflect_items.count() == 0:
+            self.reflect_items.addItem(components.hint_list_item("Nothing was skipped this week", "✓"))
+        self.btn_reflect_study.setEnabled(self.reflect_items.count() > 0 and bool(review.get("neglected")))
+
+    def _study_neglected(self):
+        """Reflect → study: the row at the top of the list becomes the next pour."""
+        rows = (getattr(self, "_reflect", None) or {}).get("neglected") or []
+        if not rows:
+            return
+        top = rows[0]
+        self.shell.open_flow_step(
+            {
+                "step": "study",
+                "label": f"▶ Study “{top.get('title', '')}”",
+                "reason": top.get("detail", ""),
+                "kind": top.get("kind", "planner-item"),
+                "id": top.get("id", ""),
+                "minutes": int(top.get("minutes", 0) or 0),
+                "start": True,
+            }
+        )
+
+    def _open_reflect_item(self, row):
+        data = row.data(Qt.UserRole) if row is not None else None
+        if isinstance(data, dict) and data.get("id"):
+            self.shell.open_library_item(data)
+
     def _refresh_flow(self):
-        """One line of loop state + one button that runs the recommended step."""
         flow = study_flow.build_flow(self.shell.profile_dir)
         action = flow.get("next") or {}
         self.lbl_flow.setText(flow.get("pulse", ""))
@@ -636,6 +712,7 @@ class HomeDashboardPage(QWidget):
             self.recent_closed.addItem(components.hint_list_item("Nothing closed recently", "○"))
 
         self._refresh_flow()
+        self._refresh_reflect()
         self.brief_card.setVisible(prefs.get_show_morning_brief(self.shell.profile_dir))
         self._refresh_brief()
 
@@ -1018,6 +1095,106 @@ class SettingsPage(QWidget):
         extras_layout.addWidget(self.chk_shield)
         content_layout.addWidget(extras_card)
 
+        # The loop, out loud: the shell can start the next step instead of only
+        # answering when the Home card is opened.
+        study_card = QFrame()
+        study_card.setObjectName("SectionCard")
+        study_layout = QVBoxLayout(study_card)
+        study_layout.setContentsMargins(12, 12, 12, 12)
+        study_layout.setSpacing(6)
+        study_layout.addWidget(
+            components.section_header("Study reminders", "Mei tells you the next step instead of waiting to be asked")
+        )
+        reminder_help = QLabel(
+            "A native toast with the loop's next step — an overdue deadline, cards that are due, "
+            "or a day with nothing poured. Quiet from 22:00 to 08:00, and never while a pour is running."
+        )
+        reminder_help.setWordWrap(True)
+        reminder_help.setObjectName("MutedLabel")
+        study_layout.addWidget(reminder_help)
+        self.cmb_study_reminder = QComboBox()
+        for label, minutes in (
+            ("Off", 0),
+            ("At most every 30 minutes", 30),
+            ("At most every hour", 60),
+            ("At most every 2 hours", 120),
+            ("At most every 4 hours", 240),
+            ("At most every 8 hours", 480),
+        ):
+            self.cmb_study_reminder.addItem(label, minutes)
+        self.cmb_study_reminder.setToolTip("How often Mei may start a nudge for the current next step")
+        self.cmb_study_reminder.currentIndexChanged.connect(self._save_study_reminder)
+        study_layout.addWidget(self.cmb_study_reminder)
+        content_layout.addWidget(study_card)
+
+        google_card = QFrame()
+        google_card.setObjectName("SectionCard")
+        google_layout = QVBoxLayout(google_card)
+        google_layout.setContentsMargins(12, 12, 12, 12)
+        google_layout.setSpacing(6)
+        google_layout.addWidget(
+            components.section_header("Google account", "Device-code sign-in — no password ever reaches Mei")
+        )
+        self.lbl_google_status = QLabel("")
+        self.lbl_google_status.setWordWrap(True)
+        self.lbl_google_status.setObjectName("MutedLabel")
+        google_layout.addWidget(self.lbl_google_status)
+        # Four equal boxes became: the verb you came for, the token check beside
+        # it, and one menu holding the setup and the sign-out.
+        google_row = QHBoxLayout()
+        self.btn_google_sign_in = primary_button("Sign in with Google")
+        self.btn_google_verify = ghost_button("Verify token", "Re-check the cached access token")
+        # The card's occasional verbs (the client ID, the sign-out) live in one
+        # menu; its sign-out action is kept by name so refresh() can grey it out
+        # — a session with no account has nothing to sign out of.
+        self.btn_google_more = more_menu(
+            (
+                ("Set the client ID…", self._set_google_client_id),
+                (None, None),
+                ("Sign out of Google", self._google_sign_out),
+            ),
+            tooltip="Google account chores",
+        )
+        self.google_sign_out_action = menu_action(self.btn_google_more, "Sign out of Google")
+        google_row.addWidget(self.btn_google_sign_in)
+        google_row.addWidget(self.btn_google_more)
+        google_row.addWidget(self.btn_google_verify)
+        google_row.addStretch(1)
+        google_layout.addLayout(google_row)
+        content_layout.addWidget(google_card)
+
+        security_card = QFrame()
+        security_card.setObjectName("SectionCard")
+        security_layout = QVBoxLayout(security_card)
+        security_layout.setContentsMargins(12, 12, 12, 12)
+        security_layout.setSpacing(6)
+        security_layout.addWidget(
+            components.section_header("Passcode lock", "Personal and AI ask for the passcode once per session")
+        )
+        self.lbl_lock_status = QLabel("")
+        self.lbl_lock_status.setWordWrap(True)
+        self.lbl_lock_status.setObjectName("MutedLabel")
+        security_layout.addWidget(self.lbl_lock_status)
+        self.btn_lock_now = ghost_button("Lock now", "Re-lock Personal and AI without restarting Mei")
+        security_layout.addWidget(self.btn_lock_now, 0, Qt.AlignLeft)
+        content_layout.addWidget(security_card)
+
+        monitors_card = QFrame()
+        monitors_card.setObjectName("SectionCard")
+        monitors_layout = QVBoxLayout(monitors_card)
+        monitors_layout.setContentsMargins(12, 12, 12, 12)
+        monitors_layout.setSpacing(6)
+        monitors_layout.addWidget(
+            components.section_header("Watched pages", "One toast when a watched page changes (~every 15 min)")
+        )
+        self.monitors_list = QListWidget()
+        self.monitors_list.setObjectName("CafeList")
+        self.monitors_list.setMaximumHeight(150)
+        monitors_layout.addWidget(self.monitors_list)
+        self.btn_monitor_remove = ghost_button("Stop watching selected", "Remove the highlighted page from the watch list")
+        monitors_layout.addWidget(self.btn_monitor_remove, 0, Qt.AlignLeft)
+        content_layout.addWidget(monitors_card)
+
         sync_card = QFrame()
         sync_card.setObjectName("SectionCard")
         sync_layout = QVBoxLayout(sync_card)
@@ -1177,10 +1354,9 @@ class SettingsPage(QWidget):
         self.lbl_update_status.setWordWrap(True)
         self.lbl_update_status.setObjectName("MutedLabel")
         updates_layout.addWidget(self.lbl_update_status)
-        self.btn_check_updates = QPushButton("Check for updates")
-        self.btn_install_update = QPushButton("Download and install update")
-        self.btn_open_release_page = QPushButton("Open release page")
-        self.btn_check_updates.setObjectName("TopAccentButton")
+        self.btn_check_updates = primary_button("Check for updates")
+        self.btn_install_update = ghost_button("Download and install update")
+        self.btn_open_release_page = quiet_button("Open release page")
         update_actions = QHBoxLayout()
         update_actions.addWidget(self.btn_check_updates)
         update_actions.addWidget(self.btn_install_update)
@@ -1197,6 +1373,10 @@ class SettingsPage(QWidget):
         self.btn_mobile_token_gen.clicked.connect(self._generate_mobile_token)
         self.btn_save_mobile.clicked.connect(self.save_mobile_bridge)
         self.btn_copy_pairing.clicked.connect(self._copy_pairing)
+        self.btn_google_sign_in.clicked.connect(self._google_sign_in)
+        self.btn_google_verify.clicked.connect(self._google_verify)
+        self.btn_lock_now.clicked.connect(self._lock_now)
+        self.btn_monitor_remove.clicked.connect(self._remove_monitor)
         self.btn_open_help_tools.clicked.connect(lambda: dialogs.show_browser_control_center(self.shell.browser_page))
         self.btn_check_updates.clicked.connect(lambda: self.shell.run_update_check(manual=True))
         self.btn_install_update.clicked.connect(self.shell.install_available_update)
@@ -1249,6 +1429,10 @@ class SettingsPage(QWidget):
         self.chk_show_brief.setChecked(prefs.get_show_morning_brief(self.shell.profile_dir))
         self.chk_shield.setChecked(prefs.get_pref(self.shell.profile_dir, "shield_always_on", False))
         self.chk_auto_theme.setChecked(prefs.get_auto_theme(self.shell.profile_dir))
+        self._load_study_reminder()
+        self._refresh_google()
+        self._refresh_security()
+        self._refresh_monitors()
         self.chk_sync_enabled.setChecked(prefs.get_sync_enabled(self.shell.profile_dir))
         self.ed_sync_endpoint.setText(prefs.get_sync_endpoint(self.shell.profile_dir))
         self.ed_sync_token.setText(prefs.get_sync_token(self.shell.profile_dir))
@@ -1269,6 +1453,149 @@ class SettingsPage(QWidget):
             f"Profiles root:\n{profiles_root}\n\n"
             f"Runtime data root:\n{data_root}"
         )
+
+    # -- study reminders, Google account, passcode lock, watched pages -------
+    def _load_study_reminder(self):
+        minutes = prefs.get_study_reminder_minutes(self.shell.profile_dir)
+        index = self.cmb_study_reminder.findData(minutes)
+        # Loading must not look like the user choosing: the combo writes prefs.
+        self.cmb_study_reminder.blockSignals(True)
+        self.cmb_study_reminder.setCurrentIndex(index if index >= 0 else self.cmb_study_reminder.findData(120))
+        self.cmb_study_reminder.blockSignals(False)
+
+    def _save_study_reminder(self, _index: int = 0):
+        prefs.set_study_reminder_minutes(self.shell.profile_dir, self.cmb_study_reminder.currentData() or 0)
+
+    def _google_client_id(self) -> str:
+        stored = prefs.get_google_oauth_client_id(self.shell.profile_dir)
+        return (stored or os.environ.get("LITEBROWSER_GOOGLE_CLIENT_ID", "")).strip()
+
+    def _set_google_client_id(self):
+        current = prefs.get_google_oauth_client_id(self.shell.profile_dir)
+        value, ok = QInputDialog.getText(
+            self,
+            "Google OAuth",
+            "OAuth client ID (a 'Desktop app' id from Google Cloud Console,\nending in .apps.googleusercontent.com):",
+            text=current,
+        )
+        if not ok:
+            return ""
+        client_id = (value or "").strip()
+        prefs.set_google_oauth_client_id(self.shell.profile_dir, client_id)
+        self._refresh_google()
+        return client_id
+
+    def _refresh_google(self):
+        account = prefs.get_google_account(self.shell.profile_dir)
+        cached = prefs.get_google_token_cache(self.shell.profile_dir)
+        if account:
+            label = account.get("email") or account.get("name") or "a Google account"
+            token_note = "token cached" if cached.get("access_token") else "no cached token"
+            self.lbl_google_status.setText(f"Signed in as {label} · {token_note}.")
+        elif self._google_client_id():
+            self.lbl_google_status.setText("Client ID set — use “Sign in with Google” to mint a device-code token.")
+        else:
+            self.lbl_google_status.setText(
+                "Not signed in yet. Set a client ID, then sign in with a device code — no password is typed into Mei."
+            )
+        self.btn_google_verify.setEnabled(bool(cached.get("access_token")))
+        if self.google_sign_out_action is not None:
+            self.google_sign_out_action.setEnabled(bool(account))
+
+    def _google_sign_in(self):
+        client_id = self._google_client_id()
+        if not client_id:
+            client_id = self._set_google_client_id()
+            if not client_id:
+                return
+        self.btn_google_sign_in.setEnabled(False)
+        self.lbl_google_status.setText("Waiting for Google — finish the sign-in in the browser window that just opened…")
+        self.shell.run_in_background(
+            lambda: google_auth.sign_in_via_device_code(client_id), self._finish_google_sign_in
+        )
+
+    def _finish_google_sign_in(self, future):
+        self.btn_google_sign_in.setEnabled(True)
+        try:
+            result = future.result()
+        except Exception as exc:
+            self.lbl_google_status.setText(f"Sign-in failed: {exc}")
+            return
+        if not result:
+            self.lbl_google_status.setText("Sign-in was denied or timed out — try again.")
+            return
+        prefs.set_google_account(self.shell.profile_dir, result.get("account", {}))
+        prefs.set_google_token_cache(self.shell.profile_dir, result.get("tokens", {}))
+        self._refresh_google()
+
+    def _google_verify(self):
+        client_id = self._google_client_id()
+        cached = prefs.get_google_token_cache(self.shell.profile_dir)
+        self.lbl_google_status.setText("Checking the cached token (refreshing only if it is stale)…")
+
+        def _work():
+            token = google_auth.ensure_valid_token(client_id, dict(cached) if cached else None)
+            if token:
+                prefs.set_google_token_cache(self.shell.profile_dir, token)
+            return token
+
+        self.shell.run_in_background(_work, self._finish_google_verify)
+
+    def _finish_google_verify(self, future):
+        try:
+            token = future.result()
+        except Exception as exc:
+            self.lbl_google_status.setText(f"Token check failed: {exc}")
+            return
+        self._refresh_google()
+        self.lbl_google_status.setText(
+            "Token is valid — reused without a network call, refreshed when stale."
+            if token
+            else "No usable token left. Sign in again."
+        )
+
+    def _google_sign_out(self):
+        prefs.clear_google_account(self.shell.profile_dir)
+        self._refresh_google()
+
+    def _refresh_security(self):
+        has_passcode = security.has_passcode(self.shell.profile_dir)
+        locked = not security.is_unlocked(self.shell.profile_dir)
+        if has_passcode:
+            state = "locked" if locked else "unlocked for this session"
+            self.lbl_lock_status.setText(f"A passcode is set — Personal and AI are currently {state}.")
+        else:
+            self.lbl_lock_status.setText("No passcode yet: the first visit to Personal or AI offers to set one.")
+        self.btn_lock_now.setEnabled(has_passcode and not locked)
+
+    def _lock_now(self):
+        security.lock(self.shell.profile_dir)
+        self._refresh_security()
+        QMessageBox.information(
+            self, "Passcode", "Locked — Personal and AI ask for the passcode again on the next visit."
+        )
+
+    def _refresh_monitors(self):
+        monitors = page_monitor.load_monitors(self.shell.profile_dir)
+        self.monitors_list.clear()
+        for monitor in monitors:
+            row = QListWidgetItem(monitor.get("title") or monitor.get("url", ""))
+            row.setToolTip(monitor.get("url", ""))
+            row.setData(Qt.UserRole, monitor.get("id", ""))
+            self.monitors_list.addItem(row)
+        if not monitors:
+            self.monitors_list.addItem(
+                components.hint_list_item("Nothing watched yet — right-click a page and watch it", "○")
+            )
+        self.btn_monitor_remove.setEnabled(bool(monitors))
+
+    def _remove_monitor(self):
+        row = self.monitors_list.currentItem()
+        monitor_id = row.data(Qt.UserRole) if row is not None else ""
+        if not monitor_id:
+            return
+        page_monitor.remove_monitor(self.shell.profile_dir, monitor_id)
+        self._refresh_monitors()
 
     def _local_ipv4_hint(self) -> str:
         try:

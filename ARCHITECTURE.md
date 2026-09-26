@@ -23,8 +23,9 @@ litebrowser/ui/                       UI layer
    ├─ ai_window.py                    AI Workspace
    ├─ shell/pages.py                  Home / Library / Settings / History
    ├─ components.py                   Shared design system
-   ├─ theme.py                        Palette + QSS (theme + accent)
+   ├─ theme.py                        Palette + QSS (theme + accent, §6.7 = dialog verbs)
    └─ dialogs/                        All child dialogs
+        └─ common.py                  Stylesheet hook + button roles + dialog_footer()
         │
 litebrowser/browser/                  Browser core (independent of the shell)
    ├─ tab_manager.py                  Tab lifecycle + hibernation
@@ -187,7 +188,13 @@ access violation instead of a traceback.
   action → `AppShell.open_flow_step` routes it to a workspace (studying starts a `study_session`,
   reviewing opens the deck, capturing selects the note). Home's ▶ Continue, `/flow`, the brief's
   "Next step" line and the planner's study label all read the same function, so the four
-  surfaces cannot disagree.
+  surfaces cannot disagree. Two more readers sit on the same function: `reminder()` (the 60 s
+  shell tick, so Mei starts the step instead of waiting to be asked) and `weekly_review()`
+  (Home's “This Week” card and the AI's `study_week` document).
+- **Slow work never runs on the GUI thread**: `AppShell.run_in_background(work, on_done)` puts a
+  callable on the shell's executor and delivers the finished future back through the
+  `background_done` signal, so a page can touch widgets again without locking up while a device
+  code is being polled or a token refreshed.
 
 ---
 
@@ -222,6 +229,11 @@ access violation instead of a traceback.
 | Two-way entity links | ✅ Done | `link_service.py` (`entity_links.json`) + note Related panel |
 | One loop, one recommendation | ✅ Done | `study_flow.py` → Home ▶ Continue, `/flow`, brief next step, planner study hint |
 | Inbox → planner promotion | ✅ Done | `study_flow.promote_task` + Home “→ Planner” (keeps the task↔item link) |
+| Proactive study reminders | ✅ Done | `study_flow.reminder` → `AppShell._check_study_reminder` → tray toast; gap in prefs, quiet hours in the loop |
+| Weekly reflection card | ✅ Done | `study_flow.weekly_review` / `review_line` → Home “This Week” + AI `study_week` doc |
+| AI reads the browser page | ✅ Done | `ai_window` “👁 Read my browser”: current page text + open tabs as untrusted context |
+| Background work relay for pages | ✅ Done | `AppShell.run_in_background` + `background_done` signal (Google sign-in, token refresh) |
+| Loop memoization (perf) | ✅ Done | `study_flow._memoized`: 1 s TTL + store signature, `reset_flow_cache()` for writers |
 | Tab Groups drag-drop + Split view | ⏳ Not yet | needs GUI testing (pure Qt UI) |
 | Chromium engine upgrade (PyQt6-WebEngine 6.9/6.10) | ⏳ Not yet | big migration, needs GUI regression |
 

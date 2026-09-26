@@ -646,6 +646,29 @@ def set_show_morning_brief(base_dir, value):
     save_prefs(base_dir, data)
 
 
+def get_study_reminder_minutes(base_dir):
+    """How often Mei may start a study nudge. 0 disables the proactivity.
+
+    Default 120: often enough that a student notices the app is watching the
+    day for them, rare enough that it never feels like a nag. The loop itself
+    applies the quiet hours and never talks over a running pour.
+    """
+    try:
+        value = int(load_prefs(base_dir).get("study_reminder_minutes", 120))
+    except (TypeError, ValueError):
+        value = 120
+    return max(0, min(480, value))
+
+
+def set_study_reminder_minutes(base_dir, value):
+    data = load_prefs(base_dir)
+    try:
+        data["study_reminder_minutes"] = max(0, min(480, int(value)))
+    except (TypeError, ValueError):
+        data["study_reminder_minutes"] = 120
+    save_prefs(base_dir, data)
+
+
 def get_sync_endpoint(base_dir):
     return str(load_prefs(base_dir).get("sync_endpoint", "") or "").strip()
 

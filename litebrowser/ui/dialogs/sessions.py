@@ -13,20 +13,25 @@ from PyQt5.QtWidgets import (
     QDialog,
     QFileDialog,
     QGridLayout,
-    QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from litebrowser.core import prefs, time_utils
 from litebrowser.services import tab_sets
-from litebrowser.ui.dialogs.common import _stylesheet
+from litebrowser.ui.dialogs.common import (
+    _stylesheet,
+    dialog_footer,
+    ghost_button,
+    icon_button,
+    primary_button,
+)
 
 
 def show_vpn_dialog(parent):
@@ -80,20 +85,13 @@ def show_vpn_dialog(parent):
         user_input.setText(str(_cfg.get("user") or ""))
         pass_input.setText(str(_cfg.get("password") or ""))
         pac_input.setText(str(_cfg.get("pac_url") or ""))
-    btn_row = QHBoxLayout()
-    btn_row.setSpacing(12)
-    btn_apply = QPushButton("Enable Proxy")
-    btn_off = QPushButton("Disable Proxy")
-    btn_cancel = QPushButton("Cancel")
+    # Same three outcomes as before (1 = enable, 2 = disable, 0 = cancel), now
+    # with one filled verb instead of three identical boxes.
+    btn_apply = primary_button("Enable proxy")
     btn_apply.clicked.connect(lambda: dialog.done(1))
+    btn_off = ghost_button("Disable proxy")
     btn_off.clicked.connect(lambda: dialog.done(2))
-    btn_cancel.clicked.connect(lambda: dialog.done(0))
-    btn_row.addStretch()
-    btn_row.addWidget(btn_apply)
-    btn_row.addWidget(btn_off)
-    btn_row.addWidget(btn_cancel)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
+    dialog_footer(layout, primary=btn_apply, secondary=(btn_off,), close_label="Cancel")
     result = dialog.exec_()
     host = host_input.text().strip()
     port = port_input.text().strip()
@@ -178,9 +176,9 @@ def show_startup_dialog(parent):
         prefs.save_prefs(base_dir, data)
         QMessageBox.information(parent, "Saved", "Applied from the next time Mei opens.")
         dialog.accept()
-    btn = QPushButton("Save")
+    btn = primary_button("Save")
     btn.clicked.connect(save_startup)
-    layout.addWidget(btn)
+    dialog_footer(layout, primary=btn)
     dialog.exec_()
 
 
@@ -203,9 +201,9 @@ def show_hibernate_pref_dialog(parent):
             combo.setCurrentIndex(i)
             break
     layout.addWidget(combo)
-    btn = QPushButton("Save")
+    btn = primary_button("Save")
     btn.clicked.connect(dialog.accept)
-    layout.addWidget(btn)
+    dialog_footer(layout, primary=btn)
     if dialog.exec_() == QDialog.Accepted:
         val = combo.currentData() if hasattr(combo, "currentData") else combo.itemData(combo.currentIndex())
         prefs.save_hibernate_seconds(base_dir, val)
@@ -265,34 +263,28 @@ def show_history_dialog(parent):
         dialog.setWindowTitle("Browsing History (updated)")
 
     layout.addWidget(list_widget)
-    btn_row = QHBoxLayout()
-    btn_clear_1h = QPushButton("Delete 1 hour")
-    btn_clear_1h.clicked.connect(lambda: clear_history(3600))
-    btn_clear_24h = QPushButton("Delete 24 hours")
-    btn_clear_24h.clicked.connect(lambda: clear_history(86400))
-    btn_clear_7d = QPushButton("Delete 7 days")
-    btn_clear_7d.clicked.connect(lambda: clear_history(7 * 86400))
-    btn_clear_all = QPushButton("Delete all")
-    btn_clear_all.clicked.connect(lambda: clear_history(None))
-    btn_row.addStretch()
-    btn_row.addWidget(btn_clear_1h)
-    btn_row.addWidget(btn_clear_24h)
-    btn_row.addWidget(btn_clear_7d)
-    btn_row.addWidget(btn_clear_all)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
-    row = QHBoxLayout()
+
     def open_selected():
         item = list_widget.currentItem()
         if item and item.text() and item.text() != "No history yet...":
             parent.tab_manager.add_tab(QUrl(item.text()))
             dialog.accept()
-    btn_open = QPushButton("Open selected page")
+
+    # Four look-alike "Delete …" boxes (one of them irreversible) became a single
+    # tidy-up menu; opening the selected page is what the dialog is for.
+    btn_open = primary_button("Open selected page")
     btn_open.clicked.connect(open_selected)
-    row.addStretch()
-    row.addWidget(btn_open)
-    row.addStretch()
-    layout.addLayout(row)
+    dialog_footer(
+        layout,
+        primary=btn_open,
+        menu=(
+            ("Delete the last hour", lambda: clear_history(3600)),
+            ("Delete the last 24 hours", lambda: clear_history(86400)),
+            ("Delete the last 7 days", lambda: clear_history(7 * 86400)),
+            (None, None),
+            ("🗑  Delete everything", lambda: clear_history(None)),
+        ),
+    )
     dialog.exec_()
 
 
@@ -379,20 +371,6 @@ def show_bookmarks_dialog(parent):
         refresh_list()
         QMessageBox.information(dialog, "Import", "Added %d bookmark(s)." % added)
 
-    btn_row = QHBoxLayout()
-    btn_row.addStretch()
-    btn_export_json = QPushButton("Export JSON")
-    btn_export_json.clicked.connect(export_json)
-    btn_export_html = QPushButton("Export HTML")
-    btn_export_html.clicked.connect(export_html)
-    btn_import = QPushButton("Import from file")
-    btn_import.clicked.connect(import_file)
-    btn_row.addWidget(btn_export_json)
-    btn_row.addWidget(btn_export_html)
-    btn_row.addWidget(btn_import)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
-    row = QHBoxLayout()
     def open_selected():
         idx = list_widget.currentRow()
         if idx >= 0 and 0 <= idx < len(bookmarks):
@@ -400,12 +378,22 @@ def show_bookmarks_dialog(parent):
             if url:
                 parent.tab_manager.add_tab(QUrl(url))
                 dialog.accept()
-    btn_open = QPushButton("Open selected page")
+
+    # Three file verbs (two exports that differ only by format) live behind one
+    # menu; double-clicking a row still opens it.
+    btn_open = primary_button("Open selected page")
     btn_open.clicked.connect(open_selected)
-    row.addStretch()
-    row.addWidget(btn_open)
-    row.addStretch()
-    layout.addLayout(row)
+    list_widget.itemDoubleClicked.connect(lambda _item: open_selected())
+    dialog_footer(
+        layout,
+        primary=btn_open,
+        menu=(
+            ("Export as JSON", export_json),
+            ("Export as HTML", export_html),
+            (None, None),
+            ("Import from file…", import_file),
+        ),
+    )
     dialog.exec_()
 
 
@@ -471,22 +459,19 @@ def show_extensions_dialog(parent):
         item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
         item.setCheckState(Qt.Checked)
 
-    btn_row = QHBoxLayout()
-    btn_row.addStretch()
-    btn_save = QPushButton("Save options")
+    # Saving is the only thing that must be pressed; the sample script, the
+    # script gallery and the folder are all occasional detours.
+    btn_save = primary_button("Save options")
     btn_save.clicked.connect(save_extensions)
-    btn_row.addWidget(btn_save)
-    btn_sample = QPushButton("Create Adblock sample (.js)")
-    btn_sample.clicked.connect(make_sample)
-    btn_row.addWidget(btn_sample)
-    btn_gf = QPushButton("Browse GreasyFork…")
-    btn_gf.clicked.connect(lambda: [dialog.accept(), parent.tab_manager.add_tab(QUrl("https://greasyfork.org/vi"), "GreasyFork", is_active=True)])
-    btn_row.addWidget(btn_gf)
-    btn_open = QPushButton("Open folder")
-    btn_open.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(ext_path)))
-    btn_row.addWidget(btn_open)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
+    dialog_footer(
+        layout,
+        primary=btn_save,
+        menu=(
+            ("Create an adblock sample (.js)", make_sample),
+            ("Browse GreasyFork…", lambda: [dialog.accept(), parent.tab_manager.add_tab(QUrl("https://greasyfork.org/vi"), "GreasyFork", is_active=True)]),
+            ("Open the extensions folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(ext_path))),
+        ),
+    )
     dialog.exec_()
 
 
@@ -538,22 +523,39 @@ def show_tab_sets_dialog(parent):
             tab_sets.remove_tab_set(base_dir, set_id)
             refresh()
 
+    def rename_selected():
+        current = list_widget.currentItem()
+        if not current:
+            return
+        set_id = current.data(Qt.UserRole)
+        existing = tab_sets.get_tab_set(base_dir, set_id)
+        if not existing:
+            return
+        title, ok = QInputDialog.getText(
+            dialog, "Rename tab set", "Name this collection:", text=existing.get("title", "")
+        )
+        if not ok or not tab_sets.rename_tab_set(base_dir, set_id, title):
+            return
+        refresh()
+
     list_widget.itemDoubleClicked.connect(lambda _item: open_selected())
 
-    btn_row = QHBoxLayout()
-    btn_open = QPushButton("Open")
+    # Five flat buttons became: open (what you came for), a refresh glyph that
+    # belongs to the list, and one menu holding rename/delete.
+    btn_open = primary_button("Open")
     btn_open.clicked.connect(open_selected)
-    btn_del = QPushButton("Delete")
-    btn_del.clicked.connect(delete_selected)
-    btn_refresh = QPushButton("Refresh")
+    btn_refresh = icon_button("↻", "Reload the list from disk")
     btn_refresh.clicked.connect(refresh)
-    btn_close = QPushButton("Close")
-    btn_close.clicked.connect(dialog.accept)
-    btn_row.addWidget(btn_open)
-    btn_row.addWidget(btn_del)
-    btn_row.addWidget(btn_refresh)
-    btn_row.addStretch()
-    btn_row.addWidget(btn_close)
-    layout.addLayout(btn_row)
+    dialog_footer(
+        layout,
+        primary=btn_open,
+        secondary=(btn_refresh,),
+        menu=(
+            ("Rename…", rename_selected),
+            (None, None),
+            ("🗑  Delete this tab set", delete_selected),
+        ),
+        close=dialog.accept,
+    )
     dialog.exec_()
 

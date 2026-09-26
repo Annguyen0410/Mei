@@ -20,13 +20,12 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from litebrowser.core import commands as command_registry
-from litebrowser.ui.dialogs.common import _stylesheet
+from litebrowser.ui.dialogs.common import _stylesheet, ghost_button, quiet_button
 from litebrowser.ui.dialogs.hotkeys import HOTKEYS
 from litebrowser.ui.dialogs.navigation import (
     show_workspace_dialog,
@@ -53,7 +52,10 @@ GUIDE_FEATURES = (
     ("Zen mode", "Ctrl+Shift+Z hides every bar for reading; Esc brings them back."),
     ("Reading list & Library", "Page menu > Save to reading list keeps long articles; Library collects saved pages, notes and exports."),
     ("Personal Hub", "Notes, tasks, calendar, flashcards and the vault — one window, opened from the rail or /personal."),
-    ("AI assistant", "The AI button asks about the current page or your notes; local Ollama and OpenRouter are both supported."),
+    ("AI assistant", "The AI button asks about the current page or your notes; local Ollama and OpenRouter are both supported. “Read my browser” attaches the open page and tabs to every question."),
+    ("Study reminders", "Settings → Study reminders: Mei sends a native toast with the loop's next step — quiet at night and never during a pour."),
+    ("This Week reflection", "Home's This Week card reads the pour journal, the planner and the deck: minutes, streak, and the rows nothing touched this week."),
+    ("Google account", "Settings → Google account signs in with a device code and keeps a refreshable token; your password never reaches Mei."),
     ("Capture", "Ctrl+S screenshots the visible page, Ctrl+Shift+S saves a PDF, Ctrl+Shift+E extracts the page text."),
     ("Privacy", "VPN hub, per-site permissions, cookie policy, profiles and the password vault all live under Control > Privacy."),
     ("Tab memory control", "Ctrl+Shift+M freezes background tabs (or open tabs) so a heavy session stays responsive."),
@@ -223,7 +225,10 @@ def show_browser_control_center(parent):
         body.setWordWrap(True)
         card_layout.addWidget(body)
         for text, fn in actions:
-            button = QPushButton(text)
+            # Ghost buttons, not filled ones: a card is a list of doorways, and a
+            # grid of accent-less boxes read as a wall of identical actions.
+            button = ghost_button(text)
+            button.setCursor(Qt.PointingHandCursor)
             button.clicked.connect(lambda checked=False, cb=fn: [cb(), dialog.accept()])
             card_layout.addWidget(button)
         grid.addWidget(card, index // 2, index % 2)
@@ -278,7 +283,7 @@ def show_browser_control_center(parent):
     hint.setObjectName("MutedLabel")
     hint.setWordWrap(True)
     footer.addWidget(hint, 1)
-    close_btn = QPushButton("Close")
+    close_btn = quiet_button("Close", "Close the guide (Esc)")
     close_btn.clicked.connect(dialog.accept)
     footer.addWidget(close_btn)
     layout.addLayout(footer)

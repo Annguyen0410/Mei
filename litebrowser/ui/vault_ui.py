@@ -6,15 +6,19 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QDialog,
     QFileDialog,
-    QHBoxLayout,
     QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPushButton,
     QTextEdit,
     QVBoxLayout,
+)
+
+from litebrowser.ui.dialogs.common import (
+    dialog_footer,
+    ghost_button,
+    primary_button,
 )
 
 
@@ -78,21 +82,10 @@ def show_vault_dialog(parent, base_vault, dialog_stylesheet):
     refresh_list()
     layout.addWidget(list_widget)
 
-    nav_row = QHBoxLayout()
-    nav_row.setSpacing(8)
-    btn_back = QPushButton("Go up")
     def go_up():
         if len(current_path) > 1:
             current_path.pop()
             refresh_list()
-    btn_back.clicked.connect(go_up)
-    nav_row.addStretch()
-    nav_row.addWidget(btn_back)
-    nav_row.addStretch()
-    layout.addLayout(nav_row)
-
-    btn_row = QHBoxLayout()
-    btn_row.setSpacing(8)
 
     def new_folder():
         name, ok = QInputDialog.getText(dialog, "New folder", "Folder name:")
@@ -133,7 +126,8 @@ def show_vault_dialog(parent, base_vault, dialog_stylesheet):
                 except Exception:
                     pass
             v.addWidget(te)
-            btn_save = QPushButton("Save")
+            btn_save = primary_button("Save")
+
             def do_save():
                 try:
                     with open(full, "w", encoding="utf-8") as f:
@@ -144,7 +138,7 @@ def show_vault_dialog(parent, base_vault, dialog_stylesheet):
                 except Exception as e:
                     QMessageBox.warning(note_dlg, "Error", str(e))
             btn_save.clicked.connect(do_save)
-            v.addWidget(btn_save)
+            dialog_footer(v, primary=btn_save, close=note_dlg.accept)
             note_dlg.exec_()
 
     def upload_file():
@@ -178,24 +172,24 @@ def show_vault_dialog(parent, base_vault, dialog_stylesheet):
         except Exception as e:
             QMessageBox.warning(dialog, "Error", str(e))
 
-    btn_new_folder = QPushButton("New folder")
-    btn_new_folder.clicked.connect(new_folder)
-    btn_note = QPushButton("New note")
+    # Writing a note is what the vault is for; the folder chores and the file
+    # verbs used to sit beside it as four more identical boxes.
+    btn_note = primary_button("New note")
     btn_note.clicked.connect(new_note)
-    btn_upload = QPushButton("Upload file")
-    btn_upload.clicked.connect(upload_file)
-    btn_del = QPushButton("Delete selected item")
-    btn_del.clicked.connect(delete_selected)
-    btn_row.addStretch()
-    btn_row.addWidget(btn_new_folder)
-    btn_row.addWidget(btn_note)
-    btn_row.addWidget(btn_upload)
-    btn_row.addWidget(btn_del)
-    btn_row.addStretch()
-    layout.addLayout(btn_row)
-
-    open_folder_btn = QPushButton("Open Vault folder in Explorer")
-    open_folder_btn.clicked.connect(lambda: os.startfile(base_vault))
-    layout.addWidget(open_folder_btn, alignment=Qt.AlignCenter)
+    btn_up = ghost_button("↑  Up one level", "Go to the parent folder")
+    btn_up.clicked.connect(go_up)
+    dialog_footer(
+        layout,
+        primary=btn_note,
+        secondary=(btn_up,),
+        menu=(
+            ("New folder…", new_folder),
+            ("Upload a file…", upload_file),
+            (None, None),
+            ("Open the Vault folder in Explorer", lambda: os.startfile(base_vault)),
+            ("🗑  Delete the selected item", delete_selected),
+        ),
+        close=dialog.accept,
+    )
 
     dialog.exec_()

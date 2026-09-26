@@ -1,0 +1,173 @@
+"""The AI looks at the browser: the page you are reading plus the open tabs.
+
+`/ask`, the inline panel and the Insights bridge already attached the current
+page; the AI workspace did not, so a question typed there saw only the profile
+index. This file pins the toggle that closed that gap, and the untrusted-context
+shape it produces (the assistant reads the page, it does not obey it).
+"""
+import os
+import tempfile
+import unittest
+from unittest import mock
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import litebrowser  # noqa: F401 - activates the Qt compatibility shim
+
+from PyQt5.QtWidgets import QApplication, QWidget
+
+from litebrowser.core import prefs
+from litebrowser.ui.ai_window import AIWindow
+
+_app = QApplication.instance() or QApplication([])
+
+
+class _FakePage:
+    """A WebEngine page that answers runJavaScript synchronously."""
+
+    def __init__(self, text):
+        self.text = text
+        self.scripts = []
+
+    def runJavaScript(self, script, callback):
+        self.scripts.append(script)
+        if callback is not None:
+            callback(self.text)
+
+
+class _FakeBrowser:
+    def __init__(self, text="Body of the page", title="Docs", url="https://docs.example/x"):
+        self._page = _FakePage(text)
+        self._title = title
+        self._url = url
+
+    def page(self):
+        return self._page
+
+    def title(self):
+        return self._title
+
+    def url(self):
+        return _FakeUrl(self._url)
+
+
+class _FakeUrl:
+    def __init__(self, value):
+        self._value = value
+
+    def toString(self):
+        return self._value
+
+
+class _FakeBrowserPage(QWidget):
+    def __init__(self, browser):
+        super().__init__()
+        self._browser = browser
+
+    def current_browser(self):
+        return self._browser
+
+    def get_current_tab_state(self):
+        return [
+            {"title": "Docs", "url": "https://docs.example/x", "active": True},
+            {"title": "Slides", "url": "https://slides.example/y", "active": False},
+        ]
+
+
+class _HostShell(QWidget):
+    def __init__(self, browser):
+        super().__init__()
+        self.browser_page = _FakeBrowserPage(browser)
+
+
+class _AICase(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = prefs.ensure_profile_layout(os.path.join(self._tmp.name, "profile"))
+        self.browser = _FakeBrowser()
+        self.shell = _HostShell(self.browser)
+        self.window = AIWindow(self.base, embedded=True)
+        self.window.setParent(self.shell)
+
+    def tearDown(self):
+        self.window._executor.shutdown(wait=False, cancel_futures=True)
+        self.window.deleteLater()
+        self.shell.deleteLater()
+        self._tmp.cleanup()
+
+    def _ask(self, question="What is this page about?"):
+        self.window.ed_question.setText(question)
+        with mock.patch.object(self.window, "run_assistant_query") as ask:
+            self.window._ask()
+        return ask
+
+
+class TestBrowserContextToggle(_AICase):
+    def test_the_toggle_exists_and_starts_on(self):
+        self.assertTrue(self.window.chk_browser_context.isChecked())
+        tooltip = self.window.chk_browser_context.toolTip().lower()
+        self.assertIn("browser", tooltip)
+        self.assertIn("untrusted", tooltip, "reading a page must stay untrusted context")
+
+    def test_the_choice_is_remembered_with_the_provider(self):
+        self.window.chk_browser_context.setChecked(False)
+        self.window._save_settings()
+        self.assertEqual(prefs.load_ai_settings(self.base)["read_browser"], False)
+
+    def test_the_browser_context_reaches_the_question(self):
+        ask = self._ask()
+        _question, label, context = ask.call_args[0]
+        self.assertEqual(label, "Browser page + open tabs")
+        self.assertIn("Body of the page", context)
+        self.assertIn("https://docs.example/x", context)
+        self.assertIn("[Open tabs in this window]", context)
+        self.assertIn("Slides", context, "the assistant sees the session, not one page")
+
+    def test_the_page_is_read_through_javascript(self):
+        self._ask()
+        self.assertTrue(self.browser._page.scripts)
+        self.assertIn("document.body", self.browser._page.scripts[0])
+
+    def test_turning_the_toggle_off_keeps_the_question_workspace_wide(self):
+        self.window.chk_browser_context.setChecked(False)
+        ask = self._ask()
+        _question, label, context = ask.call_args[0]
+        self.assertEqual(label, "Workspace-wide")
+        self.assertEqual(context, "")
+
+    def test_an_empty_page_falls_back_to_the_plain_context(self):
+        self.browser._page.text = ""
+        self.browser._page = _FakePage("")
+        self.shell.browser_page._browser = _FakeBrowser(text="")
+        self.shell.browser_page.get_current_tab_state = lambda: []
+        ask = self._ask()
+        _question, label, _context = ask.call_args[0]
+        self.assertEqual(label, "Workspace-wide")
+
+    def test_a_context_injected_by_a_note_is_not_replaced(self):
+        self.window._external_context = "Title: My note\n\nbody"
+        self.window._external_context_label = "Current note"
+        ask = self._ask()
+        _question, label, context = ask.call_args[0]
+        self.assertEqual(label, "Current note")
+        self.assertEqual(context, "Title: My note\n\nbody")
+
+    def test_an_unembedded_pane_asks_normally(self):
+        self.window.setParent(None)
+        ask = self._ask()
+        _question, label, _context = ask.call_args[0]
+        self.assertEqual(label, "Workspace-wide")
+
+
+class TestIndexCarriesTheWeek(_AICase):
+    def test_the_study_week_is_indexed_for_the_assistant(self):
+        from litebrowser.services import ai_service
+
+        docs = [doc for doc in ai_service.collect_docs(self.base) if doc.source == "study_week"]
+        self.assertEqual(len(docs), 1)
+        self.assertIn("Study week", docs[0].title)
+        self.assertEqual(docs[0].meta["days"], 7)
+
+
+if __name__ == "__main__":
+    unittest.main()

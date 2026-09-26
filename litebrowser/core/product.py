@@ -21,7 +21,7 @@ import os
 PRODUCT_ID = "mei"
 PRODUCT_NAME = "Mei"
 APP_NAME = PRODUCT_NAME
-APP_VERSION = "0.6.10.0"
+APP_VERSION = "0.7.0.0"
 
 # Release channel owned by this product. The web app (LinkLumina) publishes to
 # .../litebrowser-update/update.json — deliberately a different path so the two

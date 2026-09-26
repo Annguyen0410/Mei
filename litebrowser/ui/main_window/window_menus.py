@@ -9,12 +9,10 @@ from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QListWidget,
     QMenu,
     QMessageBox,
-    QPushButton,
     QTextEdit,
     QVBoxLayout,
 )
@@ -29,6 +27,12 @@ from litebrowser.browser.tab_manager import (
 from litebrowser.core import app_paths, app_version
 from litebrowser.services import extension_bridge, workspace_manager
 from litebrowser.ui import dialogs
+from litebrowser.ui.dialogs.common import (
+    dialog_footer,
+    ghost_button,
+    icon_button,
+    primary_button,
+)
 
 
 class MenusMixin:
@@ -353,21 +357,11 @@ class MenusMixin:
         payload_box.setMaximumHeight(220)
         layout.addWidget(payload_box)
 
-        button_row = QHBoxLayout()
-        btn_refresh = QPushButton("Refresh")
-        btn_import_file = QPushButton("Import File")
-        btn_save_payload = QPushButton("Store Payload")
-        btn_import_selected = QPushButton("Import Selected Batch")
-        btn_import_all_ws = QPushButton("Import All as Workspaces")
-        btn_close = QPushButton("Close")
-        button_row.addWidget(btn_refresh)
-        button_row.addWidget(btn_import_file)
-        button_row.addWidget(btn_save_payload)
-        button_row.addWidget(btn_import_selected)
-        button_row.addWidget(btn_import_all_ws)
-        button_row.addStretch(1)
-        button_row.addWidget(btn_close)
-        layout.addLayout(button_row)
+        # Six equal boxes became one import verb, one file picker and a menu for
+        # the batch bookkeeping (storing, refreshing, splitting per screen).
+        btn_import_selected = primary_button("Import selected batch")
+        btn_import_file = ghost_button("Import a file…", "Open a .json / .zip export from the extension")
+        btn_refresh = icon_button("↻", "Reload the saved batches from disk")
 
         def refresh():
             self._refresh_extension_import_list(batch_list)
@@ -439,11 +433,19 @@ class MenusMixin:
 
         btn_refresh.clicked.connect(refresh)
         btn_import_file.clicked.connect(import_file)
-        btn_save_payload.clicked.connect(save_payload)
         btn_import_selected.clicked.connect(import_selected)
-        btn_import_all_ws.clicked.connect(import_all_as_workspaces)
         batch_list.itemDoubleClicked.connect(lambda _item: import_selected())
-        btn_close.clicked.connect(dialog.accept)
+        dialog_footer(
+            layout,
+            primary=btn_import_selected,
+            secondary=(btn_refresh, btn_import_file),
+            menu=(
+                ("Store the pasted payload", save_payload),
+                (None, None),
+                ("Import all as workspaces (one per screen)", import_all_as_workspaces),
+            ),
+            close=dialog.accept,
+        )
 
         refresh()
         dialog.exec_()

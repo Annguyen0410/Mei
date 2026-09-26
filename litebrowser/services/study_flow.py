@@ -18,7 +18,11 @@ longer argument.
 """
 from __future__ import annotations
 
-from datetime import datetime
+import copy
+import hashlib
+import os
+import time
+from datetime import datetime, timedelta
 
 from litebrowser.services import (
     flashcard_service,
@@ -34,6 +38,90 @@ from litebrowser.services import (
 # notes stay searchable but stop competing with today's work.
 CAPTURE_WINDOW_DAYS = 14
 BRIEF_CATEGORY = "Brief"
+
+# The reflect step keeps a week of evidence; the proactive nudge stays quiet at
+# night and never repeats inside its own gap.
+WEEK_REVIEW_DAYS = 7
+REMINDER_QUIET_HOURS = (22, 8)
+REMINDER_MIN_GAP_MINUTES = 90
+REMINDER_STALE_MINUTES = 25
+
+_SPARK_LEVELS = "▁▂▃▄▅▆▇█"
+
+# The loop is a *reader* of six stores plus the note vault, and Home, the brief,
+# the planner hint and the AI index all ask it the same question. Memoizing it
+# costs one stat() sweep and removes the repeated JSON parsing from the GUI
+# thread (build_flow was ~20 ms on a 200-note/120-item profile — every one of
+# those calls happened while a button was being pressed). Any write to an input
+# changes its mtime, which invalidates the entry, and the 1 s floor keeps a
+# burst of refreshes inside one interaction cheap.
+_FLOW_CACHE_TTL_SECONDS = 1.0
+_flow_cache: dict[str, tuple[float, str, dict]] = {}
+
+
+def reset_flow_cache() -> None:
+    """Forget the memoized loop (call right after a write that must be seen now)."""
+    _flow_cache.clear()
+
+
+def _vault_stamp_rows(root: str) -> list[str]:
+    rows = []
+    for path in (root, *[os.path.join(root, name) for name in _vault_subdirs(root)]):
+        try:
+            stat = os.stat(path)
+        except OSError:
+            rows.append(path)
+            continue
+        rows.append(f"{path}:{stat.st_mtime_ns}")
+    return rows
+
+
+def _vault_subdirs(root: str) -> list[str]:
+    try:
+        with os.scandir(root) as entries:
+            return sorted(entry.name for entry in entries if entry.is_dir())
+    except OSError:
+        return []
+
+
+def _store_stamp(base_dir: str) -> str:
+    """Cheap freshness stamp over everything the loop reads.
+
+    Deliberately stats the vault instead of walking it: a new or removed note
+    moves its folder's mtime, which is the only note change the loop reacts to
+    (adding a note is what creates the "no cards yet" prompt).
+    """
+    rows: list[str] = []
+    for path in (
+        life_service.tasks_path(base_dir),
+        life_service.calendar_path(base_dir),
+        personal_plan.plan_path(base_dir),
+        flashcard_service.cards_path(base_dir),
+        focus_service.sessions_path(base_dir),
+        os.path.join(base_dir, link_service.LINK_FILENAME),
+    ):
+        try:
+            stat = os.stat(path)
+        except OSError:
+            rows.append(path)
+            continue
+        rows.append(f"{path}:{stat.st_mtime_ns}:{stat.st_size}")
+    rows.extend(_vault_stamp_rows(personal_service.notes_dir(base_dir)))
+    return hashlib.blake2s("\0".join(rows).encode("utf-8", "surrogatepass"), digest_size=12).hexdigest()
+
+
+def _memoized(base_dir: str, key: str, compute):
+    now = time.monotonic()
+    stamp = _store_stamp(base_dir)
+    entry = _flow_cache.get(base_dir)
+    same_view = bool(entry) and entry[0] > now and entry[1] == stamp
+    if same_view and key in entry[2]:
+        return copy.deepcopy(entry[2][key])
+    value = compute()
+    payload = dict(entry[2]) if same_view else {}
+    payload[key] = value
+    _flow_cache[base_dir] = ((entry[0] if same_view else now + _FLOW_CACHE_TTL_SECONDS), stamp, payload)
+    return copy.deepcopy(value)
 
 #: The five stations of the loop, in the order the user walks them.
 FLOW_STEPS: tuple[dict, ...] = (
@@ -168,6 +256,10 @@ def next_step(base_dir: str) -> dict:
     debt, then the hand-off from inbox to planner, then fresh captures, and
     finally a calm invitation to shape the week.
     """
+    return _memoized(base_dir, "next", lambda: _next_step_uncached(base_dir))
+
+
+def _next_step_uncached(base_dir: str) -> dict:
     status = focus_service.focus_status(base_dir)
     if status.get("running"):
         remaining = int(status.get("remaining", 0) or 0)
@@ -237,6 +329,10 @@ def next_step(base_dir: str) -> dict:
 
 def build_flow(base_dir: str) -> dict:
     """The whole loop: per-step counts, the next step, and a one-line pulse."""
+    return _memoized(base_dir, "flow", lambda: _build_flow_uncached(base_dir))
+
+
+def _build_flow_uncached(base_dir: str) -> dict:
     agenda = life_service.today_agenda(base_dir)
     cards_due = flashcard_service.stats(base_dir)["due"]
     uncarded = _notes_without_cards(base_dir)
@@ -296,6 +392,170 @@ def build_flow(base_dir: str) -> dict:
         "pulse": pulse,
         "focus_minutes": focus_minutes,
     }
+
+
+def reminder(
+    base_dir: str,
+    last_sent: float = 0.0,
+    now: float | None = None,
+    min_gap_minutes: int = REMINDER_MIN_GAP_MINUTES,
+) -> dict | None:
+    """The nudge Mei is allowed to start, or ``None`` when it should stay quiet.
+
+    A reminder is only worth a native toast when it *is* the next step, so this
+    is :func:`next_step` plus three restraints: never talk over a running pour,
+    never wake the user at night, and never repeat inside the gap. When the loop
+    is clear the only thing left worth saying is that nothing has been poured
+    today — otherwise silence.
+    """
+    current = time.time() if now is None else float(now)
+    hour = datetime.fromtimestamp(current).hour
+    quiet_start, quiet_end = REMINDER_QUIET_HOURS
+    quiet = hour >= quiet_start or hour < quiet_end if quiet_start > quiet_end else quiet_start <= hour < quiet_end
+    if quiet:
+        return None
+    gap = max(5, int(min_gap_minutes or REMINDER_MIN_GAP_MINUTES)) * 60
+    if last_sent and current - last_sent < gap:
+        return None
+    if focus_service.focus_status(base_dir).get("running"):
+        return None
+
+    action = next_step(base_dir)
+    step = action.get("step", "")
+    actionable = bool(action.get("id")) or step in ("study", "review")
+    if not actionable:
+        poured = focus_service.today_focus_seconds(base_dir) // 60
+        if poured:
+            return None
+        return {
+            "title": "☕ Nothing poured today",
+            "message": "Pick one thing and pour 25 minutes on it — /focus 25",
+            "step": "study",
+            "id": "",
+            "kind": "",
+        }
+    return {
+        "title": f"{step.capitalize() or 'Loop'} reminder",
+        "message": f"{action.get('label', '')} — {action.get('reason', '')}".strip(" —"),
+        "step": step,
+        "id": action.get("id", ""),
+        "kind": action.get("kind", ""),
+    }
+
+
+def _sparkline(values: list[int]) -> str:
+    """A tiny text chart — one glyph per day, no chart library, no widget."""
+    values = [max(0, int(value or 0)) for value in values] or [0]
+    top = max(values)
+    if top <= 0:
+        return _SPARK_LEVELS[0] * len(values)
+    span = len(_SPARK_LEVELS) - 1
+    return "".join(_SPARK_LEVELS[min(span, int(round(value / top * span)))] for value in values)
+
+
+def weekly_review(base_dir: str, days: int = WEEK_REVIEW_DAYS, now: float | None = None) -> dict:
+    """The reflect step with numbers: what the last week did, and what it skipped.
+
+    Everything here is derived from stores that already exist (the pour journal,
+    the planner and the deck), so the digest cannot drift from the surfaces it
+    summarizes. ``neglected`` is the honest half: going work that no pour touched
+    in the window, worst first.
+    """
+    window = max(1, min(int(days or WEEK_REVIEW_DAYS), 30))
+    moment = datetime.fromtimestamp(time.time() if now is None else float(now))
+    if now is not None:
+        # An explicit clock means a caller is reasoning about a specific day
+        # (tests, imports); never answer that from a cache keyed on the files.
+        return _weekly_review(base_dir, window, moment)
+    return _memoized(base_dir, f"week:{window}", lambda: _weekly_review(base_dir, window, moment))
+
+
+def _weekly_review(base_dir: str, window: int, moment: datetime) -> dict:
+    day_keys = [(moment.date() - timedelta(days=offset)).isoformat() for offset in range(window - 1, -1, -1)]
+    per_day = focus_service.compute_daily_minutes(focus_service.focus_journal(base_dir, limit=200))
+    minutes_by_day = {key: int(per_day.get(key, 0) or 0) for key in day_keys}
+    current_streak, longest_streak = focus_service.compute_streaks(per_day)
+
+    studies: dict[str, int] = {}
+    for session in focus_service.focus_journal(base_dir, limit=200):
+        item_id = (session.get("item_id") or "").strip()
+        started = int(session.get("started_at", 0) or 0)
+        if not item_id or not started or session.get("status") == "abandoned":
+            continue
+        key = datetime.fromtimestamp(started).strftime("%Y-%m-%d")
+        if key not in minutes_by_day:
+            continue
+        studies[item_id] = studies.get(item_id, 0) + int(session.get("minutes", 0) or 0)
+
+    plan = personal_plan.load_plan(base_dir)
+    neglected = []
+    for item in plan["items"]:
+        item_id = item.get("id", "")
+        if not item_id or item.get("completed") or studies.get(item_id):
+            continue
+        due = (item.get("due_date") or item.get("scheduled_date") or "").strip()
+        overdue_days = 0
+        if due:
+            try:
+                overdue_days = max(0, (moment.date() - datetime.fromisoformat(due).date()).days)
+            except ValueError:
+                overdue_days = 0
+        studied = int(item.get("studied_minutes", 0) or 0)
+        if overdue_days:
+            detail = f"overdue {overdue_days}d"
+        elif studied:
+            detail = f"{studied} min total, none this week"
+        else:
+            detail = "never studied"
+        neglected.append(
+            {
+                "kind": "planner-item",
+                "id": item_id,
+                "title": item.get("title", ""),
+                "detail": detail,
+                "minutes": int(item.get("duration_minutes") or personal_plan.DEFAULT_DURATION_MINUTES),
+                "rank": (overdue_days, item.get("priority") == "urgent", studied),
+            }
+        )
+    neglected.sort(key=lambda row: row["rank"], reverse=True)
+
+    total_minutes = sum(minutes_by_day.values())
+    return {
+        "days": window,
+        "date": moment.strftime("%Y-%m-%d"),
+        "minutes_by_day": minutes_by_day,
+        "spark": _sparkline([minutes_by_day[key] for key in day_keys]),
+        "minutes_total": total_minutes,
+        "days_poured": sum(1 for value in minutes_by_day.values() if value > 0),
+        "streak": current_streak,
+        "longest_streak": longest_streak,
+        "items_studied": len(studies),
+        "cards_due": flashcard_service.stats(base_dir)["due"],
+        "links": len(link_service.load_links(base_dir)),
+        "neglected": [
+            {key: value for key, value in row.items() if key != "rank"} for row in neglected[:5]
+        ],
+    }
+
+
+def review_line(review: dict) -> str:
+    """One sentence for the Home card, built from a :func:`weekly_review` result."""
+    days = int(review.get("days", WEEK_REVIEW_DAYS) or WEEK_REVIEW_DAYS)
+    minutes = int(review.get("minutes_total", 0) or 0)
+    poured = int(review.get("days_poured", 0) or 0)
+    streak = int(review.get("streak", 0) or 0)
+    spark = review.get("spark", "")
+    head = f"{spark}  {minutes} min in {days} days · {poured}/{days} days poured"
+    if streak:
+        head += f" · 🔥 {streak}-day streak"
+    neglected = review.get("neglected") or []
+    if neglected:
+        head += f"\nWaiting on you: {neglected[0].get('title', '')} ({neglected[0].get('detail', '')})"
+    elif minutes:
+        head += "\nNothing is being left behind — the loop is honest this week."
+    else:
+        head += "\nNo pours yet this week. Start with one 25-minute block."
+    return head
 
 
 def promote_task(base_dir: str, task_id: str, due_date: str = "") -> dict | None:

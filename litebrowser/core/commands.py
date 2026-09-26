@@ -67,6 +67,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("/save-tabs", True, "Save current tabs as a named set", "action", "/save-tabs Research"),
     Command("/summarize", True, "Summarize the active browser page with AI"),
     Command("/brief", False, "Show your local Morning Brief"),
+    Command("/flow", False, "Study loop: capture → plan → study → review → reflect"),
     Command("/agent", True, "Agent actions (summary / tasks / review)", "action", "/agent summary"),
     Command("/group-tabs", False, "Label tabs by domain so you can filter them"),
     Command("/sync", False, "Push + pull a self-hosted snapshot"),

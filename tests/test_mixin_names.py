@@ -12,6 +12,7 @@ import unittest
 
 MIXIN_FILES = (
     "litebrowser/ui/main_window/window_menus.py",
+    "litebrowser/ui/main_window/window_topbar.py",
     "litebrowser/ui/main_window/window_tools.py",
     "litebrowser/ui/main_window/window_mixins.py",
 )

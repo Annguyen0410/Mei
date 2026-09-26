@@ -33,11 +33,13 @@ def _save(base_dir: str, data: dict) -> None:
         write_json(sessions_path(base_dir), data)
 
 
-def start_focus(base_dir: str, minutes: int = 25, label: str = "") -> dict:
+def start_focus(base_dir: str, minutes: int = 25, label: str = "", item_id: str = "") -> dict:
     """Start (or restart) a focus session. Returns the active session record.
 
     Only one session runs at a time; starting a new one discards an unfinished
-    previous pour and records it as abandoned so history stays honest.
+    previous pour and records it as abandoned so history stays honest. When
+    ``item_id`` is set the session is a study session for that planner item, so
+    its minutes can be credited back once it finishes.
     """
     minutes = max(1, min(int(minutes or 25), 180))
     data = _load(base_dir)
@@ -52,6 +54,8 @@ def start_focus(base_dir: str, minutes: int = 25, label: str = "") -> dict:
         "started_at": now,
         "ends_at": now + minutes * 60,
         "status": "running",
+        "item_id": (item_id or "").strip(),
+        "credited": False,
     }
     data["active"] = session
     data.setdefault("sessions", [])
@@ -108,6 +112,21 @@ def _close_active(data: dict, status: str) -> None:
 def focus_journal(base_dir: str, limit: int = 50) -> list:
     data = _load(base_dir)
     return data.get("sessions", [])[:limit]
+
+
+def mark_credited(base_dir: str, session_id: str) -> bool:
+    """Flag a finished study session as credited so minutes are counted once."""
+    if not session_id:
+        return False
+    data = _load(base_dir)
+    for session in data.get("sessions", []):
+        if session.get("id") == session_id:
+            if session.get("credited"):
+                return False
+            session["credited"] = True
+            _save(base_dir, data)
+            return True
+    return False
 
 
 def compute_daily_minutes(sessions: list) -> dict:

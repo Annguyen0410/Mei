@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
+from litebrowser.core import app_version
 from litebrowser.ui.dialogs.common import _stylesheet
 
 # (shortcut, scope, description) — mirrors the QShortcut registrations.
@@ -49,6 +50,7 @@ HOTKEYS = (
     ("Click zoom label", "Mouse", "Reset page zoom"),
     ("Ctrl+0", "Zoom", "Reset page zoom"),
     ("Ctrl+= / Ctrl+-", "Zoom", "Zoom in / out"),
+    ("F1", "Help", "Open the Help & Guide hub (features, shortcuts, commands)"),
     ("Ctrl+K", "Shell", "Focus the omnibar"),
     ("Ctrl+1..7", "Shell", "Jump to workspace 1-7"),
 )
@@ -56,7 +58,7 @@ HOTKEYS = (
 
 def show_hotkeys_hub(parent):
     dialog = QDialog(parent)
-    dialog.setWindowTitle("Hotkeys — MeiBrowser")
+    dialog.setWindowTitle(f"Hotkeys — {app_version.APP_NAME}")
     dialog.resize(560, 520)
     dialog.setStyleSheet(_stylesheet(parent))
     layout = QVBoxLayout(dialog)

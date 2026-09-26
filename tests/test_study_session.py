@@ -15,8 +15,10 @@ from litebrowser.services import (
     life_service,
     note_templates,
     page_monitor,
+    personal_plan,
     personal_service,
     routines_service,
+    study_session,
 )
 
 
@@ -104,6 +106,18 @@ class TestStudySessionScenario(unittest.TestCase):
         cont = life_service.continue_reading_page(self.base)
         self.assertIsNotNone(cont)
         self.assertEqual(cont["read_percent"], 42)
+
+        # 13. A study session starts from a planner item and lands in the pour journal
+        essay = personal_plan.create_item(self.base, "Essay draft", duration_minutes=25)
+        session = study_session.start_for_item(self.base, essay["id"])
+        self.assertEqual(session["item_id"], essay["id"])
+        summary = study_session.finish(self.base)
+        # Stopping immediately credits no whole minutes, but the pour is recorded
+        # against the item so a later refresh can see it.
+        self.assertEqual(summary["credited"], 0)
+        self.assertTrue(
+            any(s.get("item_id") == essay["id"] for s in focus_service.focus_journal(self.base))
+        )
 
 
 if __name__ == "__main__":

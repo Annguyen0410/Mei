@@ -154,7 +154,7 @@ def feature_row_widget(entry: dict, base: str) -> QWidget:
     row_layout.addWidget(title)
     row_layout.addStretch(1)
     category = QLabel(entry.get("category", ""))
-    muted = theme.palette_tokens(prefs.get_shell_theme(base), prefs.get_accent(base))["TEXT_MUTED"]
+    muted = theme.palette_tokens(prefs.resolved_auto_theme(base), prefs.get_accent(base))["TEXT_MUTED"]
     category.setStyleSheet("color:%s; font-size:11px;" % muted)
     row_layout.addWidget(category)
     return row

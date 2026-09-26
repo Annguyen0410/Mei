@@ -22,7 +22,6 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import (
     QColor,
     QDesktopServices,
-    QFont,
     QIcon,
     QKeySequence,
     QPainter,
@@ -60,7 +59,6 @@ from PyQt5.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStackedWidget,
-    QStyle,
     QTextEdit,
     QToolButton,
     QTreeWidget,
@@ -169,9 +167,10 @@ _RSS_DLL_CACHE = None
 from litebrowser.ui.main_window.window_menus import MenusMixin
 from litebrowser.ui.main_window.window_mixins import DockingMixin
 from litebrowser.ui.main_window.window_tools import WindowToolsMixin, _WorkerRelay
+from litebrowser.ui.main_window.window_topbar import TopBarMixin
 
 
-class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
+class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
     def __init__(self, base_dir=None, start_tabs=None, app_dir=None, embedded=False, window_slot=None):
         super().__init__()
         self._closing = False
@@ -224,6 +223,9 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         QShortcut(QKeySequence("Ctrl+Shift+Tab"), self).activated.connect(self._cycle_tab_prev)
         QShortcut(QKeySequence("Ctrl+PgUp"), self).activated.connect(self._cycle_tab_prev)
         QShortcut(QKeySequence("Ctrl+Shift+K"), self).activated.connect(lambda: dialogs.show_quick_switcher(self))
+        # F1 is the convention every app trained users on; the guide is generated
+        # from the same registries the shortcuts come from.
+        QShortcut(QKeySequence("F1"), self).activated.connect(lambda: dialogs.show_browser_control_center(self))
         QShortcut(QKeySequence("Ctrl+0"), self).activated.connect(self.zoom_reset)
         QShortcut(QKeySequence("Ctrl+="), self).activated.connect(self.zoom_in)
         QShortcut(QKeySequence("Ctrl+-"), self).activated.connect(self.zoom_out)
@@ -258,29 +260,25 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.sidebar_layout.setSpacing(6)
         self.sidebar_layout.setAlignment(Qt.AlignTop)
         self._sidebar_anim = None
+        # One header line: the collapse toggle on the left, the live/sleeping
+        # counter on the right. The "🍵 Mei" wordmark used to sit here too, which
+        # made the brand the third "Mei" on screen (shell top bar, rail, desk) —
+        # the tab column is about tab state, so it no longer repeats the name.
         sidebar_title_row = QHBoxLayout()
-        sidebar_title_row.setAlignment(Qt.AlignCenter)
+        sidebar_title_row.setSpacing(6)
         self.btn_collapse_sidebar = QToolButton()
         self.btn_collapse_sidebar.setObjectName("SidebarCollapse")
-        self.btn_collapse_sidebar.setToolTip("Collapse / expand sidebar")
+        self.btn_collapse_sidebar.setToolTip("Collapse / expand the tab desk")
         self.btn_collapse_sidebar.setText("‹")
         self.btn_collapse_sidebar.clicked.connect(self._toggle_sidebar_collapse)
         sidebar_title_row.addWidget(self.btn_collapse_sidebar)
-        self.brand_glyph = QLabel("🍵")
-        self.brand_glyph.setObjectName("BrandGlyph")
-        sidebar_title_row.addWidget(self.brand_glyph)
-        self.title_label = QLabel("Mei")
-        self.title_label.setObjectName("AppTitle")
-        self.title_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self.title_label.setAlignment(Qt.AlignCenter)
-        sidebar_title_row.addWidget(self.title_label, 1)
-        self.sidebar_layout.addLayout(sidebar_title_row)
-        self.sidebar_layout.addSpacing(4)
-        self.lbl_tab_count = QLabel("0 Live · 0 Sleeping")
+        sidebar_title_row.addStretch(1)
+        self.lbl_tab_count = QLabel("0 live · 0 sleeping")
         self.lbl_tab_count.setObjectName("TabCounter")
         self.lbl_tab_count.setToolTip("Live tabs use a browser renderer. Sleeping tabs reopen only when selected.")
-        self.sidebar_layout.addWidget(self.lbl_tab_count)
-        self.lbl_tab_count.setAlignment(Qt.AlignCenter)
+        self.lbl_tab_count.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        sidebar_title_row.addWidget(self.lbl_tab_count)
+        self.sidebar_layout.addLayout(sidebar_title_row)
         self.current_workspace_id = workspace_manager.get_current_id(self.base_dir)
         self.workspace_combo = QComboBox()
         self.workspace_combo.setObjectName("WorkspaceCombo")
@@ -289,7 +287,7 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.workspace_combo.currentIndexChanged.connect(self._on_workspace_changed)
         self.sidebar_layout.addWidget(self.workspace_combo)
         self.sidebar_panel_buttons = QHBoxLayout()
-        self.sidebar_panel_buttons.setSpacing(6)
+        self.sidebar_panel_buttons.setSpacing(4)
         self.sidebar_panel_buttons.setAlignment(Qt.AlignCenter)
         self.btn_panel_tabs = QToolButton()
         self.btn_panel_tabs.setObjectName("SidebarPanelBtn")
@@ -340,7 +338,16 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         tab_page_layout.setSpacing(0)
         self.tab_filter = QLineEdit()
         self.tab_filter.setObjectName("TabFilter")
-        self.tab_filter.setPlaceholderText("Search tabs · is:sleeping · is:pinned · site:example.com · group:youtube.com")
+        # The full filter syntax used to be the placeholder, which the narrow
+        # sidebar clipped mid-word ("group:…"). Keep the box quiet and teach the
+        # syntax on hover instead.
+        self.tab_filter.setPlaceholderText("Search tabs  ·  is:  site:  group:")
+        self.tab_filter.setToolTip(
+            "Filter the tab list\n"
+            "    is:sleeping   is:pinned   is:live\n"
+            "    site:example.com\n"
+            "    group:youtube.com"
+        )
         self.tab_filter.setClearButtonEnabled(True)
         self._tab_filter_timer = QTimer(self)
         self._tab_filter_timer.setSingleShot(True)
@@ -435,7 +442,10 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.btn_new_tab.setObjectName("NewTabBtn")
         self.btn_new_tab.setToolTip("Ctrl+T")
         self.btn_new_tab.clicked.connect(lambda: self.add_new_tab(None, "New Tab"))
-        self.btn_options = QPushButton("⚙  Control")
+        # The caret is part of the label, not Qt's ::menu-indicator subcontrol:
+        # the subcontrol anchors itself to the bottom-right of a *styled*
+        # button, which drew the arrow half outside the button.
+        self.btn_options = QPushButton("⚙  Control  ▾")
         self.btn_options.setObjectName("OptionsBtn")
         self.options_menu = self._build_options_menu()
         self.btn_options.setMenu(self.options_menu)
@@ -446,6 +456,10 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         sidebar_footer_layout = QHBoxLayout(self.sidebar_footer)
         sidebar_footer_layout.setContentsMargins(0, 4, 0, 0)
         sidebar_footer_layout.setSpacing(6)
+        # Same width for both actions: two buttons of different lengths centred in
+        # a column read as an accident, an even pair reads as a toolbar.
+        self.btn_new_tab.setMinimumWidth(98)
+        self.btn_options.setMinimumWidth(98)
         sidebar_footer_layout.addStretch(1)
         sidebar_footer_layout.addWidget(self.btn_new_tab, 0, Qt.AlignHCenter)
         sidebar_footer_layout.addWidget(self.btn_options, 0, Qt.AlignHCenter)
@@ -466,116 +480,9 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         else:
             self.content_layout.setContentsMargins(2, 2, 2, 2)
             self.content_layout.setSpacing(2)
-        self.topbar = QWidget()
-        self.topbar.setObjectName("TopBar")
-        self.topbar.setMinimumHeight(40 if self.embedded else 44)
-        self.topbar_layout = QHBoxLayout(self.topbar)
-        if self.embedded:
-            self.topbar_layout.setContentsMargins(4, 3, 4, 3)
-            self.topbar_layout.setSpacing(3)
-        else:
-            self.topbar_layout.setContentsMargins(4, 3, 4, 3)
-            self.topbar_layout.setSpacing(2)
-        self.btn_back = QToolButton()
-        self.btn_back.setObjectName("TopIconButton")
-        self.btn_back.setText("←")
-        self.btn_back.setToolTip("Back (Alt+Left)")
-        self.btn_back.clicked.connect(lambda: self.current_browser().back() if self.current_browser() else None)
-        self.btn_forward = QToolButton()
-        self.btn_forward.setObjectName("TopIconButton")
-        self.btn_forward.setText("→")
-        self.btn_forward.setToolTip("Forward (Alt+Right)")
-        self.btn_forward.clicked.connect(lambda: self.current_browser().forward() if self.current_browser() else None)
-        self.btn_reload = QToolButton()
-        self.btn_reload.setObjectName("TopIconButton")
-        self.btn_reload.setText("↻")
-        self.btn_reload.setToolTip("Reload (F5)")
-        self.btn_reload.clicked.connect(lambda: self.current_browser().reload() if self.current_browser() else None)
-        self.topbar_layout.addWidget(self.btn_back)
-        self.topbar_layout.addWidget(self.btn_forward)
-        self.topbar_layout.addWidget(self.btn_reload)
-        self.btn_vpn_hub = QPushButton()
-        self.btn_vpn_hub.setObjectName("TopAccentButton")
-        self.btn_vpn_hub.setText("VPN")
-        self.btn_vpn_hub.setToolTip("Quick VPN / proxy presets")
-        self.btn_vpn_hub.clicked.connect(lambda: dialogs.show_vpn_hub(self))
-        self.topbar_layout.addWidget(self.btn_vpn_hub)
-        self.topbar_layout.addSpacing(4)
-        self.search_engine = QComboBox()
-        self.search_engine.setObjectName("SearchEngine")
-        self.search_engine.addItems(list(prefs.SEARCH_ENGINE_NAMES))
-        self.search_engine.setEditable(False)
-        saved_engine = prefs.get_search_engine(self.base_dir)
-        saved_index = self.search_engine.findText(saved_engine)
-        if saved_index >= 0:
-            self.search_engine.setCurrentIndex(saved_index)
-        self.search_engine.setMinimumWidth(78)
-        self.search_engine.setMaximumWidth(118)
-        self.search_engine.currentIndexChanged.connect(self._on_search_engine_changed)
-        self.topbar_layout.addWidget(self.search_engine)
-        self.lbl_site_state = QLabel("Search")
-        self.lbl_site_state.setObjectName("AddressHint")
-        self.lbl_site_state.setMinimumWidth(60)
-        self.topbar_layout.addWidget(self.lbl_site_state)
-        self.url_bar = QLineEdit()
-        self.url_bar.setObjectName("UrlBar")
-        self.url_bar.setPlaceholderText("URL, search, about:cuc-quan-ly, ...")
-        self.url_bar.setFont(QFont("Segoe UI", 11))
-        self.url_bar.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.url_bar.setMinimumWidth(120)
-        self.url_bar.setClearButtonEnabled(False)
-        self.url_bar.setToolTip("Type a URL or search and press Enter")
-        self.url_bar.returnPressed.connect(self.navigate)
-        self.url_clear_action = self.url_bar.addAction(
-            self.style().standardIcon(QStyle.SP_DialogCloseButton),
-            QLineEdit.TrailingPosition,
-        )
-        self.url_clear_action.triggered.connect(self.url_bar.clear)
-        self.url_clear_action.setVisible(False)
-        self.url_bar.textChanged.connect(lambda text: self.url_clear_action.setVisible(bool(text)))
-        # Chrome standard: middle-click pastes the clipboard and navigates.
-        self.url_bar.installEventFilter(self)
-        # Clipboard history: track the last 20 text entries (dedup, QoL).
-        self._clipboard_history = []
-        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
-        self.topbar_layout.addWidget(self.url_bar, 1)
-        # Opera GX-style web panels: messenger/media dock beside the page.
-        self.btn_panels = QToolButton()
-        self.btn_panels.setObjectName("TopIconButton")
-        self.btn_panels.setText("◫")
-        self.btn_panels.setToolTip("Web panels — Telegram, WhatsApp, Discord, Spotify... (docked beside the page)")
-        self.btn_panels.clicked.connect(self.show_web_panel_menu)
-        self.topbar_layout.addWidget(self.btn_panels)
-        self.lbl_zoom = QLabel("100%")
-        self.lbl_zoom.setObjectName("ZoomLabel")
-        self.lbl_zoom.setMinimumWidth(42)
-        self.lbl_zoom.setAlignment(Qt.AlignCenter)
-        self.lbl_zoom.setToolTip("Zoom level — click to reset (Ctrl+0)")
-        self.lbl_zoom.setCursor(Qt.PointingHandCursor)
-        self.lbl_zoom.mousePressEvent = lambda _ev: self.zoom_reset()
-        self.topbar_layout.addWidget(self.lbl_zoom)
-        self.btn_ai = QToolButton()
-        self.btn_ai.setObjectName("TopIconButton")
-        self.btn_ai.setText("AI")
-        self.btn_ai.setToolTip("Ask AI about this page")
-        self.btn_ai.clicked.connect(self.ask_ai_about_current_page)
-        self.topbar_layout.addWidget(self.btn_ai)
-        self.btn_page_menu = QToolButton()
-        self.btn_page_menu.setObjectName("TopIconButton")
-        self.btn_page_menu.setText("\u2022\u2022\u2022")
-        self.btn_page_menu.setToolTip("Page actions")
-        self.page_menu = self._build_page_menu()
-        self.btn_page_menu.setMenu(self.page_menu)
-        self.btn_page_menu.setPopupMode(QToolButton.InstantPopup)
-        self.topbar_layout.addWidget(self.btn_page_menu)
-        self.btn_toggle_topbar = QToolButton()
-        self.btn_toggle_topbar.setObjectName("TopIconButton")
-        self.btn_toggle_topbar.setText("▾")
-        self.btn_toggle_topbar.setToolTip("Collapse / expand the toolbar (Ctrl+Shift+B)")
-        self.btn_toggle_topbar.clicked.connect(self._toggle_topbar)
-        self.topbar_layout.addWidget(self.btn_toggle_topbar)
-        self.topbar_layout.setStretchFactor(self.url_bar, 1)
-        self.content_layout.addWidget(self.topbar, 0)
+        # The toolbar itself lives in TopBarMixin (window_topbar.py) — this used
+        # to be ~110 lines of widget construction inline here.
+        self._build_topbar()
         # Chrome-style load progress: a 3px accent bar directly under the
         # toolbar (v6.5 audit: zero loadProgress feedback anywhere in the app).
         self.load_progress = QProgressBar(self.content_widget)
@@ -766,7 +673,6 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         _split_handle = self.main_splitter.handle(1)
         if _split_handle is not None:
             _split_handle.installEventFilter(self)
-        self.title_label.setVisible(False)
         self.lbl_tab_count.setVisible(False)
         self.workspace_combo.setVisible(False)
 
@@ -1020,8 +926,12 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
             self.search_engine.setVisible(not tiny)
             self.search_engine.setMaximumWidth(90 if tight else 112)
         if hasattr(self, "lbl_site_state"):
-            self.lbl_site_state.setVisible(not tight)
-            self.lbl_site_state.setMinimumWidth(28)
+            # Connection pill keeps one fixed width (see _apply_site_state_pill), so
+            # this only decides whether it fits at all. It also has to be an
+            # informative state to show at any width — see
+            # _sync_site_pill_visibility, which the flag below feeds.
+            self._site_pill_fits = not tight
+            self._sync_site_pill_visibility()
 
         if hasattr(self, "url_bar"):
             self.url_bar.setMinimumWidth(100 if xtiny else 160 if tiny else 240 if tight else 320 if compact else 400)
@@ -1164,46 +1074,6 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         prefs.clear_google_account(self.base_dir)
         QMessageBox.information(self, "Google account", "Cleared the saved Google account from this profile.")
 
-    def _build_page_menu(self):
-        menu = QMenu(self)
-        menu.addAction("Home").triggered.connect(self._go_home)
-        menu.addAction("Open in incognito tab").triggered.connect(self.open_current_in_incognito)
-        menu.addAction("Copy page address").triggered.connect(self._copy_page_address)
-        menu.addAction("Bookmark page").triggered.connect(lambda: self.save_bookmark(None))
-        menu.addAction("Save to reading list").triggered.connect(self._add_to_reading_list)
-        menu.addAction("Save selection to SafeVault").triggered.connect(self._save_selection_to_vault)
-        menu.addAction("Monitor this page for changes").triggered.connect(self._monitor_current_page)
-        menu.addAction("Find in page").triggered.connect(self.find_text)
-        menu.addAction("Reader mode").triggered.connect(self.toggle_reader_mode)
-        menu.addSeparator()
-        self.act_text_highlight = menu.addAction("✎ Highlight text to copy")
-        self.act_text_highlight.setCheckable(True)
-        self.act_text_highlight.setToolTip("Select any text to highlight it; a copy bubble appears next to the selection.")
-        self.act_text_highlight.setChecked(prefs.get_text_highlight_enabled(self.base_dir))
-        self.act_text_highlight.triggered.connect(self.toggle_text_highlight)
-        menu.addSeparator()
-        menu.addAction("Open externally").triggered.connect(self.open_current_in_external_browser)
-        menu.addAction("Site permissions...").triggered.connect(dialogs.show_permissions_manager)
-        menu.addAction("Hotkeys...").triggered.connect(dialogs.show_hotkeys_hub)
-        menu.addAction("Open accounts.google.com in Chrome / Edge").triggered.connect(
-            lambda: self.open_url_in_external_browser("https://accounts.google.com/")
-        )
-        menu.addSeparator()
-        menu.addAction("Zoom in").triggered.connect(self.zoom_in)
-        menu.addAction("Zoom out").triggered.connect(self.zoom_out)
-        menu.addAction("Reset zoom").triggered.connect(self.zoom_reset)
-        menu.addSeparator()
-        trans_menu = menu.addMenu("Translate")
-        trans_menu.addAction("Translate this page (Google)").triggered.connect(lambda: self._translate_page("google"))
-        trans_menu.addAction("Translate this page (Bing)").triggered.connect(lambda: self._translate_page("bing"))
-        menu.addSeparator()
-        self.act_page_disable_webgl = menu.addAction("Lite Rendering (Disable WebGL)")
-        self.act_page_disable_webgl.setCheckable(True)
-        self.act_page_disable_webgl.triggered.connect(self.toggle_disable_webgl)
-        menu.addAction("Developer tools").triggered.connect(self.show_dev_tools)
-        menu.addAction("More browser options").triggered.connect(lambda: self.btn_options.showMenu())
-        return menu
-
     @staticmethod
     def _build_clean_ua(profile):
         raw_ua = profile.httpUserAgent() or ""
@@ -1328,7 +1198,10 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
 
     def get_new_tab_html(self):
         engine = prefs.get_search_engine(self.base_dir)
-        mode = prefs.get_shell_theme(self.base_dir)
+        # The page must open in the mode the shell is showing right now: with auto
+        # day/night on, using the stored name opened a bright daytime speed dial
+        # inside a dark window.
+        mode = prefs.resolved_auto_theme(self.base_dir)
         accent = prefs.get_accent(self.base_dir)
         # build_new_tab_html re-reads history + bookmarks and formats ~30 KB of
         # HTML per tab open; cache it briefly so rapid tab creation stays snappy.
@@ -1618,6 +1491,13 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
             else:
                 self.bookmarks_tree.addTopLevelItem(bm_item)
         self.bookmarks_tree.expandAll()
+        if self.bookmarks_tree.topLevelItemCount() == 0:
+            # Empty state instead of a blank panel. The row carries no UserRole
+            # data and is not draggable, so the click / context-menu handlers
+            # treat it as nothing at all.
+            hint = QTreeWidgetItem(["No bookmarks yet — press Ctrl+D on a page to save it."])
+            hint.setFlags(Qt.ItemIsEnabled)
+            self.bookmarks_tree.addTopLevelItem(hint)
 
     def _add_bookmark_folder(self):
         name, ok = QInputDialog.getText(self, "Bookmark folder", "Folder name:")
@@ -1699,13 +1579,17 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         entries = prefs.load_history_entries(self.base_dir)
         entries.sort(key=lambda x: -x[0])
         seen = set()
-        for ts, url in entries[:100]:
+        for _ts, url in entries[:100]:
             if url in seen or not url.startswith("http"):
                 continue
             seen.add(url)
             short = url.replace("https://", "").replace("http://", "")[:55]
             self.history_list.addItem(short)
             self.history_list.item(self.history_list.count() - 1).setData(Qt.UserRole, url)
+        if self.history_list.count() == 0:
+            # Same empty-state treatment as the reading list, so a fresh profile
+            # does not show five blank panels.
+            self.history_list.addItem("No history yet — pages you open are listed here.")
 
     def _load_downloads_panel(self):
         from litebrowser.services import download_mgr
@@ -1713,6 +1597,8 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         for i, d in enumerate(download_mgr.load_list(self.base_dir)):
             self.downloads_list.addItem(f"{d.get('status', '?')}  {d.get('filename', '')[:50]}")
             self.downloads_list.item(self.downloads_list.count() - 1).setData(Qt.UserRole, (i, d.get("path", "")))
+        if self.downloads_list.count() == 0:
+            self.downloads_list.addItem("No downloads yet — files you save appear here.")
 
     def _on_bookmark_clicked(self, item):
         kind, data = item.data(0, Qt.UserRole) or ("", "")
@@ -1749,11 +1635,14 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
                     pass
 
     def apply_styles(self):
-        theme_name = prefs.get_shell_theme(self.base_dir)
+        theme_name = prefs.resolved_auto_theme(self.base_dir)
         accent = prefs.get_accent(self.base_dir)
         qss = theme.main_qss(theme_name, accent)
         self.btn_collapse_sidebar.setStyleSheet(theme.collapse_btn_qss(theme_name, accent))
         self.setStyleSheet(qss)
+        # Chrome that carries inline colours (tab rows, connection pill) does not
+        # come back through the stylesheet above — re-resolve it explicitly.
+        self.refresh_chrome_theme()
         self._apply_collapse_btn_state()
         # Override the app-wide 3px divider only for the sidebar splitter so
         # the collapse/expand rail has a handle that is easy to grab.
@@ -1950,7 +1839,7 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         has the machinery for."""
         from litebrowser.ui import theme as _th
 
-        pal = _th._palette(prefs.get_shell_theme(self.base_dir), prefs.get_accent(self.base_dir))
+        pal = _th._palette(prefs.resolved_auto_theme(self.base_dir), prefs.get_accent(self.base_dir))
         dlg = QDialog(self)
         dlg.setWindowTitle("Mei Control Center")
         dlg.resize(520, 420)
@@ -2113,7 +2002,10 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         # or minimized so background windows cost nothing.
         if not self.isVisible() or self.windowState() & (Qt.WindowMinimized | Qt.WindowMaximized) == Qt.WindowMinimized:
             return
-        theme_name = prefs.get_shell_theme(self.base_dir)
+        # resolved_auto_theme, not get_shell_theme: the dynamic background has to
+        # paint the palette the shell is actually showing, or the gradient goes
+        # light behind a night window (same root cause as the light chart cards).
+        theme_name = prefs.resolved_auto_theme(self.base_dir)
         self.central_widget.setStyleSheet(
             theme.dynamic_main_widget_css(theme_name, self._dynamic_bg_phase, prefs.get_accent(self.base_dir))
         )
@@ -2145,11 +2037,11 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         )
 
     def _dialog_stylesheet(self):
-        return theme.dialog_qss(prefs.get_shell_theme(self.base_dir), prefs.get_accent(self.base_dir))
+        return theme.dialog_qss(prefs.resolved_auto_theme(self.base_dir), prefs.get_accent(self.base_dir))
 
     def _palette_lookup(self, key):
         from litebrowser.ui import theme as _th
-        return _th._palette(prefs.get_shell_theme(self.base_dir), prefs.get_accent(self.base_dir))[key]
+        return _th._palette(prefs.resolved_auto_theme(self.base_dir), prefs.get_accent(self.base_dir))[key]
 
 
 
@@ -2235,6 +2127,11 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
                         splitter.setSizes(press_sizes)
                     self._ensure_sidebar_splitter_healthy()
             return False
+        if obj is getattr(self, "url_bar", None) and ev.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
+            # The address field and the connection pill share one rounded frame
+            # (see TopBarMixin._build_topbar), so focus is shown on the frame —
+            # otherwise the "where am I" signal would be a border inside a border.
+            self._set_address_cluster_focus(ev.type() == QEvent.Type.FocusIn)
         if obj is getattr(self, "url_bar", None) and ev.type() == QEvent.Type.MouseButtonRelease:
             if ev.button() == _Qt.MiddleButton:
                 clipboard = QApplication.clipboard().text().strip()
@@ -2267,6 +2164,19 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
                     ev.accept()
                     return True
         return super().eventFilter(obj, ev)
+
+    def _set_address_cluster_focus(self, focused: bool):
+        """Mirror address-field focus onto the frame that draws the border."""
+        cluster = getattr(self, "address_cluster", None)
+        if cluster is None:
+            return
+        if bool(cluster.property("focused")) == bool(focused):
+            return
+        cluster.setProperty("focused", bool(focused))
+        style = cluster.style()
+        style.unpolish(cluster)
+        style.polish(cluster)
+        cluster.update()
 
     def _open_bookmark_in_new_tab(self, item):
         data = item.data(0, Qt.UserRole)
@@ -2464,30 +2374,9 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self.url_bar.setText(url_str)
         self.url_bar.setCursorPosition(0)
         if hasattr(self, "lbl_site_state"):
-            # Glyph + tinted pill: security state readable at a glance.
-            if url_str.startswith("https://"):
-                self.lbl_site_state.setText("🔒 Secure")
-                self.lbl_site_state.setStyleSheet(
-                    "color: %s; background-color: %s; border-radius: 8px; padding: 2px 7px;"
-                    " font-size: 10px; font-weight: 700;"
-                    % (self._palette_lookup("SUCCESS"), self._palette_lookup("ACCENT_SOFT"))
-                )
-            elif url_str.startswith("http://"):
-                self.lbl_site_state.setText("⚠ HTTP")
-                self.lbl_site_state.setStyleSheet(
-                    "color: %s; background-color: %s; border-radius: 8px; padding: 2px 7px;"
-                    " font-size: 10px; font-weight: 700;"
-                    % (self._palette_lookup("DANGER"), self._palette_lookup("MAIN_BG_ALT"))
-                )
-            elif url_str.startswith("about:"):
-                self.lbl_site_state.setText("Local")
-                self.lbl_site_state.setStyleSheet("")
-            elif url_str.startswith("file:"):
-                self.lbl_site_state.setText("File")
-                self.lbl_site_state.setStyleSheet("")
-            else:
-                self.lbl_site_state.setText("Search")
-                self.lbl_site_state.setStyleSheet("")
+            # Glyph + tinted pill: security state readable at a glance (see
+            # TopBarMixin._apply_site_state_pill).
+            self._apply_site_state_pill(url_str)
         tt = url_str if url_str else "URL or search..."
         if url_str.startswith("http://") and not url_str.startswith("https://"):
             tt += "\n\nWarning: unencrypted connection (HTTP)."
@@ -2781,10 +2670,6 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         so the web view gets every spare pixel (Opera-GX-style thin rail)."""
         collapsed = bool(getattr(self, "sidebar_collapsed", False))
         tiny = self.width() < 900
-        if hasattr(self, "brand_glyph"):
-            self.brand_glyph.setVisible(not collapsed)
-        if hasattr(self, "title_label"):
-            self.title_label.setVisible(not tiny and not collapsed)
         if hasattr(self, "lbl_tab_count"):
             self.lbl_tab_count.setVisible(not tiny and not collapsed)
         if hasattr(self, "workspace_combo"):
@@ -2970,26 +2855,6 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         style.unpolish(btn)
         style.polish(btn)
         btn.update()
-
-    def _toggle_topbar(self):
-        self._topbar_collapsed = not getattr(self, "_topbar_collapsed", False)
-        self._apply_topbar_collapse()
-
-    def _apply_topbar_collapse(self):
-        """Hide everything in the toolbar except its collapse toggle so the
-        page gets the maximum vertical space, then restore it on re-expand."""
-        collapsed = getattr(self, "_topbar_collapsed", False)
-        if hasattr(self, "btn_toggle_topbar"):
-            self.btn_toggle_topbar.setText("▴" if collapsed else "▾")
-        if not hasattr(self, "topbar_layout"):
-            return
-        for index in range(self.topbar_layout.count()):
-            item = self.topbar_layout.itemAt(index)
-            widget = item.widget() if item else None
-            if widget is not None and widget is not self.btn_toggle_topbar:
-                widget.setVisible(not collapsed)
-        self.topbar.setMaximumHeight(26 if collapsed else 16777215)
-        self.topbar.setMinimumHeight(24 if collapsed else (40 if self.embedded else 44))
 
     def open_cuc_quan_ly_support_page(self):
         self.open_bundled_site("cucquanly")
@@ -3291,7 +3156,10 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         self._apply_cookie_policy(show_message=False)
 
     def _load_dark_web_pref(self):
-        self.act_dark_mode.setChecked(prefs.get_force_dark_web(self.base_dir))
+        # effective, not the stored flag: until the user flips this item the value
+        # follows the shell's light/dark mode (see prefs.effective_force_dark_web),
+        # so the checkbox has to show what pages are actually getting.
+        self.act_dark_mode.setChecked(prefs.effective_force_dark_web(self.base_dir))
 
     def _apply_cookie_policy(self, show_message=True):
         checked = self.act_block_3p_cookies.isChecked()
@@ -3341,8 +3209,8 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
     def update_zoom_label(self):
         browser = self.current_browser()
         if browser:
-            pct = round(browser.zoomFactor() * 100)
-            self.lbl_zoom.setText(f"{pct}%")
+            # Rendering rule lives with the chip itself (TopBarMixin).
+            self._set_zoom_label(round(browser.zoomFactor() * 100))
 
     def zoom_in(self):
         browser = self.current_browser()
@@ -3459,17 +3327,43 @@ class SearchWindow(DockingMixin, MenusMixin, WindowToolsMixin, QMainWindow):
         dev_window.show()
 
     def toggle_dark_web(self):
-        is_dark = self.act_dark_mode.isChecked()
-        prefs.set_force_dark_web(self.base_dir, is_dark)
+        """User flipped "Force Dark Mode on Web": store the explicit choice."""
+        self._apply_dark_web(self.act_dark_mode.isChecked(), persist=True)
+
+    def _apply_dark_web(self, enabled: bool, persist: bool = True):
+        """Install/remove the forced-dark script and apply it to the open tabs.
+
+        ``persist=False`` is the automatic path (the theme flipped): it must not
+        write the pref, or the very first day/night flip would freeze the
+        follow-the-theme behaviour into an explicit value.
+        """
+        if persist:
+            prefs.set_force_dark_web(self.base_dir, enabled)
+        if hasattr(self, "act_dark_mode") and self.act_dark_mode.isChecked() != bool(enabled):
+            self.act_dark_mode.setChecked(bool(enabled))
         try:
             from litebrowser.browser.browser_page import ensure_forced_dark_script
-            ensure_forced_dark_script(self.profile, is_dark, self.base_dir)
+            ensure_forced_dark_script(self.profile, enabled, self.base_dir)
         except Exception:
             pass
-        js = self._dark_mode_js(is_dark)
+        js = self._dark_mode_js(enabled)
         for browser in self.browsers:
             if browser is not None and browser.page():
                 browser.page().runJavaScript(js)
+
+    def _sync_dark_web_with_theme(self):
+        """Keep web pages in step with the shell's light/dark mode.
+
+        Only acts while the user has not made an explicit choice, and never
+        persists — see _apply_dark_web.
+        """
+        act = getattr(self, "act_dark_mode", None)
+        if act is None:
+            return
+        enabled = prefs.effective_force_dark_web(self.base_dir)
+        if act.isChecked() == enabled:
+            return
+        self._apply_dark_web(enabled, persist=False)
 
     def show_history_dialog(self):
         dialogs.show_history_dialog(self)

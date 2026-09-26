@@ -483,8 +483,16 @@ def accent_display_name(accent: str) -> str:
 
 DEFAULTS = {
     "TEXT_DIM": "#8a7a63",
-    "RADIUS": "10px",
-    "RADIUS_SM": "6px",
+    # Geometry scale — every corner in the chrome comes from these five values.
+    # The UI had grown a dozen ad-hoc radii (4px…20px, twelve distinct values),
+    # which is what made the chrome read as a pile of widgets instead of one
+    # design. Tuned in the 2026 pass: controls soft, cards clearly larger than
+    # chips, one pill value for anything pill-shaped.
+    "RADIUS_XS": "8px",      # menu rows, tiny inner elements
+    "RADIUS_SM": "10px",     # buttons, inputs, sidebar buttons
+    "RADIUS": "14px",        # cards, popups
+    "RADIUS_LG": "18px",     # hero panel, omnibar
+    "RADIUS_PILL": "999px",  # pills and chips
     # Kept for API compatibility; actual fallback is applied at app level via
     # QFont.setFamilies in litebrowser.main (QSS font-family cannot fall back).
     "FONT_FAMILY": '"Segoe UI", "Segoe UI Symbol", "Segoe UI Emoji", "Helvetica Neue", Arial, sans-serif',
@@ -517,7 +525,8 @@ def _accent_override(accent: str | None) -> dict:
     preset = ACCENTS.get(accent or "") if accent else None
     if not preset:
         return {}
-    return dict(zip(_ACCENT_KEYS, preset))
+    # A short preset list is tolerated: the pairs past its end are simply dropped.
+    return dict(zip(_ACCENT_KEYS, preset, strict=False))
 
 
 def _is_light_color(value: str) -> bool:
@@ -567,6 +576,17 @@ def palette_tokens(mode: str = "minimal", accent: str | None = None) -> dict:
     return _palette(mode, accent)
 
 
+def is_night_theme(mode: str) -> bool:
+    """Whether ``mode`` paints a dark surface.
+
+    Read from the palette's own background (not from the theme's name), so a new
+    dark theme is recognised without a second list to keep in sync. Used to make
+    the web pages follow the shell: dark chrome implies dark pages unless the
+    user has said otherwise (see prefs.effective_force_dark_web).
+    """
+    return not _is_light_color(_palette(mode or DEFAULT_THEME)["MAIN_BG"])
+
+
 __all__ = [
     "ACCENTS",
     "DEFAULTS",
@@ -580,6 +600,7 @@ __all__ = [
     "_palette",
     "accent_display_name",
     "accent_keys",
+    "is_night_theme",
     "palette_tokens",
     "theme_display_name",
 ]

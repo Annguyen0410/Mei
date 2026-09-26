@@ -343,7 +343,7 @@ def export_profile_to_zip(base_dir: str, zip_path: str, *, include_browser_data:
     """
     try:
         payload = export_profile_payload(base_dir, inline_vault_files=False)
-        payload["backup_format_version"] = 3
+        payload["backup_format_version"] = 4
         payload["backup_bundle"] = "zip"
         payload["backup_includes_browser_data"] = bool(include_browser_data)
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -399,7 +399,10 @@ def export_profile_payload(base_dir: str, *, inline_vault_files: bool = True):
     from litebrowser.services import (
         download_mgr,
         extension_bridge,
+        flashcard_service,
         life_service,
+        link_service,
+        personal_plan,
         personal_service,
     )
 
@@ -408,7 +411,7 @@ def export_profile_payload(base_dir: str, *, inline_vault_files: bool = True):
         notes.append({"id": note["id"], "title": note["title"], "content": note.get("content", "")})
     payload = {
         "version": 1,
-        "backup_format_version": 2,
+        "backup_format_version": 3,
         "exported_at": int(time.time()),
         "profile_meta": prefs.load_profile_meta(base_dir),
         "prefs": prefs.load_prefs(base_dir),
@@ -430,6 +433,9 @@ def export_profile_payload(base_dir: str, *, inline_vault_files: bool = True):
         "ai_index": read_json(prefs.ai_index_path(base_dir), {"version": 1, "built_at": 0, "docs": []}),
         "activity_history": load_activity(base_dir),
         "notes": notes,
+        "personal_plan": personal_plan.load_plan(base_dir),
+        "flashcards": flashcard_service.load_cards(base_dir),
+        "entity_links": link_service.load_links(base_dir),
         "extension_imports": read_json(
             extension_bridge.storage_path(base_dir),
             {"version": 1, "batches": []},
@@ -449,7 +455,10 @@ def import_profile_payload(
     from litebrowser.services import (
         download_mgr,
         extension_bridge,
+        flashcard_service,
         life_service,
+        link_service,
+        personal_plan,
         personal_service,
     )
 
@@ -500,6 +509,18 @@ def import_profile_payload(
         prefs.save_ai_settings(base_dir, payload.get("ai_settings", {}))
         write_json(prefs.ai_index_path(base_dir), payload.get("ai_index", {"version": 1, "built_at": 0, "docs": []}))
         save_activity(base_dir, payload.get("activity_history", {"version": 1, "events": []}))
+        # Planner + flashcards are newer than the original backup format: only
+        # overwrite when the payload actually carries them, so restoring a v<=3
+        # backup cannot silently wipe study data that this build already has.
+        plan = payload.get("personal_plan")
+        if isinstance(plan, dict):
+            personal_plan.save_plan(base_dir, plan)
+        cards = payload.get("flashcards")
+        if isinstance(cards, list):
+            flashcard_service.save_cards(base_dir, [c for c in cards if isinstance(c, dict)])
+        links = payload.get("entity_links")
+        if isinstance(links, list):
+            link_service.save_links(base_dir, links)
 
         if vault_zip is not None:
             _import_vault_from_zip(base_dir, vault_zip)

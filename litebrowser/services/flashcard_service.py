@@ -25,19 +25,20 @@ _EASE_MIN = 1.3
 _EASE_MAX = 3.0
 
 
-def _path(base_dir: str) -> str:
+def cards_path(base_dir: str) -> str:
+    """Path of the per-profile flashcard store (shared with index invalidation)."""
     return os.path.join(base_dir, "flashcards.json")
 
 
 def load_cards(base_dir: str) -> list[dict]:
-    data = read_json(_path(base_dir), {"version": 1, "cards": []})
+    data = read_json(cards_path(base_dir), {"version": 1, "cards": []})
     cards = data.get("cards") if isinstance(data, dict) else None
     return [c for c in cards if isinstance(c, dict)] if isinstance(cards, list) else []
 
 
 def save_cards(base_dir: str, cards: list[dict]) -> None:
     with profile_locked(base_dir):
-        write_json(_path(base_dir), {"version": 1, "cards": cards})
+        write_json(cards_path(base_dir), {"version": 1, "cards": cards})
 
 
 def add_card(base_dir: str, front: str, back: str, source_note_id: str = "") -> dict:
@@ -61,22 +62,30 @@ def add_card(base_dir: str, front: str, back: str, source_note_id: str = "") -> 
 
 
 def delete_card(base_dir: str, card_id: str) -> bool:
+    from litebrowser.services import link_service
+
     cards = load_cards(base_dir)
     kept = [c for c in cards if c.get("id") != card_id]
     if len(kept) == len(cards):
         return False
     save_cards(base_dir, kept)
+    link_service.delete_links_for(base_dir, "flashcard", card_id)
     return True
 
 
 def delete_cards_for_note(base_dir: str, note_id: str) -> int:
     """Cascade: when a source note is deleted, its generated cards go too
     (they would review as orphans with no context)."""
+    from litebrowser.services import link_service
+
     cards = load_cards(base_dir)
     kept = [c for c in cards if c.get("source_note_id") != note_id]
     removed = len(cards) - len(kept)
     if removed:
         save_cards(base_dir, kept)
+        for card in cards:
+            if card.get("source_note_id") == note_id:
+                link_service.delete_links_for(base_dir, "flashcard", card.get("id", ""))
     return removed
 
 

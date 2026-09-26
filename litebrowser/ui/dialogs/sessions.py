@@ -235,7 +235,7 @@ def show_history_dialog(parent):
         history_data.extend(ent)
         q = (query or "").strip().lower()
         shown = 0
-        for ts, url in ent:
+        for _ts, url in ent:
             if q and q not in url.lower():
                 continue
             list_widget.addItem(url)
@@ -248,7 +248,7 @@ def show_history_dialog(parent):
     search_edit.textChanged.connect(refresh_list)
 
     # Initial fill (unfiltered)
-    for ts, url in entries[:500]:
+    for _ts, url in entries[:500]:
         list_widget.addItem(url)
     if not entries:
         list_widget.addItem("No history yet...")

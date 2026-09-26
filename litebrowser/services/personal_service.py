@@ -191,11 +191,15 @@ def update_note(base_dir: str, note_id: str, content: str, category: str | None 
 
 
 def delete_note(base_dir: str, note_id: str) -> bool:
+    from litebrowser.services import link_service
+
     with profile_locked(base_dir):
         path = _note_path(base_dir, note_id)
         if not os.path.isfile(path):
             return False
         os.remove(path)
+    # The note is gone; edges that point at it would render as dead titles.
+    link_service.delete_links_for(base_dir, "note", note_id)
     _invalidate_cache()
     history_service.log_event(base_dir, "note", os.path.splitext(note_id)[0], "Note deleted", {"note_id": note_id})
     return True

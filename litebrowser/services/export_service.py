@@ -92,7 +92,9 @@ footer {{ color:{p['TEXT_MUTED']}; font-size:12px; margin-top:34px; }}
 
 def export_notes_html(base_dir: str, out_path: str) -> int:
     """Static mini-site: index.html + note pages under notes/. Returns count."""
-    mode = prefs.get_shell_theme(base_dir)
+    # Exported HTML should look like the app in its *current* mode, not like the
+    # stored preference (auto day/night would otherwise export day pages at night).
+    mode = prefs.resolved_auto_theme(base_dir)
     from litebrowser.core import theme_data
 
     tokens = theme_data._palette(mode, prefs.get_accent(base_dir))

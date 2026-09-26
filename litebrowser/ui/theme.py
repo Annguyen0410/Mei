@@ -22,13 +22,23 @@ from litebrowser.core.theme_data import (  # noqa: F401
 )
 
 
-def palette(mode: str | None = None, accent: str | None = None) -> dict:
-    """Resolved tokens for the *stored* profile theme when no mode is given."""
-    if mode is None:
-        from litebrowser.core import prefs as _prefs
+def resolved_mode(base_dir: str | None = None) -> str:
+    """Theme id the chrome is *currently painting with*.
 
-        mode = _prefs.get_shell_theme(_prefs.DEFAULT_BASE_DIR) or DEFAULT_THEME
-    return _palette(mode, accent)
+    ``prefs.get_shell_theme`` returns the *stored* choice; with the auto day/night
+    preference on, the shell paints with a sibling the stored name does not tell
+    you about. A widget that resolved with the stored name therefore kept its day
+    colours after the shell had switched to the night palette — page cards stayed
+    light inside a dark window.
+    """
+    from litebrowser.core import prefs as _prefs
+
+    return _prefs.resolved_auto_theme(base_dir or _prefs.DEFAULT_BASE_DIR) or DEFAULT_THEME
+
+
+def palette(mode: str | None = None, accent: str | None = None) -> dict:
+    """Resolved tokens for the active profile when no mode is given."""
+    return _palette(mode or resolved_mode(), accent)
 
 
 def main_qss(mode: str = "cafe-night", accent: str | None = None):
@@ -267,7 +277,6 @@ QPushButton#TopAccentButton:hover { background-color: %(ACCENT_HOVER)s; }
 #TopBar { background-color: %(CARD_BG)s; border: 1px solid %(BORDER_SOFT)s; padding: 4px; }
 #TopBarCluster, #AddressCluster { background-color: %(MAIN_BG_ALT)s; border: 1px solid %(BORDER_SOFT)s; }
 #AddressCluster #UrlBar { background: transparent; border: none; padding: 6px 8px; font-size: 12px; font-weight: 600; }
-#AddressHint { color: %(ACCENT_HOVER)s; background: transparent; font-size: 9px; font-weight: 800; letter-spacing: 1px; padding: 0 2px; text-transform: uppercase; }
 #TopBar #SearchEngine, #SearchEngine, #WorkspaceCombo {
     min-height: 30px; background-color: %(INPUT_BG)s; color: %(TEXT)s;
     border: 1px solid %(INPUT_BORDER)s; border-radius: %(RADIUS_SM)s; padding: 4px 22px 4px 10px;
@@ -316,7 +325,6 @@ QPushButton#TopAccentButton:hover { background-color: %(ACCENT_HOVER)s; }
 
 /* ---------- browser sidebar ---------- */
 #Sidebar { background-color: %(SIDEBAR_BG)s; border-right: 1px solid %(BORDER_SOFT)s; }
-#AppTitle { color: %(TEXT)s; font-size: 13px; font-weight: 700; }
 #TabCounter, #ZoomLabel { color: %(TEXT_MUTED)s; font-size: 11px; }
 #NewTabBtn {
     background-color: %(ACCENT_SOFT)s; color: %(ACCENT_HOVER)s; border: 1px solid %(INPUT_BORDER)s;
@@ -483,16 +491,17 @@ QLabel {
     color: %(TEXT_MUTED)s;
     font-size: 9px;
     font-weight: 800;
-    letter-spacing: 1.35px;
-    padding: 12px 10px 2px 10px;
+    letter-spacing: 1.1px;
+    padding: 9px 10px 2px 10px;
 }
+/* The rail header line: quiet text, not a boxed chip (the box made the profile
+   name look like a button and pushed the first nav item down a whole row). */
 #RailMeta {
-    background-color: %(MAIN_BG_ALT)s;
-    border: 1px solid %(BORDER_SOFT)s;
-    border-radius: 10px;
+    background: transparent;
+    border: none;
     color: %(TEXT_MUTED)s;
     font-size: 10px;
-    padding: 7px 9px;
+    padding: 2px 4px;
 }
 #NavButton {
     min-height: 34px;
@@ -514,13 +523,6 @@ QLabel {
     color: %(ACCENT_HOVER)s;
     background-color: %(ACCENT_SOFT)s;
     border-color: %(INPUT_BORDER)s;
-}
-#RailBrand {
-    color: %(TEXT)s;
-    font-size: 13px;
-    font-weight: 800;
-    letter-spacing: 0.2px;
-    padding: 2px 2px 2px 6px;
 }
 #NavToggle {
     color: %(TEXT_MUTED)s;
@@ -825,13 +827,6 @@ QPushButton#TopAccentButton:hover { background-color: %(ACCENT_HOVER)s; border-c
     border-radius: 14px;
     padding: 3px;
 }
-#AddressHint {
-    color: %(ACCENT_HOVER)s;
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.8px;
-    padding: 0 4px;
-}
 #UrlBar {
     min-height: 28px;
     background-color: %(MAIN_BG_ALT)s;
@@ -887,22 +882,36 @@ QMenu {
     background-color: %(MENU_BG)s;
     color: %(TEXT)s;
     border: 1px solid %(INPUT_BORDER)s;
-    border-radius: 11px;
+    border-radius: %(RADIUS)s;
     padding: 5px;
 }
-QMenu::item { padding: 7px 20px 7px 10px; border-radius: 7px; }
+QMenu::item { padding: 7px 20px 7px 10px; border-radius: %(RADIUS_XS)s; }
 QMenu::item:selected { background-color: %(ACCENT_SOFT)s; color: %(TEXT)s; }
 
-/* ---------- 5.6 coffee-house refinement: softer radii + gentle focus ---------- */
-QPushButton, #CafeButton, #TopIconButton { border-radius: 10px; }
-QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox { border-radius: 10px; }
-#HeroCard { border-radius: 20px; }
-#SectionCard, #StatCard, #ActionTile, #StatTile { border-radius: 16px; }
-#ShellOmnibar { border-radius: 18px; }
-#UrlBar { border-radius: 12px; }
+/* ---------- 5.6 refinement: one geometry scale, gentler focus ----------------
+   Every radius below resolves through core/theme_data.DEFAULTS, so a surface
+   can no longer invent its own corner. */
+QPushButton, #CafeButton, #TopIconButton { border-radius: %(RADIUS_SM)s; }
+QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox { border-radius: %(RADIUS_SM)s; }
+#HeroCard { border-radius: %(RADIUS_LG)s; }
+#SectionCard, #StatCard, #ActionTile, #StatTile, #InsightPanel { border-radius: %(RADIUS)s; }
+#ShellOmnibar { border-radius: %(RADIUS_LG)s; }
+#UrlBar { border-radius: %(RADIUS_SM)s; }
+/* Anything pill-shaped (connection state, zoom chip, status pill, café chips)
+   uses the pill token instead of spelling out 999px. */
+#SiteStatePill, #ZoomLabel, #StatusPill, #Chip, #Pill {
+    border-radius: %(RADIUS_PILL)s;
+}
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus,
 #UrlBar:focus, #ShellOmnibar:focus {
     border: 1px solid %(ACCENT)s;
+}
+/* Keyboard users get the same "where am I" signal as a mouse hover has always
+   had: focus is drawn on every interactive control, not only on text fields. */
+QPushButton:focus, QToolButton:focus, #CafeButton:focus, #TopIconButton:focus,
+#SidebarPanelBtn:focus, #SidebarCollapse:focus {
+    border: 1px solid %(ACCENT)s;
+    color: %(ACCENT_HOVER)s;
 }
 
 /* ---------- 5.7 browser control deck: one calm, unified toolbar ---------- */
@@ -910,7 +919,7 @@ QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBo
 #SidebarPanelBtn {
     min-width: 34px; min-height: 32px;
     font-size: 15px;
-    border-radius: 10px;
+    border-radius: %(RADIUS_SM)s;
 }
 #SidebarPanelBtn:hover { background-color: %(ITEM_HOVER)s; border-color: %(BORDER_SOFT)s; color: %(TEXT)s; }
 #SidebarPanelBtn:checked {
@@ -1040,6 +1049,67 @@ QToolTip {
     border-radius: 6px;
     padding: 3px 10px;
     font-size: 11px;
+}
+
+/* ---------- 6.6 browser chrome: flat icons, one address field ----------------
+   Two reports from a real session drive this block: the toolbar read as a row of
+   separate boxes, and the caret on the "Control" button was drawn outside its
+   own button.  Both are layout artefacts of styling every control individually. */
+
+/* Icon buttons are flat until touched. The earlier type-level rule
+   (QPushButton, #CafeButton, #TopIconButton) put a border and a filled
+   background on every glyph, which is what made the toolbar read as a form.
+   #TopIconButton is only ever an icon-only control (toolbar glyphs, dock and
+   panel headers), so one flat rule is enough — hover and focus still answer. */
+#TopIconButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+#TopIconButton:hover {
+    background-color: %(ITEM_HOVER)s;
+    border-color: %(BORDER_SOFT)s;
+    color: %(TEXT)s;
+}
+#TopIconButton:focus {
+    background-color: transparent;
+    border-color: %(ACCENT)s;
+    color: %(ACCENT_HOVER)s;
+}
+/* A held/checked glyph (dock toggles) keeps a fill so "on" is still readable. */
+#TopIconButton:checked {
+    background-color: %(ITEM_SELECTED)s;
+    border-color: %(ITEM_SELECTED_BORDER)s;
+    color: %(ACCENT_HOVER)s;
+}
+
+/* Address cluster: the connection pill and the address share one rounded field
+   instead of sitting in two adjacent boxes. */
+#AddressCluster {
+    background-color: %(MAIN_BG_ALT)s;
+    border: 1px solid %(BORDER_SOFT)s;
+    border-radius: %(RADIUS_SM)s;
+}
+/* Focus is painted on the frame (the field itself is borderless inside it). The
+   property is set in SearchWindow._set_address_cluster_focus. */
+#AddressCluster[focused="true"] {
+    background-color: %(INPUT_BG)s;
+    border-color: %(ACCENT)s;
+}
+#AddressCluster #UrlBar,
+#AddressCluster #UrlBar:hover,
+#AddressCluster #UrlBar:focus {
+    background: transparent;
+    border: none;
+}
+
+/* Menu carets: Qt anchors ::menu-indicator to the bottom-right of a styled
+   button, so "⚙ Control" grew an arrow below its own edge. The caret now lives
+   in the button label (window.py) and the subcontrol is switched off. */
+QPushButton::menu-indicator,
+QToolButton::menu-indicator {
+    image: none;
+    width: 0;
+    height: 0;
 }
 """ % p
 

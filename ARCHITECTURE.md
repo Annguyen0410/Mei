@@ -1,4 +1,4 @@
-# MeiBrowser — Architecture & Upgrade Guide
+# Mei — Architecture & Upgrade Guide
 
 This document describes the current code structure and the **extension points** so future
 features can be added without touching code all over the place. Read it alongside `README.md`.
@@ -18,6 +18,7 @@ litebrowser/qt.py                     Qt façade — the only sanctioned way in
 litebrowser/ui/                       UI layer
    ├─ app_shell.py                    Master shell: rail + omnibar + insight panel
    ├─ main_window/window.py           SearchWindow (main browser)
+   │    └─ window_topbar.py           Toolbar chrome: nav, engine, address bar, pill, collapse
    ├─ personal_window.py              Personal Hub (Notes/Tasks/Calendar/Boards/Files/Sites)
    ├─ ai_window.py                    AI Workspace
    ├─ shell/pages.py                  Home / Library / Settings / History
@@ -36,6 +37,11 @@ litebrowser/services/                 Data layer (never imports Qt widgets)
    ├─ update_service.py               Version check (product-tagged) + verified install
    ├─ life_service.py                 Tasks / Events / Boards / Saved pages
    ├─ personal_service.py             Notes (SafeVault) + personal root
+   ├─ personal_plan.py                Weekly student planner: courses / items / blocks (v2)
+   ├─ study_session.py                Study sessions: pour from an item, credit minutes back
+   ├─ study_flow.py                   The loop: one next step read from every store
+   ├─ link_service.py                 Two-way entity links (entity_links.json)
+   ├─ flashcard_service.py            SM-2 flashcards (Review page + study sessions)
    ├─ ai_service.py / retriever.py    RAG index + BM25 (+ cosine embed when Ollama)
    ├─ history_service.py              Activity log + backup/import
    ├─ brief_service.py                Morning Brief (local-first digest)
@@ -137,7 +143,9 @@ of `.js` files in `Extensions/`. Adding a new pattern = edit this module + make 
 loop (`window.py`) calls `should_inject_for_url`.
 
 ### Add a data source for self-hosted sync
-`sync_service.py` — add the entity to the bundle builder + merge (last-writer-wins by `updated_at`).
+`sync_service.py` — add **one entry** to `SYNC_ENTITIES` (`key`, report counter, publish, merge).
+The bundle, the merge pass and the applied-count report all read that registry, so nothing else
+needs editing (`tests/test_store_migrations.py` asserts they cannot drift apart).
 Endpoints: `POST {base}/api/sync/push` + `GET {base}/api/sync/latest`. Sample server: README → Self-hosted sync.
 
 ### Add a workspace app / AI provider
@@ -155,6 +163,12 @@ imports the binding directly outside the allowlist **and** if the allowlist keep
 entry, so the migration can only move forward. Only `qt.py`, `qt_compat.py` and `main.py`
 (must set Chromium/GL env vars before `QApplication` exists) may import PyQt5 forever.
 
+The same test also enforces the import **order**: a test module must import `litebrowser`
+(which activates the shim) before it imports a Qt binding. PyQt5 and PyQt6 are both
+installed here, so importing a binding first pins that file to the *other* Qt runtime
+while the app code uses the shimmed one — two bindings in one process, which dies with an
+access violation instead of a traceback.
+
 ### Add a new indexed data type for AI
 `ai_service.collect_docs()` — add the source and the retriever indexes it automatically.
 
@@ -168,6 +182,12 @@ entry, so the migration can only move forward. Only `qt.py`, `qt_compat.py` and 
 - **AI ask**: shell → `ai_window.ask_with_context` → `ai_service.answer_query` (thread pool).
 - **Boards**: `PersonalWindow` → `QGraphicsScene` (StickyCardItem + InkStrokeItem + EdgeItem)
   → `life_service.update_board`.
+- **The loop** (capture → plan → study → review → reflect): `study_flow.build_flow` reads the
+  agenda, the deck, the captures, the pour journal and the link table → `next_step()` names one
+  action → `AppShell.open_flow_step` routes it to a workspace (studying starts a `study_session`,
+  reviewing opens the deck, capturing selects the note). Home's ▶ Continue, `/flow`, the brief's
+  "Next step" line and the planner's study label all read the same function, so the four
+  surfaces cannot disagree.
 
 ---
 
@@ -195,6 +215,13 @@ entry, so the migration can only move forward. Only `qt.py`, `qt_compat.py` and 
 | Semantic retrieval (5.5) | ✅ Done | cosine blend when Ollama, BM25 fallback |
 | Extension match pattern (5.5) | ✅ Done | `extension_patterns.py` |
 | Self-hosted sync (6.2) | ✅ Done | `sync_service.py` + Settings card + sample server |
+| Planner & flashcards on every surface | ✅ Done | backup/sync/AI index/search/brief all read the study stores |
+| Course UI + time-block editing | ✅ Done | Weekly Plan course card, course pickers, block edit dialog |
+| Unified Home agenda | ✅ Done | `life_service.today_agenda` → Home “Today” card |
+| Study sessions with credited minutes | ✅ Done | `study_session.py` + `focus_service` item sessions (planner store v2) |
+| Two-way entity links | ✅ Done | `link_service.py` (`entity_links.json`) + note Related panel |
+| One loop, one recommendation | ✅ Done | `study_flow.py` → Home ▶ Continue, `/flow`, brief next step, planner study hint |
+| Inbox → planner promotion | ✅ Done | `study_flow.promote_task` + Home “→ Planner” (keeps the task↔item link) |
 | Tab Groups drag-drop + Split view | ⏳ Not yet | needs GUI testing (pure Qt UI) |
 | Chromium engine upgrade (PyQt6-WebEngine 6.9/6.10) | ⏳ Not yet | big migration, needs GUI regression |
 

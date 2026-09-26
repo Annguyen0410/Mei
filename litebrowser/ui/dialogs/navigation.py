@@ -128,14 +128,14 @@ def show_quick_switcher(parent):
         entries = prefs.load_history_entries(base_dir)
         entries.sort(key=lambda x: -x[0])
         seen = set()
-        for ts, url in entries[:80]:
+        for _ts, url in entries[:80]:
             if url in seen or not url.startswith("http"):
                 continue
             seen.add(url)
             short = url.replace("https://", "").replace("http://", "")[:50]
             if not q or q in url.lower() or q in short.lower():
                 results.append(("history", None, short, url))
-        for kind, idx, title, url in results[:50]:
+        for kind, _idx, title, url in results[:50]:
             if kind == "command":
                 list_widget.addItem("⚡ %s" % (title[:70],))
             elif kind == "tab":

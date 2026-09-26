@@ -14,7 +14,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # The shipped app imports this package before its Qt imports, which aliases
 # the legacy PyQt5 imports below to PyQt6 when PyQt6 is installed.  Do the
 # same in this test; otherwise it exercises a different splitter runtime than
-# the actual Mei process.
+# the actual Mei process - and, run on its own, it would load the *other* Qt
+# runtime here and then mix two bindings in one process, which crashes the
+# interpreter instead of failing a test.
+import litebrowser  # noqa: F401 - litebrowser/__init__ activates the Qt shim
+
 from PyQt5.QtCore import QAbstractAnimation, QObject, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
@@ -28,8 +32,6 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-import litebrowser
 
 _app = QApplication.instance() or QApplication([])
 
@@ -131,15 +133,15 @@ class _SidebarHost(QMainWindow):
         self.sidebarWidget.setMaximumWidth(800)
         self.sidebar_layout = QVBoxLayout(self.sidebarWidget)
         self.sidebar_layout.setContentsMargins(8, 10, 8, 10)
+        # Mirrors the production header row: the collapse toggle alone on the
+        # left (the "tea Mei" wordmark that used to share this row is gone — the
+        # brand lives in the shell top bar), so the toggle keeps real width even
+        # when the desk is a thin rail.
         title_row = QHBoxLayout()
         self.btn_collapse_sidebar = QToolButton()
         self.btn_collapse_sidebar.setObjectName("SidebarCollapse")
         self.btn_collapse_sidebar.setText("<")
         title_row.addWidget(self.btn_collapse_sidebar)
-        self.brand_glyph = QLabel("tea")
-        title_row.addWidget(self.brand_glyph)
-        self.title_label = QLabel("Mei")
-        title_row.addWidget(self.title_label, 1)
         self.sidebar_layout.addLayout(title_row)
         self.lbl_tab_count = QLabel("1 Live")
         self.sidebar_layout.addWidget(self.lbl_tab_count)

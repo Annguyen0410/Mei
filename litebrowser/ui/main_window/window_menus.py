@@ -88,8 +88,14 @@ class MenusMixin:
             lambda: self.tab_manager.optimize_memory()
         )
         privacy_menu.addAction("Performance dashboard").triggered.connect(self.show_performance_dashboard)
-        self.act_dark_mode = privacy_menu.addAction("Force Dark Mode on Web")
+        # Follows the shell's light/dark mode until the user flips it once; the
+        # tooltip says so, because "Force" no longer describes the default.
+        self.act_dark_mode = privacy_menu.addAction("Dark Mode on Web")
         self.act_dark_mode.setCheckable(True)
+        self.act_dark_mode.setToolTip(
+            "Darken web pages to match the app. Follows the app's light/dark mode "
+            "(including auto day/night) until you set it yourself."
+        )
         self.act_dark_mode.triggered.connect(self.toggle_dark_web)
         self.act_dynamic_bg = privacy_menu.addAction("Animated Gradient Sidebar")
         self.act_dynamic_bg.setCheckable(True)

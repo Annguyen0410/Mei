@@ -6,6 +6,11 @@ import unittest
 os_setter = __import__("os").environ.setdefault
 os_setter("QT_QPA_PLATFORM", "offscreen")
 
+# The point of this file is to check the members the app dereferences under the
+# ACTIVE binding, so the shim has to be active before these imports resolve - and
+# importing PyQt5 first would load a second Qt runtime alongside it.
+import litebrowser  # noqa: F401 - litebrowser/__init__ activates the Qt shim
+
 from PyQt5.QtCore import QEvent, Qt
 from PyQt5.QtNetwork import QNetworkProxy
 from PyQt5.QtWebEngineWidgets import (
@@ -23,7 +28,7 @@ from PyQt5.QtWidgets import (
     QSystemTrayIcon,
 )
 
-import litebrowser.qt_compat
+import litebrowser.qt_compat  # noqa: F401 - imported for its side effects
 
 
 class TestEnumCompat(unittest.TestCase):

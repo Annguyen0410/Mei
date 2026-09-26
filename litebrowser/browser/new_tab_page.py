@@ -1,7 +1,7 @@
 from html import escape as _html_escape
 from urllib.parse import urlparse
 
-from litebrowser.core import app_paths, prefs
+from litebrowser.core import app_paths, app_version, prefs
 
 _CSP = (
     "default-src 'none'; "
@@ -272,6 +272,12 @@ input[type="search"]:focus {
 }
 .tile {
   position: relative;
+  /* Column + centred: a grid row is as tall as its tallest tile, and the short
+     labels used to sit at the top of that box with dead space underneath. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-decoration: none;
   background: @CARD_BG@;
   border: 1px solid @BORDER_SOFT@;
@@ -323,11 +329,18 @@ input[type="search"]:focus {
 .tile:hover .tile-mark { transform: scale(1.08); border-color: @ACCENT@; }
 .tile-label {
   position: relative;
-  display: block;
+  /* Two lines maximum, balanced across them: "MAS — Mahoraga Adapt System" and
+     "Bí Mật — PersonalFrequency" otherwise stretched their whole grid row. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-wrap: balance;
   color: @TEXT@;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
+  min-height: 2.8em;
 }
 /* Recent pour list */
 .recent-row {
@@ -420,6 +433,13 @@ a:focus-visible {
 
 
 def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None, accent=None):
+    # Default to the theme the shell is showing (not the bare default theme): a
+    # caller that omits the mode used to get a bright speed dial inside a dark
+    # window, which is the exact "page ignores my theme" report this fixes.
+    if mode is None:
+        mode = prefs.resolved_auto_theme(base_dir)
+    if accent is None:
+        accent = prefs.get_accent(base_dir)
     bookmarks = prefs.load_bookmarks(base_dir)
     entries = prefs.load_history_entries(base_dir)
     entries.sort(key=lambda item: -item[0])
@@ -518,16 +538,16 @@ def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None
     for token, value in _resolve_theme_tokens(mode, accent).items():
         css = css.replace(token, value)
 
-    return """<!DOCTYPE html>
+    html = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="%s">
-<title>MeiBrowser Home</title>
+<title>@BRAND@ Home</title>
 <style>%s</style>
 </head>
 <body>
-  <div class="awning"><span class="cup-logo">🍵</span> MeiBrowser · Tea Room Edition</div>
+  <div class="awning"><span class="cup-logo">🍵</span> @BRAND@ · Tea Room Edition</div>
   <div class="shell">
     <div class="hero">
       <div class="cup">
@@ -556,11 +576,12 @@ def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None
       <div>%s</div>
     </div>
     <div class="hint-row">
+      <span class="hint">? Help · F1</span>
       <span class="hint">⌨ Ctrl+T new tab</span>
       <span class="hint">Ctrl+K command</span>
       <span class="hint">/agent · /brief · /group-tabs</span>
     </div>
-    <div class="footer-note">✦ MeiBrowser — privacy-first, local-first ✦</div>
+    <div class="footer-note">✦ @BRAND@ — privacy-first, local-first ✦</div>
   </div>
 </body>
 </html>""" % (
@@ -576,3 +597,7 @@ def build_new_tab_html(base_dir, app_dir=None, search_engine="Google", mode=None
         tiles_html,
         recent_rows,
     )
+    # One brand string for the whole app (core/product.py): this page used to
+    # hard-code the pre-rename name, so a tab could read a different product than
+    # the .exe that opened it.
+    return html.replace("@BRAND@", app_version.APP_NAME)

@@ -1,4 +1,4 @@
-# MeiBrowser — Command & Shortcut Reference
+# Mei — Command & Shortcut Reference
 
 Everything you can type in the **omnibar** (slash commands) and the most useful
 **keyboard shortcuts**. Commands marked *arg* take an argument — typing the bare
@@ -38,6 +38,7 @@ command prefills the box so you can finish the argument.
 | `/summarize <url \| page>` *arg* | Summarize the active browser page |
 | `/agent <summary \| tasks \| review>` *arg* | Agent actions |
 | `/brief` | Show your local Morning Brief |
+| `/flow` | Study loop — report the five steps and run the next one |
 
 ### Focus & wellbeing
 
@@ -83,6 +84,7 @@ command prefills the box so you can finish the argument.
 
 | Shortcut | Action |
 |---|---|
+| `F1` | Open the Help & Guide hub (features, shortcuts, every command) |
 | `Ctrl+K` | Focus the omnibar (select existing text) |
 | `Ctrl+1 … Ctrl+7` | Switch workspace: Home, Browser, History, AI, Personal, Library, Settings |
 | `Ctrl+Alt+M` | Quick-note overlay from anywhere in Windows |
@@ -113,6 +115,7 @@ command prefills the box so you can finish the argument.
 | `Ctrl+Shift+K` | Quick switcher: commands, tabs, bookmarks, history |
 | `Ctrl+Shift+F` | Focus the tab-desk filter |
 | `Ctrl+Shift+E` | Extract page text |
+| `F1` | Help & Guide hub (searchable; runs a command on double-click) |
 | `F12` | Developer tools |
 | `F11` | Fullscreen |
 
@@ -126,5 +129,5 @@ command prefills the box so you can finish the argument.
 
 ---
 
-*MeiBrowser is its own application; the `/mas`, `/linklumina`, … commands open
-linked web apps that MeiBrowser does not contain.*
+*Mei is its own application; the `/mas`, `/linklumina`, … commands open
+linked web apps that Mei does not contain.*

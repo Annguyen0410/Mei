@@ -104,7 +104,8 @@ _OLLAMA_EMBED_URL = "http://127.0.0.1:11434/api/embeddings"
 def _cosine(a: list[float], b: list[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    # The length guard above makes the pairs equal by construction.
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     na = math.sqrt(sum(x * x for x in a)) or 1.0
     nb = math.sqrt(sum(y * y for y in b)) or 1.0
     return dot / (na * nb)

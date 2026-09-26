@@ -1,4 +1,6 @@
-# Run & Build MeiBrowser (Desktop App)This guide is specifically about **running** and **packaging** MeiBrowser
+# Run & Build Mei (Desktop App)
+
+This guide is specifically about **running** and **packaging** Mei
 as a desktop app (.exe on Windows). For code / architecture content, see `README.md` and `ARCHITECTURE.md`.
 
 ---
@@ -172,6 +174,14 @@ Then copy `dist\update` beside the `Mei.exe` you already run and launch it. The 
 the intermediate `build\Mei`, `build\LiteBrowser`, `build\browser` folders. `dist\Mei.exe`
 itself is never deleted before a build succeeds, so a failed build cannot cost you the app.
 
+`dist\web_support` is refreshed by `tools\sync_web_support.py`, not by an `xcopy` line in
+the batch file: cmd.exe decodes a UTF-8 `.bat` in the OEM code page, so the Vietnamese
+name of the dead `Cục Quản Lý - Bản Đầy Đủ 1` duplicate never matched there and ~600 MB
+were copied into `dist` on every build. The tool skips that folder while copying (so it is
+never copied at all), prunes whatever an older build already left in `dist`, and drops
+stray `*.log` files. `tests/test_sync_web_support.py` pins both the skip list and the
+ASCII-only rule for `build_exe.bat`.
+
 > A `download_url` in `update.json` may be a local path (`"D:\\builds\\Mei.exe"`), a
 > `file:///…` URL, or an https link — all three work.
 
@@ -198,6 +208,7 @@ litebrowser/core/product.py  ← APP_VERSION + update channel + release asset na
 litebrowser/core/app_version.py ← re-exports product.py (older import sites)
 build_exe.bat                ← one-click PyInstaller exe build (prunes old builds)
 tools/write_local_update.py  ← write dist\update (serverless self-update channel)
+tools/sync_web_support.py    ← mirror web_support\ → dist\web_support (skips the dead legacy hub copy)
 create_desktop_shortcut.ps1 ← create an icon desktop shortcut
 installer.iss               ← Inno Setup: real installer (MeiSetup.exe)
 ```

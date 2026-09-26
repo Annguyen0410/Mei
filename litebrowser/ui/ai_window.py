@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from litebrowser.core import app_paths, prefs
+from litebrowser.core import app_paths, app_version, prefs
 from litebrowser.core import time_utils as _time_utils
 from litebrowser.services import (
     ai_service,
@@ -55,9 +55,11 @@ class AIWindow(QMainWindow):
         self._pending_screenshot_b64 = ""
         self._query_pending = False
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="litebrowser-ai")
-        # detect_ollama_models runs `ollama list` with a 2 s timeout on the
-        # GUI thread (v6.4 froze startup when Ollama was hung). Detect lazily
-        # on the AI executor; the combo default just needs it before first use.
+        # detect_ollama_models runs `ollama list` with a 2 s timeout on the GUI
+        # thread (v6.4 froze startup when Ollama was hung). Detect lazily on the
+        # AI executor; the combo default just needs it before first use. The probe
+        # itself is cached per process (services/ai_service.py), so the second AI
+        # window — Mei opens one per shell — reuses the first answer.
         self.ollama_models = []
 
         def _detect_models():
@@ -68,7 +70,7 @@ class AIWindow(QMainWindow):
             self._ollama_models_ready.emit(models)
 
         self._executor.submit(_detect_models)
-        self.setWindowTitle("AI Workspace - MeiBrowser")
+        self.setWindowTitle(f"AI Workspace - {app_version.APP_NAME}")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
         self.resize(1180, 780)
         self.setMinimumSize(760 if embedded else 880, 520 if embedded else 620)
@@ -219,7 +221,7 @@ class AIWindow(QMainWindow):
         body.setStretchFactor(2, 0)
         body.setSizes([180, 760, 220])
 
-        self.setStyleSheet(theme.main_qss(prefs.get_shell_theme(self.base_dir), prefs.get_accent(self.base_dir)))
+        self.setStyleSheet(theme.main_qss(prefs.resolved_auto_theme(self.base_dir), prefs.get_accent(self.base_dir)))
         self.btn_reindex.clicked.connect(self._reindex)
         self.btn_capture_screenshot.clicked.connect(self._capture_current_tab)
         self.btn_ask.clicked.connect(self._ask)

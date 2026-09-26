@@ -107,6 +107,31 @@ class TestAllowlistOnlyShrinks(unittest.TestCase):
         stale = sorted(QT5_ALLOWLIST - importers)
         self.assertEqual(stale, [], "these files no longer import PyQt5 — drop them from the allowlist")
 
+    def test_every_test_module_activates_the_shim_before_the_binding(self):
+        """A test that imports a Qt binding before ``litebrowser`` pins that import
+        to the runtime PyQt5 points at directly. When PyQt6 is installed the shim
+        then swaps the package to the *other* runtime, so the file ends up holding
+        two bindings at once - which crashes the interpreter (access violation, no
+        traceback) instead of failing one test.
+        """
+        offenders = []
+        tests_dir = os.path.join(ROOT, "tests")
+        for name in sorted(os.listdir(tests_dir)):
+            if not name.endswith(".py"):
+                continue
+            lines = open(os.path.join(tests_dir, name), encoding="utf-8-sig").read().splitlines()
+            first_shim = next(
+                (i for i, line in enumerate(lines) if line.startswith(("import litebrowser", "from litebrowser"))),
+                None,
+            )
+            first_binding = next(
+                (i for i, line in enumerate(lines) if line.startswith(("import PyQt5", "from PyQt5", "import PyQt6", "from PyQt6"))),
+                None,
+            )
+            if first_binding is not None and (first_shim is None or first_binding < first_shim):
+                offenders.append(f"tests/{name}:{first_binding + 1}")
+        self.assertEqual(offenders, [], "import litebrowser (activates the Qt shim) before the binding")
+
     def test_migration_is_actually_progressing(self):
         # Sanity: the allowlist is a migration list, not a permanent exemption.
         self.assertLess(len(QT5_ALLOWLIST), 30)

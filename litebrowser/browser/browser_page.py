@@ -367,7 +367,9 @@ def ensure_forced_dark_script(profile, enabled: bool, base_dir=None) -> None:
         # read/wrote the wrong profile's prefs).
         try:
             from litebrowser.core import prefs
-            enabled = prefs.get_force_dark_web(base_dir) if enabled is None else enabled
+            # effective_force_dark_web, not the raw flag: pages follow the shell's
+            # light/dark mode until the user sets the flag explicitly.
+            enabled = prefs.effective_force_dark_web(base_dir) if enabled is None else enabled
         except Exception:
             pass
     existing = None
@@ -758,7 +760,7 @@ class BrowserPage(QWebEnginePage):
         if self._base_dir:
             try:
                 from litebrowser.core import prefs as _prefs
-                ensure_forced_dark_script(profile, _prefs.get_force_dark_web(self._base_dir), self._base_dir)
+                ensure_forced_dark_script(profile, _prefs.effective_force_dark_web(self._base_dir), self._base_dir)
                 ensure_webgl_disable_script(profile, _prefs.get_disable_webgl(self._base_dir))
             except Exception:
                 pass

@@ -79,7 +79,8 @@ def create_weekly_review(base_dir: str) -> dict:
             top[domain] = top.get(domain, 0) + 1
     lines.append("## Pages visited (last 7 days)")
     days = ["6 days ago", "5 days ago", "4 days ago", "3 days ago", "2 days ago", "yesterday", "today"]
-    for label, count in zip(days, per_day):
+    # Pair the labels with whatever buckets exist rather than assuming seven.
+    for label, count in zip(days, per_day, strict=False):
         bar = "█" * min(24, count // 5 or (1 if count else 0))
         lines.append(f"- {label}: {count} {bar}")
     lines.append("")

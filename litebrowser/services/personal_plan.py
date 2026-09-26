@@ -12,10 +12,11 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from litebrowser.core import migrations
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.store import StoreSpec, read_store, store_path, write_store
 
-PLAN_VERSION = 1
+PLAN_VERSION = 2
 PLAN_FILENAME = "personal_plan.json"
 VALID_ITEM_KINDS = ("task", "assignment", "exam", "project", "study")
 VALID_PRIORITIES = ("low", "medium", "high", "urgent")
@@ -97,6 +98,15 @@ def _clean_minutes(value: Any, default: int = DEFAULT_DURATION_MINUTES) -> int:
     return max(5, min(24 * 60, minutes))
 
 
+def _clean_studied_minutes(value: Any) -> int:
+    """Minutes actually studied; unlike a planned duration, zero is valid."""
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        minutes = 0
+    return max(0, min(100_000, minutes))
+
+
 def _normalize_item(item: Any) -> dict | None:
     if not isinstance(item, dict):
         return None
@@ -131,6 +141,8 @@ def _normalize_item(item: Any) -> dict | None:
         "tags": _clean_tags(item.get("tags")),
         "recurrence": _clean_text(item.get("recurrence"), 80),
         "notes": _clean_text(item.get("notes"), MAX_NOTES_LENGTH),
+        "studied_minutes": _clean_studied_minutes(item.get("studied_minutes")),
+        "last_studied_at": _clean_text(item.get("last_studied_at"), 40),
         "completed": bool(item.get("completed", False)),
         "created_at": _clean_text(item.get("created_at"), 40) or now,
         "updated_at": now,
@@ -213,6 +225,18 @@ PLAN_STORE = StoreSpec(
     version=PLAN_VERSION,
     default=_default_plan,
 )
+
+
+@migrations.register(PLAN_FILENAME, from_version=1)
+def _plan_v1_to_v2(data: dict) -> dict:
+    """v2 adds per-item study credits: existing items start at zero minutes."""
+    items = data.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                item.setdefault("studied_minutes", 0)
+                item.setdefault("last_studied_at", "")
+    return data
 
 
 def _normalize_plan(data: Any) -> dict:
@@ -300,6 +324,8 @@ def complete_item(base_dir: str, item_id: str, completed: bool = True) -> dict |
 
 
 def delete_item(base_dir: str, item_id: str) -> bool:
+    from litebrowser.services import link_service
+
     with profile_locked(base_dir):
         plan = load_plan(base_dir)
         before = len(plan["items"])
@@ -308,7 +334,8 @@ def delete_item(base_dir: str, item_id: str) -> bool:
         if len(plan["items"]) == before:
             return False
         _persist_plan(base_dir, plan)
-        return True
+    link_service.delete_links_for(base_dir, "planner_item", item_id)
+    return True
 
 
 def create_course(base_dir: str, name: str, **fields) -> dict:
@@ -341,6 +368,8 @@ def update_course(base_dir: str, course_id: str, **changes) -> dict | None:
 
 
 def delete_course(base_dir: str, course_id: str) -> bool:
+    from litebrowser.services import link_service
+
     with profile_locked(base_dir):
         plan = load_plan(base_dir)
         before = len(plan["courses"])
@@ -354,7 +383,8 @@ def delete_course(base_dir: str, course_id: str) -> bool:
             if block.get("course_id") == course_id:
                 block["course_id"] = ""
         _persist_plan(base_dir, plan)
-        return True
+    link_service.delete_links_for(base_dir, "planner_course", course_id)
+    return True
 
 
 def create_time_block(base_dir: str, title: str, block_date: Any, start_minutes: int, **fields) -> dict:
@@ -393,6 +423,8 @@ def update_time_block(base_dir: str, block_id: str, **changes) -> dict | None:
 
 
 def delete_time_block(base_dir: str, block_id: str) -> bool:
+    from litebrowser.services import link_service
+
     with profile_locked(base_dir):
         plan = load_plan(base_dir)
         before = len(plan["time_blocks"])
@@ -400,7 +432,8 @@ def delete_time_block(base_dir: str, block_id: str) -> bool:
         if len(plan["time_blocks"]) == before:
             return False
         _persist_plan(base_dir, plan)
-        return True
+    link_service.delete_links_for(base_dir, "planner_block", block_id)
+    return True
 
 
 def items_for_week(base_dir: str, anchor: Any = None) -> dict:

@@ -479,4 +479,175 @@ def search_everything(base_dir: str, query: str):
     for page in load_saved_pages(base_dir):
         if q in (page.get("title") or "").lower() or q in (page.get("url") or "").lower():
             results.append({"kind": "saved-page", "title": page.get("title", ""), "id": page.get("id", ""), "subtitle": page.get("url", "")})
+
+    # The weekly planner and the flashcard deck live outside this module's own
+    # files, but they are user data too: search must reach them.
+    from litebrowser.services import flashcard_service, personal_plan
+
+    plan = personal_plan.load_plan(base_dir)
+    course_names = {
+        course.get("id", ""): course.get("name", "")
+        for course in plan.get("courses", [])
+        if isinstance(course, dict)
+    }
+    for course in plan.get("courses", []):
+        if q in (course.get("name") or "").lower() or q in (course.get("code") or "").lower():
+            results.append(
+                {
+                    "kind": "planner-course",
+                    "title": course.get("name", ""),
+                    "id": course.get("id", ""),
+                    "subtitle": course.get("code", "") or "course",
+                }
+            )
+    for item in plan.get("items", []):
+        haystack = " ".join(
+            [
+                item.get("title", ""),
+                item.get("notes", ""),
+                item.get("category", ""),
+                " ".join(item.get("tags", [])),
+            ]
+        ).lower()
+        if q in haystack:
+            when = item.get("due_date") or item.get("scheduled_date") or ""
+            course = course_names.get(item.get("course_id", ""), "")
+            results.append(
+                {
+                    "kind": "planner-item",
+                    "title": item.get("title", ""),
+                    "id": item.get("id", ""),
+                    "subtitle": " · ".join(
+                        part for part in (course, item.get("kind", ""), when) if part
+                    ),
+                }
+            )
+    for block in plan.get("time_blocks", []):
+        if q in (block.get("title") or "").lower():
+            course = course_names.get(block.get("course_id", ""), "")
+            results.append(
+                {
+                    "kind": "planner-block",
+                    "title": block.get("title", ""),
+                    "id": block.get("id", ""),
+                    "subtitle": " · ".join(part for part in (course, block.get("date", "")) if part),
+                }
+            )
+    for card in flashcard_service.load_cards(base_dir):
+        if q in (card.get("front") or "").lower() or q in (card.get("back") or "").lower():
+            results.append(
+                {
+                    "kind": "flashcard",
+                    "title": card.get("front", ""),
+                    "id": card.get("id", ""),
+                    "subtitle": (card.get("back", "") or "")[:80],
+                }
+            )
     return results[:50]
+
+
+def today_agenda(base_dir: str, day: str = "") -> dict:
+    """One day across both task systems.
+
+    The weekly planner is the source of truth for anything with a date or a
+    deadline; the legacy task list is the quick inbox. Home shows one merged
+    answer to "what is on my plate today?" — overdue entries first, then
+    anything with a start time, then the rest — instead of pretending only one
+    of the two systems exists.
+    """
+    from litebrowser.services import personal_plan
+
+    today_key = day or datetime.now().strftime("%Y-%m-%d")
+    items: list[dict] = []
+    for task in load_tasks(base_dir):
+        if task.get("completed") or task.get("archived"):
+            continue
+        due_at = int(task.get("due_at", 0) or 0)
+        due_key = datetime.fromtimestamp(due_at).strftime("%Y-%m-%d") if due_at else ""
+        bucket = (task.get("bucket") or "").strip().lower()
+        overdue = bool(due_key) and due_key < today_key
+        if not (due_key == today_key or overdue or (not due_key and bucket == "today")):
+            continue
+        items.append(
+            {
+                "kind": "task",
+                "id": task.get("id", ""),
+                "title": task.get("title", ""),
+                "source": "inbox",
+                "subtitle": due_key or task.get("bucket", ""),
+                "overdue": overdue,
+                "start_minutes": None,
+            }
+        )
+
+    plan = personal_plan.load_plan(base_dir)
+    course_names = {
+        course.get("id", ""): course.get("name", "")
+        for course in plan.get("courses", [])
+        if isinstance(course, dict)
+    }
+    for item in plan.get("items", []):
+        if item.get("completed"):
+            continue
+        scheduled = item.get("scheduled_date") or ""
+        due = item.get("due_date") or ""
+        when = scheduled or due
+        overdue = bool(due) and due < today_key
+        if not (when == today_key or due == today_key or overdue):
+            continue
+        course = course_names.get(item.get("course_id", ""), "")
+        subtitle = " · ".join(
+            part for part in (course, item.get("kind", ""), f"due {due}" if due else when) if part
+        )
+        items.append(
+            {
+                "kind": "planner-item",
+                "id": item.get("id", ""),
+                "title": item.get("title", ""),
+                "source": "planner",
+                "subtitle": subtitle,
+                "overdue": overdue,
+                "start_minutes": item.get("start_minutes"),
+            }
+        )
+    for block in plan.get("time_blocks", []):
+        if block.get("date") != today_key:
+            continue
+        start = int(block.get("start_minutes", 0) or 0)
+        course = course_names.get(block.get("course_id", ""), "")
+        items.append(
+            {
+                "kind": "planner-block",
+                "id": block.get("id", ""),
+                "title": block.get("title", ""),
+                "source": "planner",
+                "subtitle": " · ".join(
+                    part
+                    for part in (
+                        course,
+                        f"{start // 60:02d}:{start % 60:02d}",
+                        f"{int(block.get('duration_minutes', 0) or 0)}m",
+                    )
+                    if part
+                ),
+                "overdue": False,
+                "start_minutes": start,
+            }
+        )
+
+    items.sort(
+        key=lambda entry: (
+            0 if entry.get("overdue") else 1,
+            entry.get("start_minutes") if entry.get("start_minutes") is not None else 24 * 60,
+            entry.get("title", "").casefold(),
+        )
+    )
+    return {
+        "date": today_key,
+        "items": items,
+        "counts": {
+            "overdue": sum(1 for entry in items if entry.get("overdue")),
+            "planner": sum(1 for entry in items if entry.get("source") == "planner"),
+            "inbox": sum(1 for entry in items if entry.get("source") == "inbox"),
+        },
+    }

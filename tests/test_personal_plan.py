@@ -138,6 +138,27 @@ class TestPersonalPlan(unittest.TestCase):
         self.assertIn("_planner_sync_due_date", build_source)
         self.assertIn("Guide: choose a date", build_source)
 
+    def test_weekly_plan_manages_courses_from_the_desktop(self):
+        import inspect
+
+        from litebrowser.ui.personal_window import PersonalWindow
+
+        build_source = inspect.getsource(PersonalWindow._build_plan_page)
+        # The course manager and the pickers that replaced free-text category.
+        self.assertIn("btn_plan_course_add", build_source)
+        self.assertIn("plan_courses_list", build_source)
+        self.assertIn("cmb_plan_course", build_source)
+        self.assertIn("cmb_plan_block_course", build_source)
+        for method in (
+            "_planner_add_course",
+            "_planner_edit_course",
+            "_planner_delete_course",
+            "_planner_edit_block",
+            "_planner_course_fields",
+        ):
+            self.assertTrue(callable(getattr(PersonalWindow, method)), method)
+        self.assertNotIn("ed_plan_category", inspect.getsource(PersonalWindow))
+
 
 if __name__ == "__main__":
     unittest.main()

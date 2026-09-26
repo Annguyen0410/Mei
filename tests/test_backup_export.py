@@ -7,7 +7,7 @@ import zipfile
 from unittest import mock
 
 from litebrowser.core import prefs
-from litebrowser.services import history_service, personal_service
+from litebrowser.services import flashcard_service, history_service, personal_plan, personal_service
 
 
 class TestBackupExport(unittest.TestCase):
@@ -21,7 +21,7 @@ class TestBackupExport(unittest.TestCase):
     def test_export_includes_session_state_vault_files(self):
         personal_service.create_note(self.base, "T", "b", category="C")
         payload = history_service.export_profile_payload(self.base)
-        self.assertEqual(payload.get("backup_format_version"), 2)
+        self.assertEqual(payload.get("backup_format_version"), 3)
         self.assertIn("session_state", payload)
         self.assertIsInstance(payload["session_state"], dict)
         self.assertIn("tabs", payload["session_state"])
@@ -37,7 +37,7 @@ class TestBackupExport(unittest.TestCase):
             self.assertIn(history_service.PROFILE_ZIP_JSON_MEMBER, names)
             raw = zf.read(history_service.PROFILE_ZIP_JSON_MEMBER).decode("utf-8")
         data = json.loads(raw)
-        self.assertEqual(data.get("backup_format_version"), 3)
+        self.assertEqual(data.get("backup_format_version"), 4)
         self.assertEqual(data.get("backup_bundle"), "zip")
         self.assertEqual(data.get("vault_files"), [])
 
@@ -115,6 +115,45 @@ class TestBackupExport(unittest.TestCase):
 
         self.assertTrue(os.path.isfile(old_marker))
         self.assertFalse(os.path.exists(os.path.join(dest_data, "new.txt")))
+
+    def test_zip_roundtrip_restores_planner_and_flashcards(self):
+        course = personal_plan.create_course(self.base, "Giải tích", code="MA101")
+        personal_plan.create_item(
+            self.base, "Ôn chương 3", kind="assignment", course_id=course["id"], due_date="2026-10-01"
+        )
+        personal_plan.create_time_block(self.base, "Tự học", "2026-10-01", 540)
+        flashcard_service.add_card(self.base, "Đạo hàm của sin?", "cos")
+
+        zpath = os.path.join(self._tmp.name, "study.zip")
+        self.assertTrue(history_service.export_profile_to_zip(self.base, zpath))
+
+        dest = prefs.ensure_profile_layout(os.path.join(self._tmp.name, "profile-study"))
+        self.assertTrue(history_service.import_profile_from_path(dest, zpath))
+
+        plan = personal_plan.load_plan(dest)
+        self.assertEqual([item["title"] for item in plan["items"]], ["Ôn chương 3"])
+        self.assertEqual([course["name"] for course in plan["courses"]], ["Giải tích"])
+        self.assertEqual([block["title"] for block in plan["time_blocks"]], ["Tự học"])
+        self.assertEqual([card["front"] for card in flashcard_service.load_cards(dest)], ["Đạo hàm của sin?"])
+
+    def test_import_of_an_older_backup_keeps_existing_study_data(self):
+        """A v<=3 backup has no planner/flashcard keys; importing it must not
+        wipe the study data this build already has."""
+        personal_plan.create_item(self.base, "Keep me")
+        flashcard_service.add_card(self.base, "Q", "A")
+        payload = history_service.export_profile_payload(self.base)
+        payload.pop("personal_plan")
+        payload.pop("flashcards")
+
+        dest = prefs.ensure_profile_layout(os.path.join(self._tmp.name, "profile-old"))
+        personal_plan.create_item(dest, "Survives")
+        flashcard_service.add_card(dest, "Old", "Card")
+        self.assertTrue(history_service.import_profile_payload(dest, payload))
+
+        self.assertEqual(
+            [item["title"] for item in personal_plan.load_plan(dest)["items"]], ["Survives"]
+        )
+        self.assertEqual([card["front"] for card in flashcard_service.load_cards(dest)], ["Old"])
 
     def test_import_rejects_path_traversal_note_ids(self):
         """A crafted backup must not write outside the notes dir (v6.5 fix)."""

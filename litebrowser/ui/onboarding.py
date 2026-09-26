@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from litebrowser.core import prefs
+from litebrowser.core import app_version, prefs
 from litebrowser.ui import theme
 from litebrowser.ui.dialogs.common import _stylesheet
 
@@ -50,7 +50,7 @@ def show_onboarding(shell) -> None:
     if prefs.get_pref(shell.profile_dir, "onboarding_done", False):
         return
     dlg = QDialog(shell)
-    dlg.setWindowTitle("Welcome to MeiBrowser — setup")
+    dlg.setWindowTitle(f"Welcome to {app_version.APP_NAME} — setup")
     dlg.resize(620, 480)
     dlg.setStyleSheet(_stylesheet(shell))
     layout = QVBoxLayout(dlg)

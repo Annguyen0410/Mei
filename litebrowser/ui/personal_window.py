@@ -53,9 +53,11 @@ from PyQt5.QtWidgets import (
     QButtonGroup,
     QCalendarWidget,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QCompleter,
     QDateEdit,
+    QDialog,
     QFileDialog,
     QFrame,
     QGraphicsPathItem,
@@ -89,12 +91,15 @@ from litebrowser.browser.browser_page import (
     ensure_chrome_compat_script,
     ensure_text_highlight_script,
 )
-from litebrowser.core import app_paths, prefs
+from litebrowser.core import app_paths, app_version, prefs
 from litebrowser.services import (
     focus_service,
     life_service,
+    link_service,
     personal_plan,
     personal_service,
+    study_flow,
+    study_session,
     tab_sets,
 )
 from litebrowser.ui import components, theme, win_titlebar
@@ -302,7 +307,7 @@ class NeuralGraphWidget(QWidget):
         else:
             self._subtitle = f"{self._total_note_count} notes · type [[ to link"
         if not self._nodes:
-            for idx in range(10):
+            for _idx in range(10):
                 self._nodes.append(
                     {
                         "phase": random.uniform(0.0, math.pi * 2.0),
@@ -620,6 +625,134 @@ class PlannerDayList(QListWidget):
             event.ignore()
 
 
+class _CourseDialog(QDialog):
+    """Create/edit form for a planner course (name, code, color, schedule, credits)."""
+
+    def __init__(self, parent=None, course: dict | None = None):
+        super().__init__(parent)
+        course = course or {}
+        self.setWindowTitle(f"Course - {app_version.APP_NAME}")
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+
+        self.ed_name = QLineEdit(course.get("name", ""))
+        self.ed_name.setPlaceholderText("Course name")
+        self.ed_code = QLineEdit(course.get("code", ""))
+        self.ed_code.setPlaceholderText("e.g. MA101")
+        self.ed_schedule = QLineEdit(course.get("schedule", ""))
+        self.ed_schedule.setPlaceholderText("e.g. Tue 09:00 · Room B2")
+        self.ed_credits = QLineEdit(course.get("credits", ""))
+        self.ed_credits.setPlaceholderText("e.g. 3")
+        self.ed_color = QLineEdit(course.get("color", "#c39d63"))
+        self.btn_color = QPushButton("Pick…")
+        self.btn_color.clicked.connect(self._pick_color)
+        color_row = QHBoxLayout()
+        color_row.addWidget(self.ed_color, 1)
+        color_row.addWidget(self.btn_color)
+        color_holder = QWidget()
+        color_holder.setLayout(color_row)
+
+        for label_text, widget in (
+            ("Name", self.ed_name),
+            ("Code", self.ed_code),
+            ("Schedule", self.ed_schedule),
+            ("Credits", self.ed_credits),
+            ("Color", color_holder),
+        ):
+            row = QHBoxLayout()
+            label = QLabel(label_text)
+            label.setMinimumWidth(70)
+            row.addWidget(label)
+            row.addWidget(widget, 1)
+            layout.addLayout(row)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        btn_save = QPushButton("Save")
+        btn_save.clicked.connect(self.accept)
+        buttons.addWidget(btn_cancel)
+        buttons.addWidget(btn_save)
+        layout.addLayout(buttons)
+
+    def _pick_color(self):
+        chosen = QColorDialog.getColor(
+            QColor(self.ed_color.text().strip() or "#c39d63"), self, "Course color"
+        )
+        if chosen.isValid():
+            self.ed_color.setText(chosen.name())
+
+    def values(self) -> dict:
+        return {
+            "name": self.ed_name.text().strip(),
+            "code": self.ed_code.text().strip(),
+            "schedule": self.ed_schedule.text().strip(),
+            "credits": self.ed_credits.text().strip(),
+            "color": self.ed_color.text().strip() or "#c39d63",
+        }
+
+
+class _BlockDialog(QDialog):
+    """Edit a planner time block: title, start, duration, optional course."""
+
+    def __init__(self, parent=None, block: dict | None = None, courses: list | None = None):
+        super().__init__(parent)
+        block = block or {}
+        courses = courses or []
+        self.setWindowTitle(f"Time block - {app_version.APP_NAME}")
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+
+        self.ed_title = QLineEdit(block.get("title", ""))
+        self.ed_title.setPlaceholderText("Study block title")
+        self.spin_start = QSpinBox()
+        self.spin_start.setRange(0, 1439)
+        self.spin_start.setValue(int(block.get("start_minutes", 540) or 0))
+        self.spin_start.setSuffix(" start min")
+        self.spin_duration = QSpinBox()
+        self.spin_duration.setRange(5, 1440)
+        self.spin_duration.setValue(int(block.get("duration_minutes", 50) or 50))
+        self.spin_duration.setSuffix(" min")
+        self.cmb_course = QComboBox()
+        self.cmb_course.addItem("— No course —", "")
+        for course in courses:
+            self.cmb_course.addItem(course.get("name", ""), course.get("id", ""))
+        index = self.cmb_course.findData(block.get("course_id", "") or "")
+        self.cmb_course.setCurrentIndex(max(0, index))
+
+        for label_text, widget in (
+            ("Title", self.ed_title),
+            ("Start", self.spin_start),
+            ("Duration", self.spin_duration),
+            ("Course", self.cmb_course),
+        ):
+            row = QHBoxLayout()
+            label = QLabel(label_text)
+            label.setMinimumWidth(70)
+            row.addWidget(label)
+            row.addWidget(widget, 1)
+            layout.addLayout(row)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        btn_save = QPushButton("Save")
+        btn_save.clicked.connect(self.accept)
+        buttons.addWidget(btn_cancel)
+        buttons.addWidget(btn_save)
+        layout.addLayout(buttons)
+
+    def values(self) -> dict:
+        return {
+            "title": self.ed_title.text().strip(),
+            "start_minutes": self.spin_start.value(),
+            "duration_minutes": self.spin_duration.value(),
+            "course_id": self.cmb_course.currentData() or "",
+        }
+
+
 class PersonalWindow(QMainWindow):
     def __init__(self, base_dir: str, app_dir: str = None, embedded: bool = False):
         super().__init__()
@@ -636,7 +769,7 @@ class PersonalWindow(QMainWindow):
         self._drag_note_ids = []
         self._current_note_image_path = ""
         self._note_find_matches = []
-        self.setWindowTitle("Personal Hub - MeiBrowser")
+        self.setWindowTitle(f"Personal Hub - {app_version.APP_NAME}")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
         self.resize(1160, 760)
         self.setMinimumSize(760 if embedded else 900, 520 if embedded else 620)
@@ -729,7 +862,7 @@ class PersonalWindow(QMainWindow):
 
         self.btn_set_root.clicked.connect(self._choose_root)
         self.btn_save_set.clicked.connect(self.save_current_set)
-        self.setStyleSheet(theme.main_qss(prefs.get_shell_theme(self.base_dir), prefs.get_accent(self.base_dir)))
+        self.setStyleSheet(theme.main_qss(prefs.resolved_auto_theme(self.base_dir), prefs.get_accent(self.base_dir)))
         self._switch_page("overview")
         self.refresh_all()
         self._apply_compact_layout()
@@ -1157,6 +1290,23 @@ class PersonalWindow(QMainWindow):
         self.lbl_backlinks.setTextFormat(Qt.RichText)
         self.lbl_backlinks.hide()
         editor_layout.addWidget(self.lbl_backlinks)
+        # Entity links: note <-> planner item / card / page, stored once in
+        # entity_links.json so both directions always agree.
+        self.links_list = QListWidget()
+        self.links_list.setObjectName("CafeList")
+        self.links_list.setMaximumHeight(84)
+        self.links_list.setToolTip("Links between this note and planner items, cards, or pages")
+        self.links_list.hide()
+        editor_layout.addWidget(self.links_list)
+        links_row = QHBoxLayout()
+        self.btn_note_link_add = QPushButton("🔗 Link…")
+        self.btn_note_link_add.setToolTip("Link this note to a planner item")
+        self.btn_note_link_remove = QPushButton("Unlink")
+        self.btn_note_link_remove.setToolTip("Remove the selected link")
+        links_row.addWidget(self.btn_note_link_add)
+        links_row.addWidget(self.btn_note_link_remove)
+        links_row.addStretch(1)
+        editor_layout.addLayout(links_row)
         # Click a [[wiki-link]] in the editor (Ctrl+click safer than plain):
         self.note_editor.mousePressEvent = self._note_mouse_press  # type: ignore[assignment]
         split.addWidget(editor_wrap)
@@ -1179,6 +1329,9 @@ class PersonalWindow(QMainWindow):
         self.btn_save_note.clicked.connect(self._save_note)
         self.btn_note_ai.clicked.connect(self._ask_ai_about_note)
         self.btn_note_flash.clicked.connect(self._make_flashcard_from_selection)
+        self.btn_note_link_add.clicked.connect(self._add_note_link)
+        self.btn_note_link_remove.clicked.connect(self._remove_note_link)
+        self.links_list.itemDoubleClicked.connect(self._open_entity_link)
         self.note_editor.textChanged.connect(self._on_note_text_changed)
         self._note_idle_timer = QTimer(self)
         self._note_idle_timer.setSingleShot(True)
@@ -1452,6 +1605,99 @@ class PersonalWindow(QMainWindow):
             self.lbl_backlinks.show()
         else:
             self.lbl_backlinks.hide()
+        self._refresh_entity_links()
+
+    def _link_title(self, entity_type: str, entity_id: str) -> str:
+        """Human title for one side of an entity link."""
+        if entity_type == "note":
+            for note in personal_service.list_notes(self.base_dir):
+                if note.get("id") == entity_id:
+                    return note.get("title", "")
+        elif entity_type == "planner_item":
+            for item in personal_plan.load_plan(self.base_dir)["items"]:
+                if item.get("id") == entity_id:
+                    return item.get("title", "")
+        elif entity_type == "planner_block":
+            for block in personal_plan.load_plan(self.base_dir)["time_blocks"]:
+                if block.get("id") == entity_id:
+                    return block.get("title", "")
+        elif entity_type == "flashcard":
+            from litebrowser.services import flashcard_service
+
+            for card in flashcard_service.load_cards(self.base_dir):
+                if card.get("id") == entity_id:
+                    return card.get("front", "")
+        return f"{entity_type} · {entity_id[:8]}"
+
+    def _refresh_entity_links(self):
+        if not hasattr(self, "links_list"):
+            return
+        self.links_list.clear()
+        if not self.current_note_id:
+            self.links_list.hide()
+            return
+        related = link_service.links_for(self.base_dir, "note", self.current_note_id)
+        entries = [(link, link["to_type"], link["to_id"]) for link in related["outgoing"]]
+        entries += [(link, link["from_type"], link["from_id"]) for link in related["incoming"]]
+        for link, entity_type, entity_id in entries:
+            row = QListWidgetItem(f"🔗 {self._link_title(entity_type, entity_id)} · {entity_type}")
+            row.setData(
+                Qt.UserRole,
+                {"link_id": link.get("id", ""), "kind": entity_type, "id": entity_id},
+            )
+            row.setToolTip("Double-click to open; select and choose Unlink to remove")
+            self.links_list.addItem(row)
+        self.links_list.setVisible(self.links_list.count() > 0)
+
+    def _add_note_link(self):
+        """Link the open note to a planner item (the study side of the graph)."""
+        if not self.current_note_id:
+            QMessageBox.information(self, "Links", "Open a note first.")
+            return
+        plan = personal_plan.load_plan(self.base_dir)
+        items = plan["items"]
+        if not items:
+            QMessageBox.information(
+                self, "Links", "No planner items yet — add one on the Weekly Plan page."
+            )
+            return
+        course_names = {
+            course.get("id", ""): course.get("name", "") for course in plan["courses"]
+        }
+        labels = []
+        for item in items:
+            course = course_names.get(item.get("course_id", ""), "")
+            labels.append(item.get("title", "") + (f" · {course}" if course else ""))
+        choice, ok = QInputDialog.getItem(
+            self, "Link note", "Link this note to a planner item", labels, 0, False
+        )
+        if not ok:
+            return
+        target = items[labels.index(choice)]
+        link_service.add_link(
+            self.base_dir, "note", self.current_note_id, "planner_item", target.get("id", "")
+        )
+        self._refresh_entity_links()
+
+    def _remove_note_link(self):
+        row = self.links_list.currentItem() if hasattr(self, "links_list") else None
+        data = row.data(Qt.UserRole) if row is not None else {}
+        if not data:
+            QMessageBox.information(self, "Links", "Select a link to remove.")
+            return
+        link_service.remove_link(self.base_dir, data.get("link_id", ""))
+        self._refresh_entity_links()
+
+    def _open_entity_link(self, row: QListWidgetItem):
+        data = row.data(Qt.UserRole) or {}
+        kind = data.get("kind", "")
+        entity_id = data.get("id", "")
+        if kind == "note":
+            self.select_note(entity_id)
+        elif kind == "planner_item":
+            self.open_plan_item(entity_id)
+        elif kind == "flashcard":
+            self.open_flashcard(entity_id)
 
     def _note_mouse_press(self, event):
         """Ctrl+click on a [[wiki-link]] opens that note (creates it if missing)."""
@@ -2074,7 +2320,11 @@ class PersonalWindow(QMainWindow):
         """Entry point for the notes page ('Make flashcard' on selection)."""
         from litebrowser.services import flashcard_service
 
-        flashcard_service.add_card(self.base_dir, front, back, source_note_id=note_id)
+        card = flashcard_service.add_card(self.base_dir, front, back, source_note_id=note_id)
+        if note_id and card:
+            # Make the card's source explicit in the link graph too, so the
+            # note's Related panel lists it and deleting either side cascades.
+            link_service.add_link(self.base_dir, "flashcard", card["id"], "note", note_id)
         self._flash(f"Card added — {stats_text(flashcard_service.stats(self.base_dir))}")
 
     def _build_plan_page(self):
@@ -2116,8 +2366,8 @@ class PersonalWindow(QMainWindow):
         self.ed_plan_due.dateChanged.connect(self._planner_due_date_edited)
         self.cmb_plan_priority = QComboBox()
         self.cmb_plan_priority.addItems(["low", "medium", "high", "urgent"])
-        self.ed_plan_category = QLineEdit()
-        self.ed_plan_category.setPlaceholderText("Category")
+        self.cmb_plan_course = QComboBox()
+        self.cmb_plan_course.setToolTip("Tag the item with the course it belongs to")
         self.spin_plan_duration = QSpinBox()
         self.spin_plan_duration.setRange(5, 1440)
         self.spin_plan_duration.setValue(personal_plan.DEFAULT_DURATION_MINUTES)
@@ -2126,14 +2376,19 @@ class PersonalWindow(QMainWindow):
         self.btn_plan_add.setToolTip("Create the item and show it on its planned day")
         self.btn_plan_delete = QPushButton("Delete selected")
         self.btn_plan_delete.setToolTip("Delete the selected planner item or focus block")
+        self.btn_plan_study = QPushButton("▶ Study")
+        self.btn_plan_study.setToolTip(
+            "Pour a focus session for the selected item or block; the minutes are credited back"
+        )
         form.addWidget(self.ed_plan_title, 2)
         form.addWidget(self.cmb_plan_kind)
         form.addWidget(self.ed_plan_date)
         form.addWidget(self.ed_plan_due)
         form.addWidget(self.cmb_plan_priority)
-        form.addWidget(self.ed_plan_category, 1)
+        form.addWidget(self.cmb_plan_course, 1)
         form.addWidget(self.spin_plan_duration)
         form.addWidget(self.btn_plan_add)
+        form.addWidget(self.btn_plan_study)
         form.addWidget(self.btn_plan_delete)
         l.addLayout(form)
 
@@ -2148,15 +2403,44 @@ class PersonalWindow(QMainWindow):
         self.spin_plan_block_duration.setRange(5, 1440)
         self.spin_plan_block_duration.setValue(50)
         self.spin_plan_block_duration.setSuffix(" block min")
+        self.cmb_plan_block_course = QComboBox()
+        self.cmb_plan_block_course.setToolTip("Optional course for this focus block")
         self.btn_plan_add_block = QPushButton("Add time block")
         self.btn_plan_add_block.setToolTip("Add a focused study block to the selected planned day")
         block_form.addWidget(QLabel("Focus block"))
         block_form.addWidget(self.ed_plan_block_title, 2)
         block_form.addWidget(self.spin_plan_block_start)
         block_form.addWidget(self.spin_plan_block_duration)
+        block_form.addWidget(self.cmb_plan_block_course)
         block_form.addWidget(self.btn_plan_add_block)
         block_form.addStretch(1)
         l.addLayout(block_form)
+
+        courses_card = QFrame()
+        courses_card.setObjectName("SectionCard")
+        courses_layout = QVBoxLayout(courses_card)
+        courses_layout.setContentsMargins(8, 6, 8, 6)
+        courses_layout.setSpacing(4)
+        courses_header = QHBoxLayout()
+        courses_header.addWidget(
+            components.section_header("Courses", "Give every item and block a course to belong to")
+        )
+        courses_header.addStretch(1)
+        self.btn_plan_course_add = QPushButton("＋ Course")
+        self.btn_plan_course_edit = QPushButton("Edit")
+        self.btn_plan_course_edit.setToolTip("Edit the selected course")
+        self.btn_plan_course_delete = QPushButton("Delete")
+        self.btn_plan_course_delete.setToolTip("Delete the selected course; its items are kept, just detached")
+        courses_header.addWidget(self.btn_plan_course_add)
+        courses_header.addWidget(self.btn_plan_course_edit)
+        courses_header.addWidget(self.btn_plan_course_delete)
+        courses_layout.addLayout(courses_header)
+        self.plan_courses_list = QListWidget()
+        self.plan_courses_list.setObjectName("CafeList")
+        self.plan_courses_list.setMaximumHeight(72)
+        self.plan_courses_list.setToolTip("Double-click a course to edit it")
+        courses_layout.addWidget(self.plan_courses_list)
+        l.addWidget(courses_card)
 
         self.lbl_plan_guide = QLabel(
             "Guide: choose a date, add an item, tick it when complete, drag it to reschedule, or select it and delete it."
@@ -2164,6 +2448,10 @@ class PersonalWindow(QMainWindow):
         self.lbl_plan_guide.setObjectName("MutedLabel")
         self.lbl_plan_guide.setWordWrap(True)
         l.addWidget(self.lbl_plan_guide)
+        self.lbl_plan_study = QLabel("")
+        self.lbl_plan_study.setObjectName("MutedLabel")
+        self.lbl_plan_study.setWordWrap(True)
+        l.addWidget(self.lbl_plan_study)
         self.lbl_plan_summary = QLabel("")
         self.lbl_plan_summary.setObjectName("MutedLabel")
         l.addWidget(self.lbl_plan_summary)
@@ -2184,6 +2472,7 @@ class PersonalWindow(QMainWindow):
             day_list = PlannerDayList(self, "", card)
             day_list.setObjectName("CafeList")
             day_list.itemClicked.connect(self._planner_item_clicked)
+            day_list.itemDoubleClicked.connect(self._planner_edit_clicked)
             card_layout.addWidget(day_label)
             card_layout.addWidget(day_list, 1)
             columns.addWidget(card, 1)
@@ -2199,6 +2488,11 @@ class PersonalWindow(QMainWindow):
         self.btn_plan_add.clicked.connect(self._planner_add_item)
         self.btn_plan_add_block.clicked.connect(self._planner_add_block)
         self.btn_plan_delete.clicked.connect(self._planner_delete_selected)
+        self.btn_plan_study.clicked.connect(self._planner_study_selected)
+        self.btn_plan_course_add.clicked.connect(self._planner_add_course)
+        self.btn_plan_course_edit.clicked.connect(self._planner_edit_course)
+        self.btn_plan_course_delete.clicked.connect(self._planner_delete_course)
+        self.plan_courses_list.itemDoubleClicked.connect(lambda _row: self._planner_edit_course())
         self._refresh_plan()
         return w
 
@@ -2227,6 +2521,7 @@ class PersonalWindow(QMainWindow):
             return
         scheduled = self.ed_plan_date.date().toString("yyyy-MM-dd")
         due = self.ed_plan_due.date().toString("yyyy-MM-dd")
+        course = self._planner_course_fields(self.cmb_plan_course)
         try:
             personal_plan.create_item(
                 self.base_dir,
@@ -2235,7 +2530,8 @@ class PersonalWindow(QMainWindow):
                 scheduled_date=scheduled,
                 due_date=due,
                 priority=self.cmb_plan_priority.currentText(),
-                category=self.ed_plan_category.text().strip() or "General",
+                category=course["category"],
+                course_id=course["course_id"],
                 duration_minutes=self.spin_plan_duration.value(),
             )
         except ValueError:
@@ -2250,6 +2546,7 @@ class PersonalWindow(QMainWindow):
         title = self.ed_plan_block_title.text().strip()
         if not title:
             return
+        course = self._planner_course_fields(self.cmb_plan_block_course)
         try:
             personal_plan.create_time_block(
                 self.base_dir,
@@ -2257,6 +2554,8 @@ class PersonalWindow(QMainWindow):
                 self.ed_plan_date.date().toString("yyyy-MM-dd"),
                 self.spin_plan_block_start.value(),
                 duration_minutes=self.spin_plan_block_duration.value(),
+                course_id=course["course_id"],
+                color=course["color"],
             )
         except ValueError:
             return
@@ -2271,13 +2570,29 @@ class PersonalWindow(QMainWindow):
         self._refresh_overview()
         return True
 
-    def _planner_delete_selected(self):
-        selected_id = ""
+    def _planner_selected_id(self) -> str:
         for _label, day_list in self.plan_day_lists.values():
             row = day_list.currentItem()
             if row is not None:
-                selected_id = str(row.data(Qt.UserRole) or "")
-                break
+                return str(row.data(Qt.UserRole) or "")
+        return ""
+
+    def _planner_study_selected(self):
+        """Start a study pour from the selected item/block (minutes get credited)."""
+        selected_id = self._planner_selected_id()
+        if not selected_id:
+            QMessageBox.information(self, "Study", "Select a planner item or focus block first.")
+            return
+        if selected_id.startswith("block:"):
+            session = study_session.start_for_block(self.base_dir, selected_id[6:])
+        else:
+            session = study_session.start_for_item(self.base_dir, selected_id)
+        if session is None:
+            return
+        self._refresh_plan()
+
+    def _planner_delete_selected(self):
+        selected_id = self._planner_selected_id()
         if not selected_id:
             return
         if selected_id.startswith("block:"):
@@ -2287,6 +2602,124 @@ class PersonalWindow(QMainWindow):
         if deleted:
             self._refresh_plan()
             self._refresh_overview()
+
+    def _planner_edit_clicked(self, row: QListWidgetItem):
+        entry_id = str(row.data(Qt.UserRole) or "")
+        if entry_id.startswith("block:"):
+            self._planner_edit_block(entry_id[6:])
+
+    def _planner_edit_block(self, block_id: str):
+        plan = personal_plan.load_plan(self.base_dir)
+        block = next((entry for entry in plan["time_blocks"] if entry.get("id") == block_id), None)
+        if block is None:
+            return
+        dialog = _BlockDialog(self, block, plan["courses"])
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        values = dialog.values()
+        if not values["title"]:
+            return
+        personal_plan.update_time_block(self.base_dir, block_id, **values)
+        self._refresh_plan()
+
+    def _planner_course_fields(self, combo: QComboBox) -> dict:
+        """Course picker -> the fields create_item/create_time_block want."""
+        course_id = combo.currentData() or ""
+        for course in personal_plan.load_plan(self.base_dir)["courses"]:
+            if course.get("id") == course_id:
+                return {
+                    "course_id": course_id,
+                    "color": course.get("color") or "#c39d63",
+                    "category": course.get("name") or "General",
+                }
+        return {"course_id": "", "color": "#c39d63", "category": "General"}
+
+    def _refresh_plan_courses(self, courses: list):
+        if not hasattr(self, "plan_courses_list"):
+            return
+        self.plan_courses_list.clear()
+        for course in courses:
+            label = course.get("name", "")
+            if course.get("code"):
+                label += f" · {course['code']}"
+            row = QListWidgetItem(label)
+            row.setData(Qt.UserRole, course.get("id", ""))
+            if course.get("color"):
+                row.setForeground(QColor(course["color"]))
+            self.plan_courses_list.addItem(row)
+        for combo in (self.cmb_plan_course, self.cmb_plan_block_course):
+            keep = combo.currentData() or ""
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("— No course —", "")
+            for course in courses:
+                combo.addItem(course.get("name", ""), course.get("id", ""))
+            index = combo.findData(keep)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+            combo.blockSignals(False)
+
+    def _selected_course(self):
+        row = self.plan_courses_list.currentItem()
+        course_id = str(row.data(Qt.UserRole) or "") if row is not None else ""
+        if not course_id:
+            return None
+        return next(
+            (
+                course
+                for course in personal_plan.load_plan(self.base_dir)["courses"]
+                if course.get("id") == course_id
+            ),
+            None,
+        )
+
+    def _planner_add_course(self):
+        dialog = _CourseDialog(self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        values = dialog.values()
+        if not values["name"]:
+            return
+        personal_plan.create_course(
+            self.base_dir,
+            values["name"],
+            code=values["code"],
+            color=values["color"],
+            schedule=values["schedule"],
+            credits=values["credits"],
+        )
+        self._refresh_plan()
+        self._refresh_overview()
+
+    def _planner_edit_course(self):
+        course = self._selected_course()
+        if course is None:
+            QMessageBox.information(self, "Courses", "Select a course first.")
+            return
+        dialog = _CourseDialog(self, course)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        values = dialog.values()
+        if not values["name"]:
+            return
+        personal_plan.update_course(self.base_dir, course["id"], **values)
+        self._refresh_plan()
+
+    def _planner_delete_course(self):
+        course = self._selected_course()
+        if course is None:
+            QMessageBox.information(self, "Courses", "Select a course first.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Delete course",
+            f"Delete “{course.get('name', '')}”?\n\nIts items and time blocks are kept — they are just detached.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        personal_plan.delete_course(self.base_dir, course["id"])
+        self._refresh_plan()
+        self._refresh_overview()
 
     def _planner_item_clicked(self, row: QListWidgetItem):
         item_id = row.data(Qt.UserRole)
@@ -2306,7 +2739,9 @@ class PersonalWindow(QMainWindow):
     def _refresh_plan(self):
         if not hasattr(self, "plan_day_lists"):
             return
+        credited = study_session.credit_pending(self.base_dir)
         week = personal_plan.items_for_week(self.base_dir, self._planner_week_start)
+        self._refresh_plan_courses(week["courses"])
         start = QDate.fromString(week["week_start"], "yyyy-MM-dd")
         self.lbl_plan_week.setText(f"{week['week_start']} → {week['week_end']}")
         completed = sum(1 for item in week["items"] if item.get("completed"))
@@ -2320,6 +2755,15 @@ class PersonalWindow(QMainWindow):
             day_list.day_key = day_key
             day_list.clear()
         course_names = {course.get("id"): course.get("name") for course in week["courses"]}
+        course_colors = {course.get("id"): course.get("color", "") for course in week["courses"]}
+        link_counts: dict[str, int] = {}
+        for link in link_service.load_links(self.base_dir):
+            for entity_type, entity_id in (
+                (link["from_type"], link["from_id"]),
+                (link["to_type"], link["to_id"]),
+            ):
+                if entity_type == "planner_item":
+                    link_counts[entity_id] = link_counts.get(entity_id, 0) + 1
         for item in week["items"]:
             day_key = item.get("scheduled_date") or item.get("due_date") or ""
             if not (week["week_start"] <= day_key <= week["week_end"]):
@@ -2327,16 +2771,25 @@ class PersonalWindow(QMainWindow):
             offset = start.daysTo(QDate.fromString(day_key, "yyyy-MM-dd"))
             if offset not in self.plan_day_lists:
                 continue
-            row = QListWidgetItem(f"[{item.get('kind', 'task')}] {item.get('title', '')}")
+            label = f"[{item.get('kind', 'task')}] {item.get('title', '')}"
+            if course_names.get(item.get("course_id")):
+                label = "● " + label
+            row = QListWidgetItem(label)
             row.setData(Qt.UserRole, item.get("id", ""))
             row.setFlags(row.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
             row.setCheckState(Qt.Checked if item.get("completed") else Qt.Unchecked)
+            if course_colors.get(item.get("course_id")):
+                row.setForeground(QColor(course_colors[item.get("course_id")]))
             course = course_names.get(item.get("course_id"))
             details = f"{item.get('priority', 'medium')} · {item.get('category', 'General')}"
             if course:
                 details += f" · {course}"
             if item.get("due_date"):
                 details += f" · due {item['due_date']}"
+            if int(item.get("studied_minutes", 0) or 0):
+                details += f" · studied {item['studied_minutes']}m"
+            if link_counts.get(item.get("id", "")):
+                details += f" · 🔗 {link_counts[item['id']]}"
             row.setToolTip(details)
             self.plan_day_lists[offset][1].addItem(row)
         blocks_by_day = {}
@@ -2351,8 +2804,34 @@ class PersonalWindow(QMainWindow):
                 row = QListWidgetItem(f"◷ {block.get('title', '')} · {block.get('duration_minutes', 0)}m")
                 row.setData(Qt.UserRole, f"block:{block.get('id', '')}")
                 row.setFlags(Qt.ItemIsEnabled)
-                row.setToolTip("Focus block")
+                row.setToolTip("Focus block — double-click to edit")
+                if course_colors.get(block.get("course_id")):
+                    row.setForeground(QColor(course_colors[block.get("course_id")]))
                 day_list.addItem(row)
+
+        active = study_session.active_session(self.base_dir)
+        # Only when a pour is live or was just credited does the planner ask the
+        # loop what comes next (build_flow reads every store; not a hot-path call).
+        hint = ""
+        if active["running"] or credited["credited"]:
+            action = study_flow.build_flow(self.base_dir).get("next") or {}
+            if action and action.get("step") != "study":
+                hint = f" · next: {action.get('label', '')}"
+        if active["running"]:
+            remaining = int(active.get("remaining", 0) or 0)
+            clock = f"{remaining // 60}m {remaining % 60:02d}s"
+            item = active.get("item") or {}
+            target = f" “{item.get('title', '')}”" if item else ""
+            self.lbl_plan_study.setText(
+                f"▶ Studying{target} — {clock} left · {active['cards_due']} card(s) due{hint}"
+            )
+        elif credited["credited"]:
+            self.lbl_plan_study.setText(
+                f"✓ Study credited — {credited['minutes']} min · {credited['cards_due']} card(s) "
+                f"due{hint} (open Review with /review)"
+            )
+        else:
+            self.lbl_plan_study.setText("")
 
     def _build_tasks_page(self):
         w = QWidget()
@@ -3421,6 +3900,70 @@ class PersonalWindow(QMainWindow):
         if hasattr(win, "switch_workspace") and hasattr(win, "browser_page"):
             return win
         return None
+
+    def open_plan_item(self, item_id: str):
+        """Open the Weekly Plan on an item's week and highlight its row."""
+        plan = personal_plan.load_plan(self.base_dir)
+        target = next((item for item in plan["items"] if item.get("id") == item_id), None)
+        if target is None:
+            return
+        anchor = target.get("scheduled_date") or target.get("due_date") or ""
+        if anchor:
+            self._planner_week_start = personal_plan.week_key(anchor)
+        self._switch_page("plan")
+        self._refresh_plan()
+        for _label, day_list in self.plan_day_lists.values():
+            for index in range(day_list.count()):
+                row = day_list.item(index)
+                if str(row.data(Qt.UserRole) or "") == item_id:
+                    day_list.setCurrentItem(row)
+                    day_list.scrollToItem(row)
+                    return
+
+    def open_plan_block(self, block_id: str):
+        """Open the Weekly Plan on a time block's week and highlight it."""
+        plan = personal_plan.load_plan(self.base_dir)
+        target = next((block for block in plan["time_blocks"] if block.get("id") == block_id), None)
+        if target is None:
+            return
+        anchor = target.get("date") or ""
+        if anchor:
+            self._planner_week_start = personal_plan.week_key(anchor)
+        self._switch_page("plan")
+        self._refresh_plan()
+        tag = f"block:{block_id}"
+        for _label, day_list in self.plan_day_lists.values():
+            for index in range(day_list.count()):
+                row = day_list.item(index)
+                if str(row.data(Qt.UserRole) or "") == tag:
+                    day_list.setCurrentItem(row)
+                    day_list.scrollToItem(row)
+                    return
+
+    def open_plan_course(self, course_id: str):
+        """Open the Weekly Plan on a course row (row list ships with the course UI)."""
+        self._switch_page("plan")
+        course_list = getattr(self, "plan_courses_list", None)
+        if course_list is None:
+            return
+        for index in range(course_list.count()):
+            row = course_list.item(index)
+            if str(row.data(Qt.UserRole) or "") == course_id:
+                course_list.setCurrentItem(row)
+                course_list.scrollToItem(row)
+                return
+
+    def open_flashcard(self, card_id: str):
+        """Open Review focused on one card, switching to the full deck if needed."""
+        self._switch_page("review")
+        if getattr(self, "_deck_mode", "due") != "all":
+            self._set_review_mode("all")
+        deck = getattr(self, "_deck", None) or []
+        for index, card in enumerate(deck):
+            if card.get("id") == card_id:
+                self._deck_pos = index
+                self._show_current_card()
+                return
 
     def open_life_item(self, kind: str, item_id: str):
         if kind == "task":

@@ -44,6 +44,7 @@ from litebrowser.services import (
     life_service,
     personal_service,
     retriever,
+    study_flow,
 )
 from litebrowser.ui import components, dialogs, theme
 
@@ -140,7 +141,11 @@ class _DomainWeekChart(QWidget):
         painter = QPainter(self)
         w, h = self.width(), self.height()
         p = _theme.palette()
-        painter.fillRect(self.rect(), QColor(p["MAIN_BG_ALT"]))
+        # No surface here on purpose: the surrounding #SectionCard paints the
+        # card colour and this widget stays transparent on top of it. Filling the
+        # rect with MAIN_BG_ALT painted the chart as a second, slightly different
+        # surface inside the card — a pink block on light themes and an
+        # off-black block on night ones (reported twice).
         if not self._rows:
             painter.setPen(QColor(p["TEXT_MUTED"]))
             painter.drawText(self.rect(), Qt.AlignCenter, "No browsing this week yet.")
@@ -210,7 +215,9 @@ class _WeekActivityChart(QWidget):
         painter = QPainter(self)
         w, h = self.width(), self.height()
         p = _theme.palette()
-        painter.fillRect(self.rect(), QColor(p["MAIN_BG_ALT"]))
+        # Transparent by design: the chart must read as part of its
+        # #SectionCard, never as a second coloured panel inside it (see
+        # _DomainWeekChart.paintEvent for the full story).
         # Vertical zones that never overlap or clip, bottom to top:
         #   [day labels] 4px .. bars .. [value labels above the bars]
         # The day labels keep a generous clear margin under them so the text
@@ -229,7 +236,6 @@ class _WeekActivityChart(QWidget):
             if count <= 0:
                 # No visits: draw a faint baseline dot instead of a stub bar,
                 # so empty days do not masquerade as activity.
-                color = QColor(p["MAIN_BG_ALT"]).lighter(103)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QColor(p["BORDER_SOFT"]))
                 painter.drawRoundedRect(x + (bar_w - 5) // 2, bottom - 5, 5, 5, 2, 2)
@@ -349,7 +355,7 @@ class HomeDashboardPage(QWidget):
             ("?", "Help", "Guide & tools", "guide"),
         )
         self._launch_tiles = []
-        for index, (glyph, label, hint, key) in enumerate(launch_specs):
+        for index, (glyph, label, hint, _key) in enumerate(launch_specs):
             tile = components.action_tile(glyph, label, hint)
             self._launch_tiles.append(tile)
             row, column = divmod(index, 3)
@@ -381,7 +387,7 @@ class HomeDashboardPage(QWidget):
         ]
         self._stat_labels = {}
         tiles = []
-        for owner, key, label in stat_specs:
+        for _owner, key, label in stat_specs:
             tile = components.stat_tile("0", label)
             tiles.append(tile)
             self._stat_labels[key] = tile._value
@@ -421,6 +427,10 @@ class HomeDashboardPage(QWidget):
         self.lbl_brief.setObjectName("HeroSubtitle")
         self.lbl_brief.setWordWrap(True)
         brief_layout.addWidget(self.lbl_brief)
+        self.btn_brief_save = QPushButton("📝 Save as note")
+        self.btn_brief_save.setToolTip("Save this briefing as a Markdown note in the vault")
+        self.btn_brief_save.clicked.connect(self._save_brief_note)
+        brief_layout.addWidget(self.btn_brief_save)
         layout.addWidget(self.brief_card)
 
         sections = QHBoxLayout()
@@ -431,7 +441,7 @@ class HomeDashboardPage(QWidget):
         self.recent_closed = QListWidget()
         self.recent_closed.setObjectName("CafeList")
         notes_card = self._card_with_list("Recent Notes", "From SafeVault", self.recent_notes)
-        tasks_card = self._card_with_list("Today's Focus", "Active tasks & pours", self.recent_tasks)
+        tasks_card = self._today_card()
         closed_card = self._card_with_list("Recently Closed", "Tabs you closed", self.recent_closed)
         sections.addWidget(notes_card, 1)
         sections.addWidget(tasks_card, 1)
@@ -445,6 +455,7 @@ class HomeDashboardPage(QWidget):
         self.btn_personal.clicked.connect(lambda: self.shell.switch_workspace("personal"))
         self.btn_task.clicked.connect(self.shell.quick_task_dialog)
         self.btn_focus.clicked.connect(self._start_focus)
+        self.recent_tasks.itemDoubleClicked.connect(self._open_agenda_item)
         self.btn_library.clicked.connect(lambda: self.shell.switch_workspace("library"))
         self.btn_history.clicked.connect(lambda: self.shell.switch_workspace("history"))
         self.btn_settings.clicked.connect(lambda: self.shell.switch_workspace("settings"))
@@ -478,6 +489,82 @@ class HomeDashboardPage(QWidget):
     def _send_quick_command(self, cmd: str, shell):
         shell.omnibar.setText(cmd)
         shell.handle_omnibar()
+
+    def _today_card(self):
+        """Today's plate plus the loop: what is on it, and what to do about it.
+
+        The agenda list answers "what is on my plate"; the strip above it answers
+        "what is next" by reading every store (planner, cards, captures, links) —
+        so Home is a doorway into the process, not a report about it.
+        """
+        card = QFrame()
+        card.setObjectName("SectionCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
+        layout.addWidget(
+            components.section_header("Today", "Planner deadlines · quick tasks · the study loop")
+        )
+        self.lbl_flow = QLabel("")
+        self.lbl_flow.setObjectName("MutedLabel")
+        self.lbl_flow.setWordWrap(True)
+        layout.addWidget(self.lbl_flow)
+        flow_row = QHBoxLayout()
+        flow_row.setSpacing(6)
+        self.btn_flow_next = QPushButton("▶ Continue")
+        self.btn_flow_next.setToolTip("Run the next step of the loop")
+        self.btn_flow_next.clicked.connect(self._run_flow_next)
+        self.btn_agenda_promote = QPushButton("→ Planner")
+        self.btn_agenda_promote.setToolTip(
+            "Promote the selected inbox task into the Weekly Plan (the two stay linked)"
+        )
+        self.btn_agenda_promote.clicked.connect(self._promote_agenda_task)
+        flow_row.addWidget(self.btn_flow_next)
+        flow_row.addWidget(self.btn_agenda_promote)
+        flow_row.addStretch(1)
+        layout.addLayout(flow_row)
+        # A slightly lower floor than the other cards leaves room for the strip
+        # without pushing the dashboard past the viewport.
+        self.recent_tasks.setMinimumHeight(180)
+        layout.addWidget(self.recent_tasks, 1)
+        return card
+
+    def _refresh_flow(self):
+        """One line of loop state + one button that runs the recommended step."""
+        flow = study_flow.build_flow(self.shell.profile_dir)
+        action = flow.get("next") or {}
+        self.lbl_flow.setText(flow.get("pulse", ""))
+        self.lbl_flow.setToolTip(" → ".join(step["title"] for step in flow.get("steps", [])))
+        self._flow_next = action
+        self.btn_flow_next.setText(action.get("label") or "▶ Continue")
+        self.btn_flow_next.setToolTip(action.get("reason") or "The loop is clear")
+        self.btn_flow_next.setEnabled(bool(action))
+
+    def _run_flow_next(self):
+        action = getattr(self, "_flow_next", None) or study_flow.next_step(self.shell.profile_dir)
+        self.shell.open_flow_step(action)
+
+    def _promote_agenda_task(self):
+        """Capture → plan hand-off for the row selected in Today."""
+        row = self.recent_tasks.currentItem()
+        data = row.data(Qt.UserRole) if row is not None else None
+        data = data if isinstance(data, dict) else {}
+        if data.get("kind") != "task":
+            QMessageBox.information(
+                self,
+                "Weekly Plan",
+                "Select an inbox row in Today first, then promote it into the planner.",
+            )
+            return
+        item = study_flow.promote_task(self.shell.profile_dir, data.get("id", ""))
+        if item is None:
+            return
+        self.shell.refresh_shell()
+        QMessageBox.information(
+            self,
+            "Weekly Plan",
+            f"“{item.get('title', '')}” is on the weekly plan now — inbox and planner stay linked.",
+        )
 
     def _card_with_list(self, title_text: str, subtitle: str, list_widget: QListWidget):
         card = QFrame()
@@ -518,12 +605,24 @@ class HomeDashboardPage(QWidget):
             self.recent_notes.addItem(components.hint_list_item("No notes yet"))
 
         self.recent_tasks.clear()
-        tasks = [item for item in life_service.load_tasks(self.shell.profile_dir) if not item.get("completed")][:8]
-        for task in tasks:
-            due = _format_ts(int(task.get("due_at", 0) or 0)) if int(task.get("due_at", 0) or 0) else task.get("bucket", "")
-            self.recent_tasks.addItem(f"{task.get('title', '')} - {due}")
+        # One day across both systems: planner deadlines + planner blocks + the
+        # legacy quick-task inbox, overdue first.
+        agenda = life_service.today_agenda(self.shell.profile_dir)
+        for entry in agenda["items"][:10]:
+            prefix = "Planner" if entry.get("source") == "planner" else "Inbox"
+            marker = "⚠ " if entry.get("overdue") else ""
+            subtitle = entry.get("subtitle", "")
+            row = QListWidgetItem(
+                f"{marker}[{prefix}] {entry.get('title', '')}" + (f" · {subtitle}" if subtitle else "")
+            )
+            row.setToolTip(f"{entry.get('title', '')} — double-click to open")
+            row.setData(
+                Qt.UserRole,
+                {"kind": entry.get("kind", ""), "id": entry.get("id", ""), "subtitle": subtitle},
+            )
+            self.recent_tasks.addItem(row)
         if self.recent_tasks.count() == 0:
-            self.recent_tasks.addItem(components.hint_list_item("No active tasks", "○"))
+            self.recent_tasks.addItem(components.hint_list_item("Nothing scheduled today", "○"))
 
         self.recent_closed.clear()
         state = prefs.session_state_load(self.shell.profile_dir)
@@ -536,12 +635,28 @@ class HomeDashboardPage(QWidget):
         if self.recent_closed.count() == 0:
             self.recent_closed.addItem(components.hint_list_item("Nothing closed recently", "○"))
 
+        self._refresh_flow()
         self.brief_card.setVisible(prefs.get_show_morning_brief(self.shell.profile_dir))
         self._refresh_brief()
 
     def _refresh_brief(self):
         brief = brief_service.build_morning_brief(self.shell.profile_dir)
         self.lbl_brief.setText(brief_service.brief_text(brief))
+
+    def _open_agenda_item(self, row: QListWidgetItem):
+        """Home agenda row -> wherever the item actually lives."""
+        data = row.data(Qt.UserRole) or {}
+        if data:
+            self.shell.open_library_item(data)
+
+    def _save_brief_note(self):
+        """Keep today's briefing in the vault as Markdown (the export format)."""
+        brief = brief_service.build_morning_brief(self.shell.profile_dir)
+        title = f"Morning Brief — {time.strftime('%Y-%m-%d')}"
+        personal_service.create_note(
+            self.shell.profile_dir, title, brief_service.brief_markdown(brief), category="Brief"
+        )
+        QMessageBox.information(self, "Morning Brief", "Saved to your vault as a Markdown note.")
 
 
 class LibraryPage(QWidget):
@@ -591,6 +706,8 @@ class LibraryPage(QWidget):
             ("tasks", "Tasks"),
             ("events", "Events"),
             ("boards", "Boards"),
+            ("planner", "Planner"),
+            ("cards", "Cards"),
         ):
             button = components.chip(label, checked=key == "all")
             button.clicked.connect(lambda checked=False, value=key: self._set_library_filter(value))
@@ -642,6 +759,8 @@ class LibraryPage(QWidget):
             "tasks": {"task"},
             "events": {"event", "calendar"},
             "boards": {"board", "board-node"},
+            "planner": {"planner-item", "planner-course", "planner-block"},
+            "cards": {"flashcard"},
         }
         return kind in mapping.get(value, set())
 
@@ -651,7 +770,7 @@ class LibraryPage(QWidget):
         items = []
         if q:
             items.extend(life_service.search_everything(self.shell.profile_dir, q))
-            for score, doc in retriever.search(self.shell.profile_dir, q, top_k=10):
+            for _score, doc in retriever.search(self.shell.profile_dir, q, top_k=10):
                 mapped_kind = doc.source
                 mapped_id = doc.url
                 subtitle = doc.url or doc.snippet
@@ -674,6 +793,22 @@ class LibraryPage(QWidget):
                 elif doc.source == "saved_page":
                     mapped_kind = "saved-page"
                     mapped_id = doc.meta.get("saved_page_id", "")
+                elif doc.source == "planner_item":
+                    mapped_kind = "planner-item"
+                    mapped_id = doc.meta.get("plan_item_id", "")
+                    subtitle = doc.snippet
+                elif doc.source == "planner_course":
+                    mapped_kind = "planner-course"
+                    mapped_id = doc.meta.get("course_id", "")
+                    subtitle = doc.snippet
+                elif doc.source == "planner_block":
+                    mapped_kind = "planner-block"
+                    mapped_id = doc.meta.get("plan_block_id", "")
+                    subtitle = doc.snippet
+                elif doc.source == "flashcard":
+                    mapped_kind = "flashcard"
+                    mapped_id = doc.meta.get("card_id", "")
+                    subtitle = doc.snippet
                 items.append({"kind": mapped_kind, "title": doc.title or doc.url, "id": mapped_id, "subtitle": subtitle})
             items = _dedupe_library_items(items)
         else:

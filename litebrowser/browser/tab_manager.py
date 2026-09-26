@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
 
 from litebrowser.browser import browser_page
 from litebrowser.browser.adblock import TrackingBlocker
-from litebrowser.core import prefs
+from litebrowser.core import app_version, prefs
 from litebrowser.services import workspace_manager
 
 TAB_WIDGET_ROLE = Qt.UserRole
@@ -125,8 +125,6 @@ class TabListItemWidget(QWidget):
 
         self.setAttribute(Qt.WA_Hover, True)
         self.setStyleSheet("background: transparent;")
-        # Palette-aware colors so tabs stay readable in both cafe-night and cafe-day.
-        pal = self._palette()
         layout = QHBoxLayout(self)
         # Slim 32px rows: tighter margins + spacing for a denser, professional desk.
         layout.setContentsMargins(6, 2, 3, 2)
@@ -141,7 +139,6 @@ class TabListItemWidget(QWidget):
         self.lbl_icon = QLabel("•")
         self.lbl_icon.setFixedWidth(16)
         self.lbl_icon.setAlignment(Qt.AlignCenter)
-        self.lbl_icon.setStyleSheet(f"color: {pal['ACCENT']}; font-size: 12px; font-weight: 700; background: transparent;")
         self.lbl_title = QLabel(title)
         # No native setToolTip here: native tooltips near a QWebEngine surface
         # can trigger the black-screen compositor bug on Windows. The tab
@@ -149,26 +146,45 @@ class TabListItemWidget(QWidget):
         self.lbl_title.setWordWrap(False)
         self.lbl_title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.lbl_title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._base_title_style = f"color: {pal['TEXT']}; font-size: 11px; font-weight: 600; background: transparent;"
-        self.lbl_title.setStyleSheet(self._base_title_style)
+        self._base_title_style = ""
         self.lbl_state = QLabel("")
         self.lbl_state.setFixedWidth(26)
         self.lbl_state.setAlignment(Qt.AlignCenter)
-        self.lbl_state.setStyleSheet(f"color: {pal['TEXT_MUTED']}; font-size: 10px; font-weight: 700; background: transparent;")
         self.btn_close = QToolButton()
         self.btn_close.setText("x")
         self.btn_close.setFixedSize(18, 18)
-        self.btn_close.setStyleSheet(
-            "QToolButton { background: transparent; border: none; color: %(MUTED)s; font-size: 12px;}"
-            " QToolButton:hover { color: #d06a5a; background: %(HOVER)s; border-radius: 4px; }"
-            % {"MUTED": pal["TEXT_MUTED"], "HOVER": pal["ITEM_HOVER"]}
-        )
         self.btn_close.setCursor(Qt.PointingHandCursor)
 
         layout.addWidget(self.lbl_icon)
         layout.addWidget(self.lbl_title, 1)
         layout.addWidget(self.lbl_state)
         layout.addWidget(self.btn_close)
+        # Colours are resolved once here and re-resolved by TabManager.refresh_theme
+        # on every theme change (see apply_theme).
+        self.apply_theme()
+
+    def apply_theme(self):
+        """Re-resolve this row's inline colours for the theme in effect now.
+
+        The row paints its own glyph/state/close colours, so re-applying the
+        window stylesheet never reaches it: with auto day/night on, rows built at
+        night kept light-theme label colours after the shell flipped (and the
+        other way round in the morning).
+        """
+        pal = self._palette()
+        self.lbl_icon.setStyleSheet(
+            f"color: {pal['ACCENT']}; font-size: 12px; font-weight: 700; background: transparent;"
+        )
+        self.lbl_state.setStyleSheet(
+            f"color: {pal['TEXT_MUTED']}; font-size: 10px; font-weight: 700; background: transparent;"
+        )
+        self.btn_close.setStyleSheet(
+            "QToolButton { background: transparent; border: none; color: %(MUTED)s; font-size: 12px;}"
+            " QToolButton:hover { color: #d06a5a; background: %(HOVER)s; border-radius: 4px; }"
+            % {"MUTED": pal["TEXT_MUTED"], "HOVER": pal["ITEM_HOVER"]}
+        )
+        self._base_title_style = f"color: {pal['TEXT']}; font-size: 11px; font-weight: 600; background: transparent;"
+        self.lbl_title.setStyleSheet(self._base_title_style)
 
     def _palette(self):
         base_dir = getattr(self.manager, "base_dir", None)
@@ -176,7 +192,10 @@ class TabListItemWidget(QWidget):
         accent = None
         if base_dir:
             try:
-                mode = prefs.get_shell_theme(base_dir)
+                # resolved_auto_theme, not get_shell_theme: with auto day/night on,
+                # the stored name paints day colours on a night sidebar, which is
+                # how tab titles became invisible (dark text on a dark panel).
+                mode = prefs.resolved_auto_theme(base_dir)
                 accent = prefs.get_accent(base_dir)
             except Exception:
                 pass
@@ -276,8 +295,8 @@ class TabManager:
         except Exception:
             pass
         from litebrowser.core import theme_data
-        mode = prefs.get_shell_theme(self.base_dir) if self.base_dir else theme_data.DEFAULT_THEME
-        self._pal = theme_data._palette(mode)
+        mode = prefs.resolved_auto_theme(self.base_dir) if self.base_dir else theme_data.DEFAULT_THEME
+        self._pal = theme_data._palette(mode, prefs.get_accent(self.base_dir) if self.base_dir else None)
 
     def get_hibernate_seconds(self):
         return prefs.get_hibernate_seconds(self.base_dir)
@@ -641,7 +660,7 @@ class TabManager:
         item.setData(TAB_META_ROLE, metadata)
         widget.setText(metadata["title"])
         if browser == self.current_browser() and title:
-            self.window.setWindowTitle(f"{title} - MeiBrowser")
+            self.window.setWindowTitle(f"{title} - {app_version.APP_NAME}")
 
     def on_icon_changed(self, icon, browser):
         item = self._item_for_browser(browser)
@@ -720,7 +739,7 @@ class TabManager:
                 sleeping += 1
             else:
                 active += 1
-        self.lbl_tab_count.setText(f"{active} Live · {sleeping} Sleeping")
+        self.lbl_tab_count.setText(f"{active} live · {sleeping} sleeping")
         self.refresh_row_state_labels()
         if hasattr(self.window, "refresh_insight_summary"):
             self.window.refresh_insight_summary()
@@ -1043,6 +1062,39 @@ class TabManager:
             if notify:
                 QMessageBox.information(self.window, "Memory Saver", f"Suspended {count} background tabs.")
         return count
+
+    def refresh_theme(self):
+        """Re-paint the tab desk for the theme that is in effect now.
+
+        Rows carry inline styles (glyph, state chip, close button, plus the
+        pinned/hibernated title tints), so a stylesheet re-apply on the window is
+        not enough: every existing row is re-resolved from the new palette.
+        Called by SearchWindow.refresh_chrome_theme when the resolved theme
+        changes (auto day/night at 06:00 and 18:00, or a theme picked in Settings).
+        """
+        from litebrowser.core import theme_data
+
+        mode = prefs.resolved_auto_theme(self.base_dir) if self.base_dir else theme_data.DEFAULT_THEME
+        self._pal = theme_data._palette(mode, prefs.get_accent(self.base_dir) if self.base_dir else None)
+        for row in range(self.tab_list.count()):
+            item = self.tab_list.item(row)
+            widget = item.data(TAB_WIDGET_ROLE) if item is not None else None
+            if widget is None or not hasattr(widget, "apply_theme"):
+                continue
+            widget.apply_theme()
+            metadata = dict(item.data(TAB_META_ROLE) or {})
+            if metadata.get("hibernated"):
+                # Re-applies the muted title tint and the "Zz" chip.
+                self._apply_hibernated_visual(item)
+            else:
+                # Re-applies pinned (accent) vs normal (body) title colours.
+                self._clear_hibernated_visual(item)
+        if self._mem_tip is not None:
+            # The overlay was built with the previous palette; drop it so the next
+            # hover rebuilds it on-theme instead of reusing stale colours.
+            self._mem_tip.hide()
+            self._mem_tip.deleteLater()
+            self._mem_tip = None
 
     def _memory_tip(self):
         if self._mem_tip is None:

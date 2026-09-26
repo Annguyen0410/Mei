@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from litebrowser.core import prefs
-from litebrowser.services import life_service, sync_service
+from litebrowser.services import flashcard_service, life_service, personal_plan, sync_service
 
 
 class TestSyncServiceSafety(unittest.TestCase):
@@ -40,6 +40,45 @@ class TestSyncServiceSafety(unittest.TestCase):
         merged = sync_service._upsert([], incoming)
         merged[0]["title"] = "Changed locally"
         self.assertEqual(incoming[0]["title"], "Remote task")
+
+    def test_planner_and_flashcards_sync_without_losing_local_rows(self):
+        local_course = personal_plan.create_course(self.base, "Local course")
+        local_item = personal_plan.create_item(self.base, "Local item", course_id=local_course["id"])
+        local_card = flashcard_service.add_card(self.base, "Local Q", "Local A")
+
+        applied = sync_service._apply_bundle(
+            self.base,
+            {
+                "personal_plan": {
+                    "items": [{"id": "remote-item", "title": "Remote item"}],
+                    "courses": [{"id": "remote-course", "name": "Remote course"}],
+                    "time_blocks": [],
+                    "semester": {"name": "HK2"},
+                },
+                "flashcards": [
+                    {"id": "remote-card", "front": "Remote Q", "back": "Remote A"},
+                    "invalid",
+                ],
+            },
+        )
+
+        self.assertEqual(applied["planner"], 2)
+        self.assertEqual(applied["flashcards"], 1)
+        plan = personal_plan.load_plan(self.base)
+        self.assertEqual(
+            {item["id"] for item in plan["items"]}, {local_item["id"], "remote-item"}
+        )
+        self.assertEqual(
+            {course["id"] for course in plan["courses"]}, {local_course["id"], "remote-course"}
+        )
+        self.assertEqual(plan["semester"]["name"], "HK2")
+        cards = flashcard_service.load_cards(self.base)
+        self.assertEqual({card["id"] for card in cards}, {local_card["id"], "remote-card"})
+
+    def test_a_sparse_planner_pull_does_not_blank_the_semester(self):
+        personal_plan.update_plan_settings(self.base, semester={"name": "HK1"})
+        sync_service._apply_bundle(self.base, {"personal_plan": {"items": [], "semester": {"name": ""}}})
+        self.assertEqual(personal_plan.load_plan(self.base)["semester"]["name"], "HK1")
 
 
 if __name__ == "__main__":

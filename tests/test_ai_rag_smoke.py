@@ -112,5 +112,70 @@ class TestAIRAGSmoke(unittest.TestCase):
         vision.assert_not_called()
 
 
+class TestOllamaProbeIsCached(unittest.TestCase):
+    """`ollama list` used to run once per AI window — twice per launch.
+
+    The log of a real session showed two failing probes (WinError 2, Ollama not
+    installed) on every single start, because Mei builds one AI window per shell.
+    """
+
+    def setUp(self):
+        self._saved = (
+            ai_service._ollama_probe,
+            ai_service._ollama_missing,
+            ai_service._ollama_missing_logged,
+        )
+        self._reset()
+
+    def tearDown(self):
+        (
+            ai_service._ollama_probe,
+            ai_service._ollama_missing,
+            ai_service._ollama_missing_logged,
+        ) = self._saved
+
+    @staticmethod
+    def _reset():
+        ai_service._ollama_probe = None
+        ai_service._ollama_missing = False
+        ai_service._ollama_missing_logged = False
+
+    def test_missing_binary_is_probed_once(self):
+        calls = []
+
+        def _fail(*args, **kwargs):
+            calls.append(args)
+            raise FileNotFoundError("ollama")
+
+        with mock.patch("litebrowser.services.ai_service.subprocess.run", side_effect=_fail):
+            for _ in range(3):
+                self.assertEqual(ai_service.detect_ollama_models(), [])
+        self.assertEqual(len(calls), 1)
+
+    def test_installed_models_are_cached_and_copied(self):
+        probe = mock.Mock(returncode=0, stdout="NAME  ID  SIZE\nllama3  a  4GB\nqwen  b  2GB\n")
+        with mock.patch("litebrowser.services.ai_service.subprocess.run", return_value=probe) as run:
+            first = ai_service.detect_ollama_models()
+            self.assertEqual(first, ["llama3", "qwen"])
+            first.append("bogus")
+            self.assertEqual(ai_service.detect_ollama_models(), ["llama3", "qwen"])
+            run.assert_called_once()
+
+    def test_force_reprobes_after_the_user_installs_ollama(self):
+        with mock.patch(
+            "litebrowser.services.ai_service.subprocess.run", side_effect=FileNotFoundError("ollama")
+        ):
+            self.assertEqual(ai_service.detect_ollama_models(), [])
+        probe = mock.Mock(returncode=0, stdout="NAME\nllama3  a  4GB\n")
+        with mock.patch("litebrowser.services.ai_service.subprocess.run", return_value=probe):
+            self.assertEqual(ai_service.detect_ollama_models(force=True), ["llama3"])
+
+    def test_non_zero_exit_is_an_empty_list_not_an_error(self):
+        self._reset()
+        probe = mock.Mock(returncode=1, stdout="")
+        with mock.patch("litebrowser.services.ai_service.subprocess.run", return_value=probe):
+            self.assertEqual(ai_service.detect_ollama_models(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

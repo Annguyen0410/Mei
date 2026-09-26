@@ -46,6 +46,18 @@ echo Building Mei.exe with %QTVERSION% ...
   browser.py ^
   --clean
 
+REM PyInstaller rewrites dist\Mei.exe at the very end, so a running Mei holds the
+REM file open (WinError 5) and the build aborts AFTER the long compile. Report it
+REM instead of printing "Done" over a stale exe.
+if errorlevel 1 (
+  echo.
+  echo Build FAILED - PyInstaller could not finish.
+  echo If it says "Access is denied: dist\Mei.exe", a Mei window is still open -
+  echo close it, check the tray too, and run build_exe.bat again.
+  pause
+  exit /b 1
+)
+
 if not exist "dist\Mei.exe" (
   echo.
   echo Build FAILED - dist\Mei.exe was not produced. Your previous build is untouched.
@@ -55,20 +67,25 @@ if not exist "dist\Mei.exe" (
 
 echo.
 echo Creating dist\web_support (large offline sites live here, next to the exe) ...
-if not exist "dist\web_support" mkdir "dist\web_support"
-xcopy /e /i /q /y "web_support" "dist\web_support" >nul
-
-REM Prune the duplicated legacy hub copy (~600 MB of dead payload) and the stray
-REM dev logs so the installer does not ship a second copy of Cục Quản Lý.
-if exist "dist\web_support\Cục Quản Lý - Bản Đầy Đủ 1" rmdir /s /q "dist\web_support\Cục Quản Lý - Bản Đầy Đủ 1"
-del /q "dist\web_support\*.log" >nul 2>nul
+REM Deliberately done in Python, so keep the folder names in that script: cmd.exe
+REM decodes this UTF-8 batch file in the OEM code page, so the Vietnamese legacy
+REM hub name never matched here and the old copy step shipped the dead ~600 MB
+REM duplicate on every build. sync_web_support.py skips it while copying and
+REM prunes whatever an older build already left in dist, dev logs included.
+"%PY%" tools\sync_web_support.py
+if errorlevel 1 (
+  echo.
+  echo Build FAILED - could not refresh dist\web_support.
+  pause
+  exit /b 1
+)
 
 echo.
 echo -----------------------------------------------------
 echo  Done. Two things you must ship together:
 echo    -  dist\Mei.exe
 echo    -  dist\web_support  (folder, keep beside the .exe)
-echo
+echo.
 echo  web_support is NOT bundled into the exe on purpose
 echo  (it is ~600 MB; the app loads it from beside the exe).
 echo.

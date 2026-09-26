@@ -85,7 +85,9 @@ class AppShell(QMainWindow):
         self.sync_finished.connect(self._show_sync_result)
         self.monitor_checked.connect(self._on_monitor_checked)
         title_suffix = "Workspace 1" if self.window_slot == "primary" else "Workspace 2"
-        self.setWindowTitle(f"MeiBrowser - {title_suffix}")
+        # Brand comes from core/product.py: the taskbar used to spell out a name
+        # the exe, installer and data folder did not share.
+        self.setWindowTitle(f"{app_version.APP_NAME} - {title_suffix}")
         self.setWindowIcon(QIcon(os.path.join(self.app_dir, "icon.png")))
         self.resize(1560, 940)
         self.setMinimumSize(760, 560)
@@ -104,8 +106,8 @@ class AppShell(QMainWindow):
         top_bar = QWidget()
         top_bar.setObjectName("ShellTopBar")
         top_layout = QHBoxLayout(top_bar)
-        top_layout.setContentsMargins(14, 10, 14, 10)
-        top_layout.setSpacing(10)
+        top_layout.setContentsMargins(12, 8, 12, 8)
+        top_layout.setSpacing(8)
 
         brand_wrap = QWidget()
         brand_wrap.setObjectName("BrandWrap")
@@ -212,22 +214,22 @@ class AppShell(QMainWindow):
         # Rail header row: wordmark on the left fills the corner that used to
         # sit empty above the Profile box (with only the collapse toggle on the
         # right), then the profile chip follows below it.
+        # Header row = profile · collapse. The "🍵 Mei" wordmark used to open the
+        # rail as well, so the brand appeared twice within ~40px (top bar + rail).
+        # The rail now answers "where am I", not "which app is this".
         rail_header = QHBoxLayout()
-        rail_header.setSpacing(4)
-        self.rail_brand = QLabel("🍵  Mei")
-        self.rail_brand.setObjectName("RailBrand")
-        rail_header.addWidget(self.rail_brand)
+        rail_header.setSpacing(6)
+        profile_name = os.path.basename(self.profile_dir)
+        self.rail_meta = QLabel(f"Profile: {profile_name}")
+        self.rail_meta.setObjectName("RailMeta")
+        self.rail_meta.setToolTip(f"Active profile: {profile_name}")
+        rail_header.addWidget(self.rail_meta)
         rail_header.addStretch(1)
         self.btn_rail_toggle = QPushButton("«")
         self.btn_rail_toggle.setObjectName("NavToggle")
         self.btn_rail_toggle.setToolTip("Collapse / expand the navigation rail")
         rail_header.addWidget(self.btn_rail_toggle)
         rail_layout.addLayout(rail_header)
-        profile_name = os.path.basename(self.profile_dir)
-        self.rail_meta = QLabel(f"Profile: {profile_name}")
-        self.rail_meta.setObjectName("RailMeta")
-        self.rail_meta.setWordWrap(True)
-        rail_layout.addWidget(self.rail_meta)
         self.nav_buttons = {}
         self.rail_section_labels = []
         nav_sections = (
@@ -242,7 +244,7 @@ class AppShell(QMainWindow):
             (
                 "MAKE & KEEP",
                 (
-                    ("ai", "AI Workspace", "✦"),
+                    ("ai", "AI", "✦"),
                     ("personal", "Personal", "◍"),
                     ("library", "Library", "▤"),
                 ),
@@ -259,13 +261,11 @@ class AppShell(QMainWindow):
                 button.clicked.connect(lambda checked, item=key: self.switch_workspace(item))
                 self.nav_buttons[key] = button
                 rail_layout.addWidget(button)
+        # The rail ends at the last navigation item: account/sync state lives in
+        # the status strip at the bottom of the window, where it has room for one
+        # readable line instead of a two-line box wedged under the nav.
         rail_layout.addStretch(1)
-        self.lbl_sync_state = QLabel("")
-        self.lbl_sync_state.setObjectName("RailMeta")
-        self.lbl_sync_state.setWordWrap(True)
-        rail_layout.addWidget(self.lbl_sync_state)
         self._rail = rail
-        self._rail_children = [self.rail_meta] + list(self.rail_section_labels) + list(self.nav_buttons.values()) + [self.lbl_sync_state]
         self.split.addWidget(rail)
 
         center_wrap = QWidget()
@@ -287,10 +287,15 @@ class AppShell(QMainWindow):
         status_layout.addWidget(self.lbl_status)
         status_layout.addWidget(self.lbl_status_context)
         status_layout.addStretch(1)
-        status_theme = QLabel("")
-        status_theme.setObjectName("MutedLabel")
-        status_layout.addWidget(status_theme)
-        self.lbl_theme_pill = status_theme
+        # Right side: the profile's sync state. It used to repeat the theme name
+        # that the left pill already shows, so the theme+accent pair now appears
+        # once (left) and the snapshot/account state once (right).
+        self.lbl_sync_pill = QLabel("")
+        self.lbl_sync_pill.setObjectName("MutedLabel")
+        self.lbl_sync_pill.setToolTip(
+            "Local snapshot state for this profile — ↻ Snapshot flushes pending changes to disk."
+        )
+        status_layout.addWidget(self.lbl_sync_pill)
         center_layout.addWidget(self.status_strip)
         self.split.addWidget(center_wrap)
 
@@ -407,7 +412,7 @@ class AppShell(QMainWindow):
     def _dialog_stylesheet(self):
         """Themed QSS for modal dialogs spawned from the shell (command
         palette, prompts, etc.). Mirrors SearchWindow._dialog_stylesheet."""
-        return theme.dialog_qss(prefs.get_shell_theme(self.profile_dir), prefs.get_accent(self.profile_dir))
+        return theme.dialog_qss(prefs.resolved_auto_theme(self.profile_dir), prefs.get_accent(self.profile_dir))
 
     def _open_omnibar_feature_finder(self):
         """Search-icon click: focus the omnibar and show the full feature list
@@ -659,17 +664,22 @@ class AppShell(QMainWindow):
             tray = getattr(self, "tray", None)
             if tray is not None and tray.contextMenu() is not None:
                 tray.contextMenu().setStyleSheet(qss)
+            # The browser chrome paints part of itself with inline styles (tab
+            # rows, connection pill), which a stylesheet re-apply does not reach.
+            browser_page = getattr(self, "browser_page", None)
+            if browser_page is not None and hasattr(browser_page, "refresh_chrome_theme"):
+                browser_page.refresh_chrome_theme()
         self.home_page.refresh()
         self.history_page.refresh()
         self.library_page.refresh(self.library_page.ed_search.text().strip())
         self.settings_page.refresh()
         account = life_service.load_sync_account(self.profile_dir)
         sync_state = life_service.load_sync_state(self.profile_dir)
+        pending = int(sync_state.get("pending_changes", 0) or 0)
         status = account.get("display_name") or "Offline-ready"
-        self.lbl_sync_state.setText(f"{status}\npending {int(sync_state.get('pending_changes', 0) or 0)}")
-        self.lbl_status.setText(f"● Theme: {theme_name}")
+        self.lbl_status.setText(self._theme_status_text())
         self.lbl_status_context.setText(f"Last sync: {_format_ts(int(sync_state.get('last_sync_at', 0) or 0))}")
-        self.lbl_theme_pill.setText(f"{theme_name} · {prefs.get_accent(self.profile_dir)}")
+        self.lbl_sync_pill.setText(f"{status} · {pending} pending" if pending else status)
         self._refresh_insights()
         self._apply_compact_shell_layout()
         if self.stack.currentIndex() == self.workspace_index["personal"]:
@@ -1121,23 +1131,17 @@ class AppShell(QMainWindow):
 
         if hasattr(self, "btn_rail_toggle"):
             self.btn_rail_toggle.setText("»" if rail_collapsed else "«")
-        if hasattr(self, "rail_brand"):
-            # Wordmark adapts to the rail width: emoji-only when the rail is
-            # folded or extremely narrow, short name on small windows, full
-            # wordmark otherwise — never clipped, never squeezed.
-            self.rail_brand.setText(
-                "🍵"
-                if (rail_collapsed or xtiny)
-                else "Mei"
-                if tiny
-                else "🍵  Mei"
-            )
-            self.rail_brand.setToolTip("Mei" if rail_collapsed or xtiny else "")
         self.omnibar.setMinimumHeight(26 if xtiny else 30 if tiny else 34 if narrow else 36)
+        # Keep the top-bar actions exactly as tall as the search field: the row is
+        # one line of controls, not three pills of slightly different heights.
+        bar_height = self.omnibar.minimumHeight()
+        for control in (self.btn_sync, self.btn_insights, self.btn_toggle_topbar):
+            control.setMinimumHeight(bar_height)
+            control.setMaximumHeight(bar_height)
         self.btn_sync.setText("↻" if tiny else "↻  Snapshot")
         self.btn_insights.setText("✦" if tiny else "✦  Insights")
         self.lbl_status_context.setVisible(not tiny)
-        self.lbl_sync_state.setVisible(not narrow and not rail_collapsed)
+        self.lbl_sync_pill.setVisible(not narrow)
         self.lbl_status.setVisible(not xtiny)
         self.omnibar.setPlaceholderText("Search / command..." if not tiny else "Go...")
         self.rail_meta.setVisible(not rail_collapsed)
@@ -1258,6 +1262,11 @@ class AppShell(QMainWindow):
         self.lbl_status_context.setText(f"Last sync: {time.strftime('%H:%M:%S')}")
         QMessageBox.information(self, "Sync", msg)
 
+    def _theme_status_text(self) -> str:
+        """Theme + accent in one indicator — they belong together and the pair
+        used to be printed twice (left pill and right side of the status strip)."""
+        return f"● {prefs.resolved_auto_theme(self.profile_dir)} · {prefs.get_accent(self.profile_dir)}"
+
     def _refresh_shield_state(self):
         """Push the current shield (focus running / always-on) into every
         TrackingBlocker instance in this shell."""
@@ -1276,7 +1285,7 @@ class AppShell(QMainWindow):
         if getattr(self, "_status_restore_timer", None) is None:
             self._status_restore_timer = QTimer(self)
             self._status_restore_timer.setSingleShot(True)
-            self._status_restore_timer.timeout.connect(lambda: self.lbl_status.setText(f"● Theme: {prefs.get_shell_theme(self.profile_dir)}"))
+            self._status_restore_timer.timeout.connect(lambda: self.lbl_status.setText(self._theme_status_text()))
         self._status_restore_timer.start(3000)
 
     def _match_cmd(self, lowered: str, cmd: str) -> bool:
@@ -1384,6 +1393,16 @@ class AppShell(QMainWindow):
             brief = brief_service.build_morning_brief(self.profile_dir)
             QMessageBox.information(self, "Morning Brief", brief_service.brief_text(brief))
             self.switch_workspace("home")
+            return
+        if self._match_cmd(lowered, "/flow"):
+            from litebrowser.services import study_flow
+            flow = study_flow.build_flow(self.profile_dir)
+            lines = [f"{step['title']} — {step['detail']}" for step in flow["steps"]]
+            lines.append("")
+            lines.append(f"Next — {flow['next']['label']}")
+            lines.append(flow["next"]["reason"])
+            QMessageBox.information(self, "Study loop", "\n".join(lines))
+            self.open_flow_step(flow["next"])
             return
         if lowered == "/agent" or lowered.startswith("/agent "):
             from litebrowser.services import agent_actions
@@ -1586,11 +1605,77 @@ class AppShell(QMainWindow):
             self.switch_workspace("personal")
             self.personal_page.open_life_item(kind, data.get("id", ""))
             return
+        if kind in ("planner-item", "planner-block", "planner-course"):
+            self.switch_workspace("personal")
+            if kind == "planner-item":
+                self.personal_page.open_plan_item(data.get("id", ""))
+            elif kind == "planner-block":
+                self.personal_page.open_plan_block(data.get("id", ""))
+            else:
+                self.personal_page.open_plan_course(data.get("id", ""))
+            return
+        if kind == "flashcard":
+            self.switch_workspace("personal")
+            self.personal_page.open_flashcard(data.get("id", ""))
+            return
         subtitle = data.get("subtitle", "")
         if subtitle.startswith("http"):
             self.switch_workspace("browser")
             self.browser_page.url_bar.setText(subtitle)
             self.browser_page.navigate()
+
+    def open_flow_step(self, action: dict):
+        """Route one loop recommendation to the surface that can run it.
+
+        The loop names a step; the shell owns the workspace switch, the study
+        session start and the note/card selection — the same wiring the Home
+        strip, the ``/flow`` command and the brief's "next" line all use.
+        """
+        action = action if isinstance(action, dict) else {}
+        step = action.get("step", "")
+        if step == "study" and action.get("start") and action.get("id"):
+            from litebrowser.services import study_session
+            if action.get("kind") == "planner-block":
+                session = study_session.start_for_block(
+                    self.profile_dir, action["id"], action.get("minutes") or None
+                )
+            else:
+                session = study_session.start_for_item(
+                    self.profile_dir, action["id"], action.get("minutes") or None
+                )
+            if session is None:
+                return
+            self._insight_cache = None
+            self.switch_workspace("personal")
+            self.personal_page._switch_page("plan")
+            self.personal_page.refresh_all()
+            self._flash_status(f"▶ Studying “{session.get('label', '')}”")
+            return
+        if step == "capture" and action.get("kind") == "note":
+            self.switch_workspace("personal")
+            self.personal_page.select_note(action.get("id", ""))
+            return
+        if step == "plan" and action.get("kind") == "task" and action.get("id"):
+            # "Plan “Write lab report”" has to mean it: promote the inbox row now,
+            # then open the plan on the row it became (the two stay linked).
+            from litebrowser.services import study_flow
+            item = study_flow.promote_task(self.profile_dir, action["id"])
+            self._insight_cache = None
+            self.switch_workspace("personal")
+            self.personal_page._switch_page("plan")
+            self.personal_page.refresh_all()
+            if item is not None:
+                self.personal_page.open_plan_item(item["id"])
+            title = (item or {}).get("title") or action.get("label", "")
+            self._flash_status(f"Planned “{title}”")
+            return
+        if step == "review":
+            self.switch_workspace("personal")
+            self.personal_page._switch_page("review")
+            return
+        # "plan" (and the running-pour "study" case) live on the planner page.
+        self.switch_workspace("personal")
+        self.personal_page._switch_page("plan")
 
     def _current_ai_scope_label(self):
         names = {

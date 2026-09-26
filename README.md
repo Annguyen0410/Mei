@@ -1,6 +1,6 @@
-# MeiBrowser
+# Mei
 
-**MeiBrowser** is a café-themed, multi-workspace desktop browser and personal hub built on **PyQt5/PyQt6 + QtWebEngine** (Chromium). It runs on both Qt bindings through the `litebrowser/qt_compat.py` shim — when PyQt6-WebEngine 6.8 (Chromium 122) is installed it uses that; otherwise it falls back to PyQt5.
+**Mei** is a café-themed, multi-workspace desktop browser and personal hub built on **PyQt5/PyQt6 + QtWebEngine** (Chromium). It runs on both Qt bindings through the `litebrowser/qt_compat.py` shim — when PyQt6-WebEngine 6.8 (Chromium 122) is installed it uses that; otherwise it falls back to PyQt5.
 
 It is not just a browsing window: one app holds a full Chromium browser, a Personal Hub (notes, tasks, flashcards, calendar, boards, files, sites), an AI workspace, a library, and a settings center — all linked by a search box that can find and jump to any feature in the app.
 
@@ -9,6 +9,7 @@ It is not just a browsing window: one app holds a full Chromium browser, a Perso
 > - 🧭 **User guide** (day-to-day usage) → [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
 > - ⌨️ **Command & shortcut reference** → [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md)
 > - 🏗️ **Architecture** → [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> - ⭐ **Structure & strengths** (vs. other browsers / planner / study apps) → [`docs/WHY_MEI.md`](docs/WHY_MEI.md)
 > - 📜 **Changelog** → [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
 
 ---
@@ -42,11 +43,12 @@ It is not just a browsing window: one app holds a full Chromium browser, a Perso
 
 ## Highlights
 
+- **One loop, five stations** — capture → plan → study → review → reflect. Home reads every store (planner, deck, captures, pour journal, links) and offers the single next step with a **▶ Continue** button; `/flow` does the same from the omnibar.
 - **Seven workspaces** behind one left rail — Home, Browser, History, AI, Personal, Library, Settings (`Ctrl+1…7`).
 - **Omnibar feature finder** — type any letters (`b`, `s`, `per…`) into the search box and get a live list of every matching feature; Enter or click jumps there. Works for *every* letter.
 - **Text selection everywhere** — every label is selectable with the mouse, every button has right-click **Copy text**.
 - **Full Chromium browser** — tab desk with workspace tabs, colored tab groups, split view, web panels (Telegram, WhatsApp, Discord…), tab hibernation, memory saver, zen mode.
-- **Personal Hub** — notes with Obsidian-style `[[wiki-links]]` and a neural graph, tasks, **SM-2 flashcard review**, calendar with ICS, sticky boards, files, sites.
+- **Personal Hub** — notes with Obsidian-style `[[wiki-links]]` and a neural graph, a **weekly student planner** (courses, deadlines, focus blocks, ▶ Study sessions that credit their minutes back), tasks, **SM-2 flashcard review**, calendar with ICS, sticky boards, files, sites.
 - **AI workspace** — RAG-local, OpenRouter, Ollama and llama.cpp providers, passcode-gated.
 - **16 café themes** with auto day/night pairing and 9 accent presets.
 - **Privacy-first** — adblock, https-only, third-party cookie blocking, VPN/proxy support, incognito tabs, password vault, per-site permissions.
@@ -126,6 +128,8 @@ The search box at the top is the command center of the whole app:
 
 The dashboard: time-of-day greeting, a **“Your Week”** 7-day activity chart, quick-launch tiles, version badge, recent notes / today's tasks / recently closed pages, and a “Where time goes” breakdown. Everything scrolls naturally — no squished cards.
 
+The **Today** card is the entrance to the loop: one merged agenda (planner deadlines, planner time blocks, quick inbox rows — overdue first, each badged *Planner* / *Inbox*), the loop line (*“1 overdue · 5 card(s) due · next: ▶ Study “Late essay” (40 min)”*), **▶ Continue** (runs the recommended step — including starting the pour) and **→ Planner** (promotes the selected inbox row into the Weekly Plan, keeping a task↔item link). Double-click any row to open it where it lives. The **Morning Brief** below ends with **▶ Next step** and **📝 Save as note** writes the whole briefing — next step included — into the vault.
+
 ### 🌐 Browser
 
 The Chromium workspace.
@@ -163,8 +167,9 @@ Ask one assistant across the current page, your notes, tasks, saved pages or the
 Eight pages behind their own nav rail (which is also **collapsible and draggable** like the browser desk):
 
 - **Overview** — today at a glance plus a **12-week focus-streak heatmap** (one cell per day, month/year axis, today ringed with the date).
-- **Notes** — SafeVault notes with Obsidian-style `[[wiki-links]]` (autocomplete, Ctrl+click to open/create, backlinks panel), categories, a neural-graph view, find & replace, autosave, move-by-drag.
-- **Tasks** — task list with due dates; “⇄ Make flashcard” turns selected note text into a study card.
+- **Notes** — SafeVault notes with Obsidian-style `[[wiki-links]]` (autocomplete, Ctrl+click to open/create, backlinks panel), categories, a neural-graph view, find & replace, autosave, move-by-drag. A **Related** panel links the note to planner items (`🔗 Link…` / **Unlink**); cards made from the note appear there too.
+- **Weekly Plan** — courses (name, code, colour, schedule, credits) and assignments/exams/projects on a week board; pick a course when adding items or blocks, drag to reschedule, double-click a block to edit, **▶ Study** pours a focus session for the selected entry and the minutes are credited back to it (the label then points at the deck: `next: 🧠 Review …`). *Planner first*: dated deadlines live here, **Tasks** is the quick inbox, and Home's **Today** card shows both — with a one-click promotion from inbox to plan.
+- **Tasks** — quick inbox with due dates; “⇄ Make flashcard” turns selected note text into a study card. Dated study deadlines belong on the **Weekly Plan** instead.
 - **Review** — **SM-2 spaced-repetition flashcards**. Browse with `←`/`→` or the ‹ › buttons, flip with Space or a click, grade **Again / Hard / Good / Easy** (keys `1–4`), switch **Due / All cards** mode, delete cards, watch the position counter. `/review` opens it from anywhere.
 - **Calendar** — events with **ICS import/export** (stdlib parser, no cloud).
 - **Boards** — sticky idea boards with links between cards.
@@ -303,11 +308,11 @@ Architecture notes: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 | Symptom | Fix |
 |---|---|
 | App won't start / silent exit | Run `python browser.py` from a terminal and read the traceback; ensure you're in the project folder |
-| Old behaviour after edits | Close **all** MeiBrowser windows (check the tray) and start one fresh instance — Python doesn't hot-reload |
+| Old behaviour after edits | Close **all** Mei windows (check the tray) and start one fresh instance — Python doesn't hot-reload |
 | Font warnings at startup | Harmless: Qt no longer ships fonts; the OS fonts are used |
 | Build the `.exe` | See [`RUN_AND_BUILD.md`](RUN_AND_BUILD.md) (PyInstaller with `--collect-all PyQt6.QtWebEngine*`) |
 | Data locations | Everything under your profile folder (`BrowserData`); back it up to keep your data |
 
 ---
 
-*MeiBrowser is its own application. Some shortcut tiles in Personal → Sites (and the corresponding `/…` commands) link out to separate web apps that MeiBrowser neither contains nor depends on.*
+*Mei is its own application. Some shortcut tiles in Personal → Sites (and the corresponding `/…` commands) link out to separate web apps that Mei neither contains nor depends on.*

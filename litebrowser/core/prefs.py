@@ -379,8 +379,18 @@ def set_autofill_passwords(base_dir, value):
     save_prefs(base_dir, data)
 
 
-def get_force_dark_web(base_dir):
-    return bool(load_prefs(base_dir).get("force_dark_web", False))
+def effective_force_dark_web(base_dir) -> bool:
+    """Whether web pages should be darkened right now.
+
+    An explicit choice (the user has flipped the menu item at least once) always
+    wins. Until then pages follow the shell: a night palette — a night theme, or
+    auto day/night after 18:00 — darkens pages too, so a dark window no longer
+    frames a blinding white page.
+    """
+    raw = load_prefs(base_dir).get("force_dark_web")
+    if raw is not None:
+        return bool(raw)
+    return _theme_mod.is_night_theme(resolved_auto_theme(base_dir))
 
 
 def set_force_dark_web(base_dir, value):

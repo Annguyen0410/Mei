@@ -5,13 +5,18 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+# Activate the Qt shim before importing the binding (and before QApplication
+# exists). Importing PyQt5 first loads the *other* Qt runtime when PyQt6 is
+# installed, and mixing two runtimes in one process crashes rather than failing.
+import litebrowser  # noqa: F401 - litebrowser/__init__ activates the Qt shim
+
 # QtWebEngine must be imported BEFORE QApplication is created (Qt hard
 # requirement) — personal_window pulls it in transitively.
 from PyQt5.QtWidgets import QApplication
 
 from litebrowser.core import prefs
 from litebrowser.services import personal_service
-from litebrowser.ui import personal_window as _pw_module
+from litebrowser.ui import personal_window as _pw_module  # noqa: F401 - pulls QtWebEngine in before QApplication exists
 
 
 @unittest.skipUnless(sys.platform.startswith("win"), "offscreen smoke on dev machine")

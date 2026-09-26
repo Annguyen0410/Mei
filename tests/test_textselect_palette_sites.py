@@ -11,10 +11,14 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+# The shim must be active before the binding is imported: doing it the other way
+# round loads whichever Qt runtime PyQt5 points at directly, and mixing it with
+# the façade's runtime crashes the interpreter (see test_browser_topbar).
+import litebrowser  # noqa: F401 - litebrowser/__init__ activates the Qt shim
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
-import litebrowser
 from litebrowser.core import prefs
 
 # QtWebEngine needs a non-empty program name in argv, otherwise Chromium's

@@ -4,7 +4,8 @@ The endpoint is a tiny API you run yourself (see README "Self-hosted sync"):
 POST /api/sync/push stores the latest snapshot, GET /api/sync/latest returns
 it. Every request carries a Bearer token. The payload is one JSON bundle
 containing the local data (tasks, events, boards, saved pages, notes,
-bookmarks, history) so two machines can stay in step without any cloud.
+bookmarks, history, the weekly planner, flashcards and entity links) so two
+machines can stay in step without any cloud.
 """
 
 from __future__ import annotations
@@ -17,7 +18,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from litebrowser.core import prefs
-from litebrowser.services import life_service, personal_service
+from litebrowser.services import (
+    flashcard_service,
+    life_service,
+    link_service,
+    personal_plan,
+    personal_service,
+)
 
 SYNC_API_VERSION = 1
 
@@ -135,6 +142,26 @@ def _build_notes(base_dir: str):
     ]
 
 
+def _merge_plan(base_dir: str, incoming) -> int:
+    """Merge a planner snapshot: incoming rows win per id, like every other
+    collection. The semester header is only replaced when the remote actually
+    carries one, so a pull from a profile that never configured it cannot
+    blank a semester filled in on this machine."""
+    if not isinstance(incoming, dict):
+        return 0
+    plan = personal_plan.load_plan(base_dir)
+    applied = 0
+    for key in ("items", "courses", "time_blocks"):
+        rows = _dict_rows(incoming.get(key))
+        plan[key] = _upsert(plan.get(key, []), rows)
+        applied += len(rows)
+    semester = incoming.get("semester")
+    if isinstance(semester, dict) and any(_text(value) for value in semester.values()):
+        plan["semester"] = semester
+    personal_plan.save_plan(base_dir, plan)
+    return applied
+
+
 # Bundle key, report key, publish, merge — in the order the report shows.
 SYNC_ENTITIES: tuple[SyncEntity, ...] = (
     _rows_entity("tasks", "tasks", life_service.load_tasks, life_service.save_tasks),
@@ -149,6 +176,11 @@ SYNC_ENTITIES: tuple[SyncEntity, ...] = (
         lambda b: [list(item) for item in (prefs.load_history_entries(b) or [])[:500]],
         _merge_history,
     ),
+    SyncEntity("personal_plan", "planner", personal_plan.load_plan, _merge_plan),
+    _rows_entity(
+        "flashcards", "flashcards", flashcard_service.load_cards, flashcard_service.save_cards
+    ),
+    _rows_entity("entity_links", "links", link_service.load_links, link_service.save_links),
 )
 
 

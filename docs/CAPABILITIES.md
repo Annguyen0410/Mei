@@ -27,10 +27,19 @@ accepted alternative to deleting the code.
 | Bridge action advertising | `services/android_bridge_service.py` (`API_VERSION`) |
 | Workspace/chain apps (7 apps: LinkLumina, Cục Quản Lý, MAS, World Leaderboard, Bí Mật, Bói Toán, Hub) | `litebrowser/data/chain.json` → `core/app_paths.py` |
 | Search engines | `core/prefs.py` → `SEARCH_ENGINES` |
-| Themes / accents | `ui/theme.py` → `PALETTES` / `ACCENTS` |
+| Themes / accents | `ui/theme.py` → `PALETTES` / `ACCENTS`; the *resolved* (auto day/night) mode comes from `core/prefs.py` (`resolved_auto_theme`, `theme_data.is_night_theme`) |
+| Web pages following the shell's light/dark mode | `core/prefs.py` (`effective_force_dark_web`) → `browser/browser_page.py` (`ensure_forced_dark_script`), re-applied on a theme flip by `ui/main_window/window_topbar.py` (`refresh_chrome_theme`) |
 | Morning-brief greetings | `core/greetings.py` (shared by `browser/new_tab_page.py` and `services/brief_service.py`) |
-| Versioned profile stores | `core/store.py` + `core/migrations.py` → `personal_plan`, `tab_sets` |
-| Sync entities | `services/sync_service.py` → `SYNC_ENTITIES` |
+| Versioned profile stores | `core/store.py` + `core/migrations.py` → `personal_plan` (v2), `tab_sets`, `entity_links` |
+| Sync entities | `services/sync_service.py` → `SYNC_ENTITIES` (incl. planner, flashcards, entity links) |
+| Study data on every surface | planner + flashcards flow through backup (`history_service`), sync, the AI index (`ai_service.collect_docs`), library search (`life_service.search_everything`) and the Morning Brief (`brief_service`) |
+| Course lifecycle + block editing | `personal_plan.create_course` / `update_course` / `delete_course` / `update_time_block` → Weekly Plan UI (`ui/personal_window.py`) |
+| Study sessions | `services/study_session.py` → PersonalWindow “▶ Study”; minutes are credited to the item once |
+| Entity links (two-way) | `services/link_service.py` (`entity_links.json`) → note “🔗 Link…/Unlink” panel; backlinks are the same rows read in reverse |
+| Unified Home agenda | `life_service.today_agenda` → Home “Today” card (planner deadlines + quick-task inbox) |
+| The study loop (one next step) | `services/study_flow.py` → Home “▶ Continue”, `/flow`, the brief's `next_step` line and the planner study hint |
+| Inbox → planner promotion | `study_flow.promote_task` → Home “→ Planner” (task and item stay linked) |
+| Brief markdown export | `brief_service.brief_markdown` → Home “📝 Save as note” |
 | Qt binding selection | `litebrowser/qt.py` over `qt_compat.py` |
 
 ## 2. Reserved API (reachable, no desktop caller yet)
@@ -40,9 +49,6 @@ bundle, or a future UI, and are intentionally *not* dead:
 
 | Capability | API | Reachable from | Why kept |
 |---|---|---|---|
-| Course lifecycle | `personal_plan.create_course` / `update_course` / `delete_course` | phone bridge, sync bundle | Planner schema is course-first; deleting a course detaches its items and time blocks instead of cascading |
-| Time-block editing | `personal_plan.update_time_block` | phone bridge | Create/reschedule already used; only the edit path has no dialog yet |
-| Whole-plan write | `personal_plan.save_plan` | sync import, tests | Bulk/normalising writer; the UI writes through the granular helpers |
 | Planner settings | `personal_plan.update_plan_settings` | phone bridge | Semester/week settings persist with no Settings panel yet |
 | Monitor removal | `page_monitor.remove_monitor` | phone bridge | Add/list are wired; removal arrived with the bridge contract |
 | Tab-set rename | `tab_sets.rename_tab_set` | — | Sessions dialog saves and deletes sets; rename is the missing menu action |
@@ -51,7 +57,6 @@ bundle, or a future UI, and are intentionally *not* dead:
 | Google token refresh | `google_auth.ensure_valid_token` | `google_auth.sign_in_via_device_code` | Reuses a fresh token without network, refreshes or drops a stale one |
 | Device-code sign-in | `google_auth.sign_in_via_device_code` | — | One-shot wrapper over `request_device_code` + `poll_device_token` for the upcoming "Sign in with Google" button |
 | Passcode lock | `security.lock` | Settings | Unlock/verify are wired; re-locking without restart is the missing piece |
-| Brief markdown | `brief_service.brief_markdown` | tests | Text and HTML briefs are rendered in the UI; markdown is the future export/share format |
 | Cục Quản Lý support URL | `app_paths.cuc_quan_ly_support_url` | — | Resolves the bundled copy's `index.html`; wired when the packaged copy is missing |
 
 ## 3. Promoting or dropping an entry

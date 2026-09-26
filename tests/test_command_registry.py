@@ -64,7 +64,8 @@ class TestSurfacesAreGenerated(unittest.TestCase):
     def test_completer_covers_every_registered_command(self):
         completions = commands.completions()
         self.assertEqual(len(completions), len(commands.COMMANDS))
-        for cmd, completion in zip(commands.COMMANDS, completions):
+        # The length assertion above is what makes strict pairing correct here.
+        for cmd, completion in zip(commands.COMMANDS, completions, strict=True):
             with self.subTest(cmd=cmd.name):
                 self.assertEqual(completion.strip(), cmd.name)
 

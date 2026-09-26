@@ -170,6 +170,18 @@ class TestRealStores(_Base):
             json.dump({"items": [{"id": "x", "title": "Legacy"}]}, handle)
         self.assertEqual(personal_plan.load_plan(self.base)["items"][0]["title"], "Legacy")
 
+    def test_planner_v1_file_is_migrated_to_v2(self):
+        path = personal_plan.plan_path(self.base)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"version": 1, "items": [{"id": "x", "title": "Legacy"}]}, handle)
+        loaded = personal_plan.load_plan(self.base)
+        self.assertEqual(loaded["items"][0]["studied_minutes"], 0)
+        self.assertEqual(loaded["version"], personal_plan.PLAN_VERSION)
+        with open(path, encoding="utf-8") as handle:
+            on_disk = json.load(handle)
+        self.assertEqual(on_disk["version"], personal_plan.PLAN_VERSION)
+        self.assertEqual(on_disk["items"][0]["studied_minutes"], 0)
+
 
 class TestSyncRegistryAndStoresShareTheContract(_Base):
     def test_sync_bundle_and_report_come_from_one_registry(self):

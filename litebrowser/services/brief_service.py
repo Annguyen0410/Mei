@@ -16,7 +16,14 @@ from urllib.parse import urlparse
 from litebrowser.core import prefs
 from litebrowser.core.greetings import cafe_greeting
 from litebrowser.core.log import get_logger
-from litebrowser.services import focus_service, life_service, personal_service
+from litebrowser.services import (
+    flashcard_service,
+    focus_service,
+    life_service,
+    personal_plan,
+    personal_service,
+    study_flow,
+)
 
 _log = get_logger("brief_service")
 
@@ -69,6 +76,32 @@ def build_morning_brief(base_dir: str) -> dict:
     notes = personal_service.list_notes(base_dir) or []
     focus_min = focus_service.today_focus_seconds(base_dir) // 60
 
+    # The weekly planner is where deadlines actually live; the brief has to
+    # surface them or it misses the one thing a student opens the app for.
+    plan = personal_plan.load_plan(base_dir)
+    today_key = now.strftime("%Y-%m-%d")
+    course_names = {
+        course.get("id", ""): course.get("name", "")
+        for course in plan.get("courses", [])
+        if isinstance(course, dict)
+    }
+    planner_pending = [
+        item
+        for item in plan.get("items", [])
+        if not item.get("completed") and (item.get("due_date") or item.get("scheduled_date"))
+    ]
+    planner_overdue = [
+        item
+        for item in planner_pending
+        if (item.get("due_date") or item.get("scheduled_date")) < today_key
+    ]
+    planner_due_today = [
+        item for item in planner_pending if (item.get("due_date") or item.get("scheduled_date")) == today_key
+    ]
+    planner_blocks_today = [
+        block for block in plan.get("time_blocks", []) if block.get("date") == today_key
+    ]
+
     eyebrow, headline = cafe_greeting(now.hour)
 
     return {
@@ -86,7 +119,29 @@ def build_morning_brief(base_dir: str) -> dict:
         ],
         "notes_count": len(notes),
         "focus_minutes": focus_min,
+        "planner_overdue": [_planner_label(item, course_names) for item in planner_overdue],
+        "planner_due_today": [_planner_label(item, course_names) for item in planner_due_today],
+        "planner_blocks_today": [
+            {
+                "title": block.get("title", ""),
+                "start_minutes": int(block.get("start_minutes", 0) or 0),
+                "duration_minutes": int(block.get("duration_minutes", 0) or 0),
+                "course": course_names.get(block.get("course_id", ""), ""),
+            }
+            for block in planner_blocks_today
+        ],
+        "flashcards_due": flashcard_service.stats(base_dir)["due"],
+        # The brief does not just report — it hands the reader back to the loop
+        # (the same recommendation Home shows and /flow announces).
+        "next_step": study_flow.next_step(base_dir),
     }
+
+
+def _planner_label(item: dict, course_names: dict) -> str:
+    """One-line label for a planner entry: title plus its course, when set."""
+    title = item.get("title", "") or item.get("id", "")
+    course = course_names.get(item.get("course_id", ""), "")
+    return f"{title} ({course})" if course else title
 
 
 def brief_markdown(brief: dict) -> str:
@@ -117,6 +172,39 @@ def brief_markdown(brief: dict) -> str:
         lines += [f"- {t}" for t in due_today[:5]]
         lines.append("")
 
+    planner_overdue = brief.get("planner_overdue") or []
+    if planner_overdue:
+        lines.append("## 🎓 Study — overdue")
+        lines += [f"- {t}" for t in planner_overdue[:5]]
+        lines.append("")
+
+    planner_due = brief.get("planner_due_today") or []
+    if planner_due:
+        lines.append("## 🎓 Study — due today")
+        lines += [f"- {t}" for t in planner_due[:5]]
+        lines.append("")
+
+    blocks = brief.get("planner_blocks_today") or []
+    if blocks:
+        lines.append("## ◷ Time blocks today")
+        for block in blocks[:6]:
+            start = int(block.get("start_minutes", 0) or 0)
+            lines.append(
+                f"- {start // 60:02d}:{start % 60:02d} · {block.get('title', '')} "
+                f"({int(block.get('duration_minutes', 0) or 0)}m)"
+            )
+        lines.append("")
+
+    if brief.get("flashcards_due"):
+        lines.append(f"**{brief['flashcards_due']} flashcards due** in Review.")
+        lines.append("")
+
+    next_step = brief.get("next_step") or {}
+    if next_step:
+        lines.append("## ▶ Next step")
+        lines.append(f"- {next_step.get('label', '')} — {next_step.get('reason', '')}")
+        lines.append("")
+
     events = brief.get("upcoming_events") or []
     if events:
         lines.append("## 📅 Coming up")
@@ -136,6 +224,9 @@ def brief_text(brief: dict) -> str:
         parts.append(f"⏰ {len(brief['overdue_tasks'])} overdue")
     if brief.get("due_today"):
         parts.append(f"📌 {len(brief['due_today'])} due today")
+    planner_count = len(brief.get("planner_overdue") or []) + len(brief.get("planner_due_today") or [])
+    if planner_count:
+        parts.append(f"🎓 {planner_count} study deadline(s)")
     if brief.get("upcoming_events"):
         parts.append(f"📅 {brief['upcoming_events'][0]['title']}")
     if brief.get("yesterday_count"):
@@ -144,4 +235,7 @@ def brief_text(brief: dict) -> str:
         parts.append(f"🧭 {brief['yesterday_count']} pages yesterday{dom_str}")
     if brief.get("focus_minutes"):
         parts.append(f"☕ {brief['focus_minutes']} min focus")
+    next_step = brief.get("next_step") or {}
+    if next_step.get("label"):
+        parts.append(f"▶ {next_step['label']}")
     return " · ".join(parts) or "A quiet morning. Pour a cup and start."

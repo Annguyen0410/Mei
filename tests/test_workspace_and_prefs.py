@@ -14,6 +14,8 @@ import unittest
 from litebrowser.core import app_paths, prefs
 from litebrowser.services import workspace_manager
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 class TestWorkspace(unittest.TestCase):
     def test_ensure_dual_workspaces_migrates_default_id(self):
@@ -47,11 +49,21 @@ class TestWorkspace(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(root, "browser.py")))
         self.assertTrue(os.path.isdir(os.path.join(root, "litebrowser")))
 
+    # web_support/ is gitignored on purpose (~10 MB of offline site folders that
+    # ship beside the exe, not inside the repo), so the two "is it shipped"
+    # checks only apply where the publishing copy exists — a clean checkout, and
+    # therefore CI, has nothing to resolve.
+    @unittest.skipUnless(
+        os.path.isdir(os.path.join(ROOT, "web_support")), "web_support/ is a build artefact"
+    )
     def test_cuc_quan_ly_support_index_shipped(self):
         p = app_paths.cuc_quan_ly_support_index_path(None)
         self.assertTrue(p, "cuc_quan_ly_support_index_path should resolve")
         self.assertTrue(os.path.isfile(p), p)
 
+    @unittest.skipUnless(
+        os.path.isdir(os.path.join(ROOT, "web_support")), "web_support/ is a build artefact"
+    )
     def test_boi_toan_local_launcher_is_shipped(self):
         url = app_paths.bundled_site_url("boitoan", None)
         self.assertTrue(url.startswith("file://"), url)

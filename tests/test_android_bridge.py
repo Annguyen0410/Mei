@@ -17,6 +17,8 @@ from litebrowser.services import (
     personal_service,
 )
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 class TestDispatchIngest(unittest.TestCase):
     def setUp(self):
@@ -499,6 +501,10 @@ class TestAndroidBridgeHTTP(unittest.TestCase):
 
         self.assertEqual(len(open_request.drain_open_requests(self.base)), len(expected))
 
+    @unittest.skipUnless(
+        os.path.isdir(os.path.join(ROOT, "web_support")),
+        "web_support/ is a build artefact: the Project Hub copy only exists next to a build",
+    )
     def test_open_hub_resolves_local_project_hub_url(self):
         out = android_bridge_service.dispatch_ingest(
             self.base,

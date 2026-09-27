@@ -94,8 +94,14 @@ class TestChannelOwnership(unittest.TestCase):
         self.assertEqual(product.RELEASES_PAGE_URL, product.RELEASES_BASE_URL + "releases/latest")
 
     def test_local_metadata_file_is_product_tagged(self):
+        # ``litebrowser-update/`` is a build artefact (gitignored), so this check
+        # only applies on a machine where tools/write_local_update.py has run —
+        # a clean checkout (and CI) has nothing to check here.
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(here, "litebrowser-update", "update.json"), encoding="utf-8") as handle:
+        path = os.path.join(here, "litebrowser-update", "update.json")
+        if not os.path.isfile(path):
+            self.skipTest("no local update channel on this machine")
+        with open(path, encoding="utf-8") as handle:
             self.assertEqual(json.load(handle).get("product"), product.PRODUCT_ID)
 
     def test_wrong_channel_message_is_user_readable(self):

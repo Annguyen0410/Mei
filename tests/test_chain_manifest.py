@@ -13,6 +13,13 @@ from litebrowser.core import app_paths
 HUB_IDS = {"hub"}
 REQUIRED_FIELDS = ("id", "name", "glyph", "folder")
 
+# The publishing copy of the manifest lives in ``web_support/``, which is
+# gitignored by design (~10 MB of site folders): it exists next to a build, not
+# in a clean checkout. The drift check below therefore applies where there is
+# something to compare, and skips where there is not.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PUBLISHED_CHAIN = os.path.join(ROOT, "web_support", "chain.json")
+
 
 class TestManifestIsTheSource(unittest.TestCase):
     def test_packaged_manifest_exists(self):
@@ -96,12 +103,12 @@ class TestRemoteSites(unittest.TestCase):
                 self.assertEqual(item["remote"], self.manifest[item["key"]]["remote"])
 
 
+@unittest.skipUnless(os.path.isfile(PUBLISHED_CHAIN), "web_support/ is a build artefact, absent in a clean checkout")
 class TestPublishedCopyMatches(unittest.TestCase):
     """web_support/chain.json is only a publishing copy — it must not drift."""
 
     def _published(self):
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, "web_support", "chain.json"), encoding="utf-8") as handle:
+        with open(PUBLISHED_CHAIN, encoding="utf-8") as handle:
             return json.load(handle)
 
     def test_same_apps_folders_and_remotes(self):

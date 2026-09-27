@@ -57,4 +57,24 @@ jobs:
         run: python -m ruff check --select F401,F811,F841,F821 litebrowser tests tools
 
       - name: Tests
-        run: python -m pytest -p no:cacheprovider --no-header -q
+        # Tee the run into a file so the next step can say *what* failed.
+        shell: pwsh
+        run: |
+          python -m pytest -p no:cacheprovider --no-header -q 2>&1 | Tee-Object -FilePath pytest.log
+          exit $LASTEXITCODE
+
+      - name: Report the failing tests
+        # A job log needs a token to read, and a red run that explains nothing is
+        # useless in a browser. Check-run annotations are public, so the failing
+        # test ids are echoed as annotations (GitHub keeps the first ten).
+        if: failure()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path pytest.log)) { Write-Output "::error::pytest produced no log"; exit 0 }
+          $lines = Get-Content pytest.log
+          foreach ($line in ($lines | Where-Object { $_ -match '^(FAILED|ERROR) ' } | Select-Object -First 7)) {
+            Write-Output "::error::$line"
+          }
+          foreach ($line in ($lines | Select-Object -Last 2)) {
+            if ($line.Trim()) { Write-Output "::error::summary: $line" }
+          }

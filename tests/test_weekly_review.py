@@ -9,8 +9,8 @@ still be visible immediately).
 import json
 import os
 import tempfile
-import time
 import unittest
+from datetime import datetime, timedelta
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -73,20 +73,35 @@ class _ProfileCase(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _seed_pours(self, per_day: dict, item_id: str = "", label: str = "Pour") -> None:
-        """Write a journal as if ``per_day`` pours finished ``{days_ago: minutes}``."""
-        now = int(time.time())
+    def _seed_pours(
+        self,
+        per_day: dict,
+        item_id: str = "",
+        label: str = "Pour",
+        moment: datetime | None = None,
+    ) -> None:
+        """Write a journal as if ``per_day`` pours started ``{days_ago: minutes}``.
+
+        Each pour is anchored just after its own midnight rather than at "now
+        minus N days", because the journal files a pour under the day it
+        *started* (``focus_service.compute_daily_minutes``): a 30-minute pour
+        seeded at 00:19 on a UTC CI runner started at 23:49 the day before, so a
+        one-day window counted nothing and the suite went red on a runner whose
+        clock only agreed with mine for part of the day. ``moment`` moves the
+        clock back to a suspicious hour on purpose (see the regression test).
+        """
+        midnight = (moment or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
         sessions = []
         for index, (days_ago, minutes) in enumerate(per_day.items()):
-            ended = now - int(days_ago) * 86400
+            started = int((midnight - timedelta(days=int(days_ago)) + timedelta(minutes=2)).timestamp())
             sessions.append(
                 {
                     "id": f"s{index}",
                     "label": label,
                     "minutes": int(minutes),
-                    "started_at": ended - int(minutes) * 60,
-                    "ends_at": ended,
-                    "ended_at": ended,
+                    "started_at": started,
+                    "ends_at": started + int(minutes) * 60,
+                    "ended_at": started + int(minutes) * 60,
                     "status": "completed",
                     "item_id": item_id,
                     "credited": False,
@@ -108,9 +123,18 @@ class TestWeeklyDigest(_ProfileCase):
         self.assertGreaterEqual(review["streak"], 2)
 
     def test_an_old_pour_is_outside_the_window(self):
-        self._seed_pours({0: 30})
+        self._seed_pours({0: 30, 10: 60})
         self.assertEqual(study_flow.weekly_review(self.base, days=1)["minutes_total"], 30)
-        self.assertEqual(study_flow.weekly_review(self.base, days=30)["minutes_total"], 30)
+        self.assertEqual(study_flow.weekly_review(self.base, days=30)["minutes_total"], 90)
+
+    def test_a_pour_seeded_just_after_midnight_stays_on_its_own_day(self):
+        """Regression: CI ran at 00:19 UTC, where a fifteen-to-thirty minute pour
+        anchored at "now" belongs to yesterday and the one-day window read zero."""
+        just_after_midnight = datetime.now().replace(hour=0, minute=19, second=0, microsecond=0)
+        self._seed_pours({0: 30}, moment=just_after_midnight)
+        self.assertEqual(study_flow.weekly_review(self.base, days=1)["minutes_total"], 30)
+        started = focus_service.focus_journal(self.base)[0]["started_at"]
+        self.assertEqual(datetime.fromtimestamp(started).date(), datetime.now().date())
 
     def test_a_window_with_no_pours_says_so(self):
         review = study_flow.weekly_review(self.base, days=7)

@@ -63,10 +63,21 @@ def _read(path: str) -> str:
         return handle.read()
 
 
+def _without_newline_style(blob: bytes) -> bytes:
+    """Compare content, not line-ending style.
+
+    The zip holds whatever the packer read (LF here), while a Windows checkout —
+    including CI, which checks text files out as CRLF — hands the test CRLF. That
+    difference is checkout policy, not a stale archive, so it is normalised away
+    and the file set still has to match exactly.
+    """
+    return blob.replace(b"\r\n", b"\n")
+
+
 class TestPackedExtension(unittest.TestCase):
     """What the user actually loads must match what the repo says it is."""
 
-    def test_the_prepacked_zip_matches_the_folder_byte_for_byte(self):
+    def test_the_prepacked_zip_matches_the_folder_it_ships_from(self):
         with zipfile.ZipFile(PACKED_ZIP) as archive:
             packed = {info.filename: archive.read(info.filename) for info in archive.infolist()}
         on_disk = {
@@ -80,7 +91,11 @@ class TestPackedExtension(unittest.TestCase):
             "Extensions/MeiBridge-extension.zip is stale — rebuild it from Extensions/tab-window-bridge",
         )
         for name, blob in on_disk.items():
-            self.assertEqual(packed[name], blob, f"{name} inside the packed zip is out of date")
+            self.assertEqual(
+                _without_newline_style(packed[name]),
+                _without_newline_style(blob),
+                f"{name} inside the packed zip is out of date",
+            )
 
     def test_the_manifest_grants_what_the_popup_uses_and_nothing_more(self):
         manifest = json.loads(_read(os.path.join(EXTENSION_DIR, "manifest.json")))

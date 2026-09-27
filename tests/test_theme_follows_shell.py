@@ -94,34 +94,41 @@ class TestRendererPaletteFollowsTheAccent(_ThemeFollowHost):
     app in two colours. The shell QSS is built with
     ``prefs.get_accent(profile_dir)``; ``theme.palette()`` resolved the palette
     alone, so every hand-painted widget was the odd one out.
+
+    Auto day/night is off here on purpose: the subject is the accent, and a test
+    that reads the clock fails on whichever runner is in the other half of the
+    day — CI runs at ~06:2x UTC, this machine at ~23:xx local.
     """
+
+    def setUp(self):
+        super().setUp()
+        prefs.set_auto_theme(self.base, False)
+        prefs.set_shell_theme(self.base, "cafe-night")
+        prefs.set_default_base_dir(self.base)
 
     def test_the_default_palette_carries_the_profiles_accent(self):
         prefs.set_accent(self.base, "rose")
-        prefs.set_default_base_dir(self.base)
         palette = theme.palette()
-        stock = theme_data._palette(NIGHT_THEME)  # guard: the stock accent differs
+        stock = theme_data._palette("cafe-night")  # guard: the stock accent differs
         self.assertNotEqual(theme_data.ACCENTS["rose"][0], stock["ACCENT"])
         self.assertEqual(palette["ACCENT"], theme_data.ACCENTS["rose"][0])
         self.assertEqual(palette["ACCENT_HOVER"], theme_data.ACCENTS["rose"][1])
 
     def test_an_explicit_accent_still_wins(self):
         prefs.set_accent(self.base, "rose")
-        prefs.set_default_base_dir(self.base)
         self.assertEqual(theme.palette(accent="teal")["ACCENT"], theme_data.ACCENTS["teal"][0])
 
     def test_an_empty_accent_means_the_palettes_own(self):
         prefs.set_accent(self.base, "rose")
-        prefs.set_default_base_dir(self.base)
-        self.assertEqual(theme.palette(accent="")["ACCENT"], theme_data._palette(NIGHT_THEME)["ACCENT"])
+        self.assertEqual(theme.palette(accent="")["ACCENT"], theme_data._palette("cafe-night")["ACCENT"])
 
     def test_a_widget_can_ask_for_another_profile(self):
         other = os.path.join(self._tmp, "second")
         prefs.ensure_profile_layout(other)
+        prefs.set_auto_theme(other, False)
         prefs.set_shell_theme(other, NIGHT_THEME)
         prefs.set_accent(other, "violet")
         prefs.set_accent(self.base, "rose")
-        prefs.set_default_base_dir(self.base)
         self.assertEqual(theme.palette(base_dir=other)["ACCENT"], theme_data.ACCENTS["violet"][0])
         self.assertEqual(theme.palette()["ACCENT"], theme_data.ACCENTS["rose"][0])
 

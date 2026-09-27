@@ -25,9 +25,17 @@ release machine)::
 ``--dry-run`` prints the plan and the manifest without touching the network;
 ``--local-only`` writes ``dist/update/update.json`` for a machine that upgrades
 from a folder instead of the internet.
+
+``--prerelease`` marks the release as a GitHub **pre-release**, which is the only
+way to ship an Alpha without serving it to everyone: ``releases/latest`` — the
+channel every installed copy polls — skips pre-releases and keeps pointing at the
+last stable build. A tag with a suffix (``v1.0.0.0-alpha.2``) is refused unless
+that flag is present, so an Alpha cannot reach the ordinary channel by accident,
+and the manifest always records the plain build version the updater compares.
 """
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -48,8 +56,8 @@ except ImportError:  # pragma: no cover - script invocation
 
 USAGE = (
     "usage: publish_release.py --tag v<version> [--repo owner/name] [--exe dist/Mei.exe]\n"
-    "       [--web-support dist/web_support] [--notes \"text\"] [--draft] [--replace]\n"
-    "       [--dry-run | --local-only]"
+    "       [--web-support dist/web_support] [--notes \"text\"] [--draft] [--prerelease]\n"
+    "       [--replace] [--dry-run | --local-only]"
 )
 
 API_ROOT = "https://api.github.com"
@@ -68,26 +76,49 @@ VI_HEADER = (
     "Mei 0.7.0.0 trở lên tự cập nhật từ kênh `releases/latest/download/update.json`."
 )
 
+PRERELEASE_NOTE = (
+    "**Bản Alpha (pre-release)** — bản này không đi vào kênh tự cập nhật: "
+    "`releases/latest` vẫn phục vụ bản ổn định gần nhất, nên hãy tải bằng tay ở trang này."
+)
+
+#: ``v1.0.0.0`` or ``v1.0.0.0-alpha.2``. A tag may carry a pre-release suffix,
+#: but the *build* behind it is always the plain four-part version — that is what
+#: the updater compares and what the manifest records.
+TAG_RE = re.compile(r"^(?P<version>\d+(?:\.\d+){3})(?:-(?P<suffix>[0-9A-Za-z.\-]+))?$")
+
 
 def version_from_tag(tag: str) -> str:
     """``v0.7.0.0`` and ``0.7.0.0`` both mean the same release."""
     return str(tag or "").strip().lstrip("vV")
 
 
-def assert_tag_matches_build(tag: str, version: str = "") -> str:
+def assert_tag_matches_build(tag: str, version: str = "", prerelease: bool = False) -> str:
     """Refuse to publish a release whose tag and build disagree.
 
     The tag is what a download URL is built from and the build's own version is
     what the updater compares, so a mismatch ships an update nobody is offered.
+    A suffix (``v1.0.0.0-alpha.1``) is allowed only together with ``prerelease``:
+    a suffixed tag published as an ordinary release would take over
+    ``releases/latest``, which is how everyone's copy decides what to install.
+
+    Returns the build version (never the suffix) — the manifest records that.
     """
     clean = version_from_tag(tag)
     current = version or product.APP_VERSION
-    if clean != current:
+    match = TAG_RE.match(clean)
+    if not match:
+        raise ValueError(f"Tag '{tag}' is not a four-part version, optionally with a -suffix.")
+    if match.group("version") != current:
         raise ValueError(
             f"Tag '{tag}' is not the build in this tree ({current}). "
             f"Bump core/product.py, rebuild, then publish v{current}."
         )
-    return clean
+    if match.group("suffix") and not prerelease:
+        raise ValueError(
+            f"Tag '{tag}' carries a pre-release suffix — add --prerelease, or the "
+            "ordinary update channel would be offered this build."
+        )
+    return current
 
 
 def asset_download_url(repo: str, tag: str, name: str) -> str:
@@ -129,8 +160,12 @@ def changelog_section(text: str, version: str) -> str:
     return "\n".join(body)
 
 
-def build_release_body(version: str, exe_name: str, web_support: str, changelog_text: str) -> str:
+def build_release_body(
+    version: str, exe_name: str, web_support: str, changelog_text: str, prerelease: bool = False
+) -> str:
     header = VI_HEADER.format(exe=exe_name, web_support=web_support)
+    if prerelease:
+        header = f"{header}\n\n{PRERELEASE_NOTE}"
     notes = changelog_section(changelog_text, version)
     return f"{header}\n\n---\n\n{notes}\n"
 
@@ -242,13 +277,13 @@ class _ProgressReader:
         self._handle.close()
 
 
-def _ensure_release(repo: str, tag: str, token: str, body: str, draft: bool) -> dict:
+def _ensure_release(repo: str, tag: str, token: str, body: str, draft: bool, prerelease: bool = False) -> dict:
     payload = {
         "tag_name": tag,
         "name": f"{product.PRODUCT_NAME} {version_from_tag(tag)}",
         "body": body,
         "draft": bool(draft),
-        "prerelease": False,
+        "prerelease": bool(prerelease),
     }
     try:
         return _request("POST", f"{API_ROOT}/repos/{repo}/releases", token, payload=payload)
@@ -256,7 +291,22 @@ def _ensure_release(repo: str, tag: str, token: str, body: str, draft: bool) -> 
         if exc.code != 422:  # 422 = this tag already has a release
             raise
         print(f"Release {tag} already exists — adding to it.")
-        return _request("GET", f"{API_ROOT}/repos/{repo}/releases/tags/{tag}", token)
+        existing = _request("GET", f"{API_ROOT}/repos/{repo}/releases/tags/{tag}", token)
+        release_id = int(existing.get("id") or 0)
+        if existing.get("draft") != bool(draft):
+            print(
+                f"  it is {'a draft' if existing.get('draft') else 'published'} — "
+                "leaving that flag as it is"
+            )
+        # Re-apply the flag and the notes: a re-run must not quietly turn a
+        # pre-release into an ordinary one (that would hand the Alpha to every
+        # installed copy on the next update check).
+        return _request(
+            "PATCH",
+            f"{API_ROOT}/repos/{repo}/releases/{release_id}",
+            token,
+            payload={"body": body, "prerelease": bool(prerelease)},
+        )
 
 
 def _upload_asset(repo: str, release_id: int, path: str, token: str, replace: bool) -> None:
@@ -289,12 +339,13 @@ def publish(
     notes: str,
     token: str,
     draft: bool = False,
+    prerelease: bool = False,
     replace: bool = False,
     out_dir: str = "",
     skip_upload: bool = False,
 ) -> dict:
     """Create the release and attach the build, the site folder and the manifest."""
-    version = assert_tag_matches_build(tag)
+    version = assert_tag_matches_build(tag, prerelease=prerelease)
     if not os.path.isfile(exe):
         raise FileNotFoundError(f"{exe} — build first: build_exe.bat")
     facts = verify_build(exe)
@@ -313,7 +364,13 @@ def publish(
     changelog_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), CHANGELOG)
     with open(changelog_path, encoding="utf-8-sig") as handle:
         changelog_text = handle.read()
-    body = build_release_body(version, product.ASSET_NAME, os.path.basename(site_zip) or "(web_support)", changelog_text)
+    body = build_release_body(
+        version,
+        product.ASSET_NAME,
+        os.path.basename(site_zip) or "(web_support)",
+        changelog_text,
+        prerelease=prerelease,
+    )
 
     manifest = build_manifest(
         version=version,
@@ -354,9 +411,10 @@ def publish(
     if not token:
         raise ValueError("Set GITHUB_TOKEN (fine-grained token with Contents: read and write) to publish.")
 
-    release = _ensure_release(repo, tag, token, body, draft)
+    release = _ensure_release(repo, tag, token, body, draft, prerelease)
     release_id = int(release.get("id") or 0)
-    print(f"Release {tag} ready (id {release_id}, draft={bool(draft)}).")
+    kind = "pre-release" if prerelease else "release"
+    print(f"Release {tag} ready (id {release_id}, draft={bool(draft)}, {kind}).")
     for path in filter(None, (exe, site_zip, manifest_path)):
         _upload_asset(repo, release_id, path, token, replace)
     print(f"Published: {release_page_url(repo)}")
@@ -393,9 +451,11 @@ def main(argv=None) -> int:
     notes = _arg_value(args, "--notes")
     token = os.environ.get("GITHUB_TOKEN", "").strip()
 
+    prerelease = "--prerelease" in args
+
     if "--local-only" in args:
         try:
-            assert_tag_matches_build(tag)
+            assert_tag_matches_build(tag, prerelease=prerelease)
             written = write_local_update.write_local_channel(os.path.dirname(os.path.abspath(exe)), notes)
         except (ValueError, FileNotFoundError) as exc:
             print(f"error: {exc}")
@@ -413,6 +473,7 @@ def main(argv=None) -> int:
             notes=notes,
             token=token,
             draft="--draft" in args,
+            prerelease=prerelease,
             replace="--replace" in args,
             skip_upload=dry_run,
         )

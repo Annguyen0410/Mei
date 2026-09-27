@@ -21,7 +21,7 @@ import os
 PRODUCT_ID = "mei"
 PRODUCT_NAME = "Mei"
 APP_NAME = PRODUCT_NAME
-APP_VERSION = "0.7.1.0"
+APP_VERSION = "1.0.0.0"
 
 # Release channel owned by this product. It used to point at a Netlify path
 # (…/mei-update/update.json) that was never deployed — the only thing that host

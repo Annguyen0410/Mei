@@ -6,7 +6,7 @@
 ; wipes someone's notes.
 
 #define MyAppName "Mei Tea Room Edition"
-#define MyAppVersion "0.6.10.0"
+#define MyAppVersion "1.0.0.0"
 #define MyAppExeName "Mei.exe"
 
 [Setup]

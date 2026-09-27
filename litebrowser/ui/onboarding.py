@@ -1,7 +1,10 @@
 """First-run onboarding: three quick steps, shown once, always skippable.
 
-1. Pick a theme + accent (live swatches) — plus optional auto day/night.
-2. Import from Chrome/Edge (bookmarks + passwords via the existing bridge) — optional.
+1. Pick a theme + accent (live swatches, optional auto day/night) *and the cup
+   you usually study over* — the ritual's pace is a first-run decision, because
+   it is what the Study session button on Home will offer from now on.
+2. Bring your stuff: tabs from Chrome/Edge (the bridge extension) and an Anki
+   ``.apkg`` if you already keep cards somewhere else.
 3. Pair the Android bridge (QR) — optional.
 
 Completion is recorded in prefs ('onboarding_done'), so it never nags again.
@@ -22,6 +25,7 @@ from PyQt5.QtWidgets import (
 )
 
 from litebrowser.core import app_version, prefs
+from litebrowser.services import anki_service, study_ritual
 from litebrowser.ui import theme
 from litebrowser.ui.dialogs.common import _stylesheet
 
@@ -98,6 +102,19 @@ def show_onboarding(shell) -> None:
     tp_layout.addWidget(preview)
     chk_auto = QCheckBox("Auto day / night — day palette by day, night palette after 18:00")
     tp_layout.addWidget(chk_auto)
+    tp_layout.addWidget(
+        QLabel(
+            "\nWhich cup do you usually study over? Every cup is a pace, and this is "
+            "what the Study session button on Home will offer you:"
+        )
+    )
+    combo_pour = QComboBox()
+    for pour, line, minutes in study_ritual.POURS:
+        combo_pour.addItem(f"{line}  ·  {minutes} min", pour)
+    saved_pour = study_ritual.last_pour(shell.profile_dir)
+    combo_pour.setCurrentIndex(max(0, combo_pour.findData(saved_pour)))
+    combo_pour.setToolTip("Change any time — the Study session dialog remembers your last pick")
+    tp_layout.addWidget(combo_pour)
     body_layout.addWidget(theme_page)
 
     # --- Step 2: import ---
@@ -110,6 +127,30 @@ def show_onboarding(shell) -> None:
     chk_skip_import = QCheckBox("Skip for now")
     chk_skip_import.setChecked(True)
     imp_layout.addWidget(chk_skip_import)
+    imp_layout.addWidget(QLabel("\nAlready keep flashcards in Anki? Import the deck now:"))
+    btn_anki = QPushButton("Import an Anki deck (.apkg)…")
+    btn_anki.setToolTip("Cards, tags, interval and ease are read out of the package")
+    imp_layout.addWidget(btn_anki)
+
+    def _import_anki():
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+
+        path, _filter = QFileDialog.getOpenFileName(dlg, "Import an Anki deck", "", "Anki packages (*.apkg)")
+        if not path:
+            return
+        try:
+            report = anki_service.import_package(shell.profile_dir, path)
+        except anki_service.AnkiFormatError as error:
+            QMessageBox.warning(dlg, "Import failed", str(error))
+            return
+        QMessageBox.information(
+            dlg,
+            "Deck imported",
+            f"Imported {report.get('imported', 0)} card(s) from “{report.get('deck', 'Anki')}”"
+            + (f" — {report.get('skipped', 0)} skipped" if report.get("skipped") else ""),
+        )
+
+    btn_anki.clicked.connect(_import_anki)
     imp_layout.addStretch(1)
     body_layout.addWidget(import_page)
     import_page.hide()
@@ -159,6 +200,8 @@ def show_onboarding(shell) -> None:
             prefs.set_shell_theme(shell.profile_dir, theme_id)
             prefs.set_accent(shell.profile_dir, accent_id)
             prefs.set_auto_theme(shell.profile_dir, chk_auto.isChecked())
+            pour = combo_pour.currentData() or study_ritual.DEFAULT_POUR
+            prefs.save_pref(shell.profile_dir, study_ritual.POUR_PREF_KEY, pour)
             shell._qss_key = None
             shell.refresh_shell()
             _show_step(2)

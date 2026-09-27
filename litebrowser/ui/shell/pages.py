@@ -40,7 +40,10 @@ from litebrowser.core import time_utils as _time_utils
 from litebrowser.services import (
     android_bridge_service,
     brief_service,
+    desk_service,
     diagnostics,
+    plugins,
+    sync_folder,
     focus_service,
     google_auth,
     history_service,
@@ -372,6 +375,7 @@ class HomeDashboardPage(QWidget):
 
         launcher = QWidget()
         launcher.setObjectName("HomeLaunchGrid")
+        self._launcher = launcher
         launcher_grid = QGridLayout(launcher)
         launcher_grid.setContentsMargins(0, 2, 0, 0)
         launcher_grid.setHorizontalSpacing(9)
@@ -394,7 +398,15 @@ class HomeDashboardPage(QWidget):
             row, column = divmod(index, 3)
             launcher_grid.addWidget(tile, row, column)
             launcher_grid.setColumnStretch(column, 1)
-        hero_layout.addWidget(launcher)
+        # The launcher grid and the quick-command chips used to *be* the home
+        # page: nine tiles as the first thing you see, which is a menu. The desk
+        # answers "what do I do now" instead, so both moved into this panel —
+        # still one click away, no longer the default view.
+        self._more_panel = QWidget()
+        more_layout = QVBoxLayout(self._more_panel)
+        more_layout.setContentsMargins(0, 6, 0, 0)
+        more_layout.setSpacing(10)
+        more_layout.addWidget(launcher)
 
         cmd_row = QHBoxLayout()
         cmd_row.setSpacing(6)
@@ -407,8 +419,17 @@ class HomeDashboardPage(QWidget):
             chip.clicked.connect(lambda checked=False, c=cmd, s=shell: self._send_quick_command(c, s))
             cmd_row.addWidget(chip)
         cmd_row.addStretch(1)
-        hero_layout.addLayout(cmd_row)
+        more_layout.addLayout(cmd_row)
+        self._more_panel.setVisible(False)
+        hero_layout.addWidget(self._more_panel)
+
+        self.btn_all_features = components.chip("☰ All features", checkable=True, checked=False)
+        self.btn_all_features.setToolTip("Show the launcher grid and the quick-command chips")
+        self.btn_all_features.toggled.connect(self._toggle_all_features)
+        hero_layout.addWidget(self.btn_all_features, 0, Qt.AlignLeft)
         layout.addWidget(hero)
+
+        layout.addWidget(self._desk_section(), 0)
 
         stats_row = QHBoxLayout()
         stat_specs = [
@@ -498,6 +519,121 @@ class HomeDashboardPage(QWidget):
 
     def _tick_clock(self):
         self.lbl_today.setText(time.strftime("%A, %d %B · %H:%M:%S"))
+
+    def _toggle_all_features(self, shown: bool):
+        """Show/hide the launcher grid + quick commands (collapsed by default)."""
+        self._more_panel.setVisible(bool(shown))
+
+    def _desk_section(self):
+        """The desk: four blocks that answer "what do I do now".
+
+        Home is the first thing a person sees and it used to be a menu — tiles,
+        stats, charts. The desk replaces that default view with the four things
+        a working session actually needs: today's plate, what is due, what was
+        left half-finished, and the loop's one next step.
+        """
+        section = QWidget()
+        section.setObjectName("HomeDesk")
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.lbl_desk = QLabel("Setting the desk...")
+        self.lbl_desk.setObjectName("MutedLabel")
+        self.lbl_desk.setWordWrap(True)
+        layout.addWidget(self.lbl_desk)
+        self._desk_cards = {}
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(10)
+        for key in desk_service.DESK_BLOCKS:
+            cards_row.addWidget(self._desk_card(key), 1)
+        layout.addLayout(cards_row, 1)
+        return section
+
+    def _desk_card(self, key: str):
+        card = QFrame()
+        card.setObjectName("SectionCard")
+        card.setProperty("deskBlock", key)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
+        header_row = QHBoxLayout()
+        header_row.setSpacing(6)
+        header_row.addWidget(
+            components.section_header(desk_service.BLOCK_TITLES[key], desk_service.BLOCK_SUBTITLES[key]),
+            1,
+        )
+        badge = components.badge("0", "accent")
+        header_row.addWidget(badge, 0, Qt.AlignTop)
+        layout.addLayout(header_row)
+        listing = QListWidget()
+        listing.setObjectName("CafeList")
+        listing.setMinimumHeight(150)
+        listing.setToolTip("Double-click a row to open where it lives")
+        listing.itemDoubleClicked.connect(self._open_desk_row)
+        layout.addWidget(listing, 1)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(6)
+        if key == "next":
+            self.btn_desk_continue = QPushButton("▶ Continue")
+            self.btn_desk_continue.setToolTip("Run the next step of the loop")
+            self.btn_desk_continue.clicked.connect(self._run_flow_next)
+            buttons.addWidget(self.btn_desk_continue)
+            self.btn_desk_ritual = QPushButton("☕ Study session")
+            self.btn_desk_ritual.setToolTip("Sit down properly: pick a pour, set the timer, study")
+            self.btn_desk_ritual.clicked.connect(self._start_ritual)
+            buttons.addWidget(self.btn_desk_ritual)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        self._desk_cards[key] = {"card": card, "list": listing, "badge": badge}
+        return card
+
+    def _refresh_desk(self):
+        """One service call fills the four blocks; the UI only renders."""
+        if not getattr(self, "_desk_cards", None):
+            return
+        desk = desk_service.build_desk(self.shell.profile_dir)
+        self._desk = desk
+        self.lbl_desk.setText(f"{desk.get('headline', '')}   ·   {desk.get('pulse', '')}".strip(" ·"))
+        for key, widgets in self._desk_cards.items():
+            block = desk_service.block_by_key(desk, key)
+            listing = widgets["list"]
+            listing.clear()
+            widgets["badge"].setText(str(block.get("count", 0)))
+            rows = block.get("rows", [])
+            for row in rows:
+                item = QListWidgetItem(f"{row.get('marker', '')}{row.get('title', '')}")
+                item.setToolTip(row.get("subtitle", "") or row.get("title", ""))
+                item.setData(Qt.UserRole, row)
+                listing.addItem(item)
+            if not rows:
+                listing.addItem(components.hint_list_item(block.get("empty") or "Nothing here", "○"))
+            if key == "next":
+                action = block.get("flow") or {}
+                self.btn_desk_continue.setText(action.get("label") or "▶ Continue")
+                self.btn_desk_continue.setEnabled(bool(action))
+                self.btn_desk_continue.setToolTip(action.get("reason") or "The loop is clear")
+
+    def _open_desk_row(self, item):
+        """A desk row either runs a command or routes to wherever it lives."""
+        data = item.data(Qt.UserRole) if item is not None else None
+        if not isinstance(data, dict):
+            return
+        command = (data.get("command") or "").strip()
+        if command:
+            self._send_quick_command(command, self.shell)
+            return
+        self.shell.open_library_item(data)
+
+    def _start_ritual(self):
+        """Open the study-session dialog — the ritual front door to a pour.
+
+        The desk is recomputed when it is missing so the dialog can always offer
+        the loop's next step as the default thing to finish.
+        """
+        from litebrowser.ui.dialogs import study_ritual
+
+        desk = getattr(self, "_desk", None) or desk_service.build_desk(self.shell.profile_dir)
+        study_ritual.show_study_ritual(self.shell, desk)
 
     def resizeEvent(self, event):
         """Trim secondary hero chrome on narrow viewports.
@@ -740,6 +876,7 @@ class HomeDashboardPage(QWidget):
             self.recent_closed.addItem(components.hint_list_item("Nothing closed recently", "○"))
 
         self._refresh_flow()
+        self._refresh_desk()
         self._refresh_reflect()
         self.brief_card.setVisible(prefs.get_show_morning_brief(self.shell.profile_dir))
         self._refresh_brief()
@@ -1312,7 +1449,7 @@ class SettingsPage(QWidget):
 
         mobile_layout.addSpacing(6)
         mobile_layout.addWidget(
-            components.section_header("Quick pairing", "Scan with Mei Remote or copy the code into the app")
+            components.section_header("Quick pairing", "Scan with Mei Remote, or paste the code into the Mei Bridge extension")
         )
         self.btn_copy_pairing = QPushButton("Copy pairing code")
         self.btn_copy_pairing.setObjectName("TopAccentButton")
@@ -1393,6 +1530,84 @@ class SettingsPage(QWidget):
         updates_layout.addLayout(update_actions)
         content_layout.addWidget(updates_card)
 
+        folder_card = QFrame()
+        folder_card.setObjectName("SectionCard")
+        folder_layout = QVBoxLayout(folder_card)
+        folder_layout.setContentsMargins(12, 12, 12, 12)
+        folder_layout.setSpacing(6)
+        folder_layout.addWidget(
+            components.section_header("Folder sync", "Two machines, one folder you own")
+        )
+        folder_copy = QLabel(
+            "Pick a folder you already have — OneDrive, a network share, Syncthing — and Mei keeps "
+            "your notes, plan, deck, tasks and saved pages in step through it. No account, no server. "
+            "Merging is per record against the last agreed state, a delete travels only when the other "
+            "machine did not edit since, and anything ambiguous keeps both copies. Preview first: it "
+            "writes nothing. Browser history, bookmarks, cookies and passwords never travel."
+        )
+        folder_copy.setWordWrap(True)
+        folder_copy.setObjectName("MutedLabel")
+        folder_layout.addWidget(folder_copy)
+        folder_row = QHBoxLayout()
+        folder_row.setSpacing(8)
+        self.lbl_sync_folder = QLabel("No folder chosen")
+        self.lbl_sync_folder.setObjectName("MutedLabel")
+        self.lbl_sync_folder.setWordWrap(True)
+        folder_row.addWidget(self.lbl_sync_folder, 1)
+        self.btn_choose_sync_folder = ghost_button("Choose folder…")
+        self.btn_clear_sync_folder = quiet_button("Turn off")
+        folder_row.addWidget(self.btn_choose_sync_folder)
+        folder_row.addWidget(self.btn_clear_sync_folder)
+        folder_layout.addLayout(folder_row)
+        folder_actions = QHBoxLayout()
+        folder_actions.setSpacing(8)
+        self.btn_preview_sync = ghost_button("Preview", "Show what a sync would change — writes nothing")
+        self.btn_apply_sync = primary_button("Sync now", "Merge with the folder (a snapshot is taken first)")
+        folder_actions.addWidget(self.btn_preview_sync)
+        folder_actions.addWidget(self.btn_apply_sync)
+        folder_actions.addStretch(1)
+        folder_layout.addLayout(folder_actions)
+        self.lbl_sync_status = QLabel("")
+        self.lbl_sync_status.setObjectName("MutedLabel")
+        self.lbl_sync_status.setWordWrap(True)
+        folder_layout.addWidget(self.lbl_sync_status)
+        content_layout.addWidget(folder_card)
+
+        plugins_card = QFrame()
+        plugins_card.setObjectName("SectionCard")
+        plugins_layout = QVBoxLayout(plugins_card)
+        plugins_layout.setContentsMargins(12, 12, 12, 12)
+        plugins_layout.setSpacing(6)
+        plugins_layout.addWidget(
+            components.section_header("Plugins", "Doors for other apps — declared, never executed")
+        )
+        plugins_copy = QLabel(
+            "A plugin is a JSON manifest, not a program: it says which store it reads or writes and "
+            "Mei does the work, so there is no code to sandbox and nothing to trust. Drop a folder "
+            "with plugin.json into your plugins directory to add one (CSV import/export in API 1)."
+        )
+        plugins_copy.setWordWrap(True)
+        plugins_copy.setObjectName("MutedLabel")
+        plugins_layout.addWidget(plugins_copy)
+        self.plugins_list = QListWidget()
+        self.plugins_list.setObjectName("CafeList")
+        self.plugins_list.setMaximumHeight(120)
+        self.plugins_list.setToolTip("Select a plugin, then run it")
+        plugins_layout.addWidget(self.plugins_list)
+        plugins_actions = QHBoxLayout()
+        plugins_actions.setSpacing(8)
+        self.btn_run_plugin = primary_button("Run…", "Import a file, or export one, with the selected plugin")
+        self.btn_open_plugins_folder = ghost_button("Open plugins folder", "Where your own manifest folders live")
+        plugins_actions.addWidget(self.btn_run_plugin)
+        plugins_actions.addWidget(self.btn_open_plugins_folder)
+        plugins_actions.addStretch(1)
+        plugins_layout.addLayout(plugins_actions)
+        self.lbl_plugin_problems = QLabel("")
+        self.lbl_plugin_problems.setObjectName("MutedLabel")
+        self.lbl_plugin_problems.setWordWrap(True)
+        plugins_layout.addWidget(self.lbl_plugin_problems)
+        content_layout.addWidget(plugins_card)
+
         diagnostics_card = QFrame()
         diagnostics_card.setObjectName("SectionCard")
         diag_layout = QVBoxLayout(diagnostics_card)
@@ -1434,6 +1649,12 @@ class SettingsPage(QWidget):
         self.btn_install_update.clicked.connect(self.shell.install_available_update)
         self.btn_open_release_page.clicked.connect(lambda: self.shell.open_release_page())
         self.btn_export_diagnostics.clicked.connect(self._export_diagnostics)
+        self.btn_choose_sync_folder.clicked.connect(self._choose_sync_folder)
+        self.btn_clear_sync_folder.clicked.connect(self._clear_sync_folder)
+        self.btn_preview_sync.clicked.connect(self._preview_sync)
+        self.btn_apply_sync.clicked.connect(self._apply_sync)
+        self.btn_run_plugin.clicked.connect(self._run_selected_plugin)
+        self.btn_open_plugins_folder.clicked.connect(self._open_plugins_folder)
         self.btn_open_log_folder.clicked.connect(self._open_log_folder)
         self.btn_open_profile_folder.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.shell.profile_dir))
@@ -1441,6 +1662,11 @@ class SettingsPage(QWidget):
         self.btn_open_data_folder.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(app_paths.data_root(self.shell.app_dir)))
         )
+        # Paint the folder and plugin cards once at build time, so a profile
+        # without a folder cannot show an enabled "Sync now" for a sync that has
+        # nowhere to go, and the plugin list is never empty-but-claimed.
+        self._refresh_folder_sync()
+        self._refresh_plugins()
 
     def refresh(self):
         account = life_service.load_sync_account(self.shell.profile_dir)
@@ -1487,6 +1713,8 @@ class SettingsPage(QWidget):
         self._refresh_google()
         self._refresh_security()
         self._refresh_monitors()
+        self._refresh_folder_sync()
+        self._refresh_plugins()
         self.chk_sync_enabled.setChecked(prefs.get_sync_enabled(self.shell.profile_dir))
         self.ed_sync_endpoint.setText(prefs.get_sync_endpoint(self.shell.profile_dir))
         self.ed_sync_token.setText(prefs.get_sync_token(self.shell.profile_dir))
@@ -1575,6 +1803,160 @@ class SettingsPage(QWidget):
             "no note text, no passwords, no browsing history. Read the log inside it if you "
             "had private pages open: Mei logs page titles at debug level.",
         )
+
+    def _refresh_folder_sync(self):
+        """Paint the folder card from the service's own status."""
+        state = sync_folder.status(self.shell.profile_dir)
+        if not state["enabled"]:
+            self.lbl_sync_folder.setText("No folder chosen")
+            self.lbl_sync_status.setText("")
+            self.btn_preview_sync.setEnabled(False)
+            self.btn_apply_sync.setEnabled(False)
+            self.btn_clear_sync_folder.setEnabled(False)
+            return
+        folder = state["folder"]
+        self.lbl_sync_folder.setText(folder)
+        self.lbl_sync_folder.setToolTip(folder)
+        self.btn_preview_sync.setEnabled(True)
+        self.btn_apply_sync.setEnabled(True)
+        self.btn_clear_sync_folder.setEnabled(True)
+        bits = []
+        if not state["folder_exists"]:
+            bits.append("that folder is not reachable right now")
+        elif state["payload_exists"]:
+            bits.append("a sync file is already there")
+        else:
+            bits.append("the sync file will be written on the first sync")
+        if state["last_sync"]:
+            bits.append(f"last merged {state['last_sync']}")
+        bits.append(f"{state['tracked_records']} record(s) tracked")
+        self.lbl_sync_status.setText(" · ".join(bits))
+
+    def _choose_sync_folder(self):
+        chosen = QFileDialog.getExistingDirectory(
+            self, "Choose the folder Mei syncs through", self.lbl_sync_folder.text() or ""
+        )
+        if not chosen:
+            return
+        try:
+            sync_folder.set_folder(self.shell.profile_dir, chosen)
+        except OSError as exc:  # noqa: BLE001 - report, never crash the page
+            QMessageBox.warning(self, "Folder sync", f"That folder cannot be used:\n{exc}")
+            return
+        self._refresh_folder_sync()
+
+    def _clear_sync_folder(self):
+        sync_folder.set_folder(self.shell.profile_dir, "")
+        self._refresh_folder_sync()
+
+    def _preview_sync(self):
+        """Read-only: show what a sync would do, including the conflicts."""
+        try:
+            report = sync_folder.compute(self.shell.profile_dir)
+        except sync_folder.SyncFormatError as exc:
+            QMessageBox.warning(self, "Folder sync", str(exc))
+            return
+        self.lbl_sync_status.setText(sync_folder.summary_line(report))
+        changes = report.get("changes", [])
+        if not changes:
+            QMessageBox.information(self, "Folder sync", "Nothing to merge — this machine is already in step.")
+            return
+        lines = [f"{change['action']}: {change['title']}  ({change['store_label']})" for change in changes[:12]]
+        if len(changes) > 12:
+            lines.append(f"… and {len(changes) - 12} more")
+        QMessageBox.information(
+            self,
+            "Folder sync — preview",
+            "A sync would do this (it writes nothing until you press Sync now):\n\n" + "\n".join(lines),
+        )
+
+    def _apply_sync(self):
+        """Merge for real: snapshot first, then write and publish."""
+        try:
+            report = sync_folder.sync(self.shell.profile_dir)
+        except sync_folder.SyncFormatError as exc:
+            QMessageBox.warning(self, "Folder sync", str(exc))
+            return
+        except OSError as exc:  # noqa: BLE001 - a missing folder drive is not a crash
+            QMessageBox.warning(self, "Folder sync", f"The sync folder could not be written:\n{exc}")
+            return
+        line = sync_folder.summary_line(report)
+        self.lbl_sync_status.setText(line)
+        self._refresh_folder_sync()
+        conflicts = sum(int(counts.get("conflicts", 0) or 0) for counts in report.get("summary", {}).values())
+        self.lbl_sync_status.setText(
+            line + (" · both copies were kept for the conflicts" if conflicts else "")
+        )
+        if report.get("snapshot"):
+            self.lbl_sync_status.setToolTip(f"Backup before this merge: {report['snapshot']}")
+        if report.get("applied"):
+            self.shell.refresh_shell(force_deep=True)
+
+    def _refresh_plugins(self):
+        """List every accepted manifest, and name every refused one."""
+        found = plugins.load_plugins(self.shell.profile_dir)
+        self.plugins_list.clear()
+        for plugin in found["plugins"]:
+            origin = "shipped with Mei" if plugin.builtin else "yours"
+            row = QListWidgetItem(f"{plugin.name}  ·  v{plugin.version}  ·  {plugin.kind}")
+            row.setToolTip(f"{plugin.touches()}\nAPI {plugin.api} · {origin}\n{plugin.path}")
+            # The manifest rides on the row itself (a QListWidgetItem cannot be a
+            # dict key — PyQt makes it unhashable).
+            row.setData(Qt.UserRole, plugin)
+            self.plugins_list.addItem(row)
+        self.btn_run_plugin.setEnabled(bool(found["plugins"]))
+        problems = found.get("problems", [])
+        if problems:
+            first = problems[0]
+            more = f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""
+            self.lbl_plugin_problems.setText(
+                f"{len(problems)} manifest(s) refused — {os.path.basename(os.path.dirname(first['path']))}: "
+                f"{first['reason']}{more}"
+            )
+            self.lbl_plugin_problems.setToolTip("\n".join(f"{item['path']}: {item['reason']}" for item in problems))
+        else:
+            self.lbl_plugin_problems.setText(f"{len(found['plugins'])} plugin(s) ready.")
+            self.lbl_plugin_problems.setToolTip("")
+
+    def _selected_plugin(self):
+        row = self.plugins_list.currentItem()
+        chosen = row.data(Qt.UserRole) if row is not None else None
+        return chosen if isinstance(chosen, plugins.Plugin) else None
+
+    def _run_selected_plugin(self):
+        """One file dialog, one service call, one honest report."""
+        plugin = self._selected_plugin()
+        if plugin is None:
+            QMessageBox.information(self, "Plugins", "Select a plugin in the list first.")
+            return
+        if plugin.kind == "importer":
+            path, _filter = QFileDialog.getOpenFileName(
+                self, f"Import with {plugin.name}", "", "CSV / TSV (*.csv *.tsv *.txt);;All files (*)"
+            )
+        else:
+            suggested = os.path.join(app_paths.downloads_dir(self.shell.profile_dir), f"{plugin.id}.csv")
+            path, _filter = QFileDialog.getSaveFileName(
+                self, f"Export with {plugin.name}", suggested, "CSV (*.csv)"
+            )
+        if not path:
+            return
+        try:
+            report = plugins.run_plugin(plugin, self.shell.profile_dir, path)
+        except plugins.PluginError as exc:
+            QMessageBox.warning(self, "Plugins", f"{plugin.name} could not run:\n{exc}")
+            return
+        except OSError as exc:  # noqa: BLE001 - a locked or missing file is not a crash
+            QMessageBox.warning(self, "Plugins", f"The file could not be used:\n{exc}")
+            return
+        self.lbl_plugin_problems.setText(plugins.report_line(report, plugin))
+        if plugin.kind == "importer":
+            self.shell.refresh_shell(force_deep=True)
+        QMessageBox.information(self, "Plugins", plugins.report_line(report, plugin))
+
+    def _open_plugins_folder(self):
+        folder = plugins.plugins_dir(self.shell.profile_dir)
+        os.makedirs(folder, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _open_log_folder(self):
         QDesktopServices.openUrl(QUrl.fromLocalFile(self._log_dir()))
@@ -1726,7 +2108,8 @@ class SettingsPage(QWidget):
             self.shell.profile_dir, lan_ip=self._local_ipv4_hint()
         )
         self.lbl_pairing_code.setText(
-            "Mã ghép nối (Mở Mei Remote → Cài đặt → Dán mã hoặc quét QR):\n" + self._current_pairing_code
+            "Mã ghép nối — dán vào Mei Remote (Cài đặt) hoặc vào extension Mei Bridge "
+            "trong Chrome / Opera GX:\n" + self._current_pairing_code
         )
         try:
             png = android_bridge_service.pairing_qr_png(self._current_pairing_code)
@@ -1739,7 +2122,12 @@ class SettingsPage(QWidget):
         code = getattr(self, "_current_pairing_code", "")
         if code:
             QGuiApplication.clipboard().setText(code)
-            QMessageBox.information(self, "Quick pairing", "Pairing code copied — paste it into Mei Remote.")
+            QMessageBox.information(
+                self,
+                "Quick pairing",
+                "Pairing code copied — paste it into Mei Remote, or into the Mei Bridge extension "
+                "(Extensions/tab-window-bridge) for “send this tab to Mei”.",
+            )
 
     def _generate_mobile_token(self):
         self.ed_mobile_token.setText(prefs.generate_mobile_bridge_token())

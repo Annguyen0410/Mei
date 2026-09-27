@@ -1,0 +1,16 @@
+{
+  "id": "todoist-csv",
+  "name": "Todoist → Quick tasks",
+  "version": "1.0",
+  "api": 1,
+  "kind": "importer",
+  "target": "tasks",
+  "format": "csv",
+  "summary": "Reads Todoist's CSV export (CONTENT / DESCRIPTION) and adds the rows to Mei's quick-task inbox.",
+  "builtin": true,
+  "mapping": {
+    "title": "CONTENT",
+    "notes": "DESCRIPTION",
+    "bucket": "PRIORITY"
+  }
+}

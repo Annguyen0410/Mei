@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from email import policy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from litebrowser.core import app_paths, app_version, prefs
 from litebrowser.core.log import get_logger
@@ -23,7 +23,9 @@ from litebrowser.core.profile_lock import profile_locked
 
 _log = get_logger("android_bridge")
 from litebrowser.services import (
+    desk_service,
     extension_bridge,
+    flashcard_service,
     history_service,
     life_service,
     open_request,
@@ -41,9 +43,37 @@ SUPPORTED_ACTIONS = (
     "import_tabs_batch",
     "upload_file_reference",
     "save_page",
+    "save_selection",
     "create_drawing",
     "open_app",
 )
+
+#: Origins allowed to read a bridge response. A browser extension runs on the
+#: machine it is installed on, so letting *it* talk to the bridge is what turns
+#: "export a file and import it by hand" into "send this tab to Mei". A web page
+#: is never in this list: the token already stops one from doing anything, and
+#: CORS is what stops it from quietly trying.
+EXTENSION_ORIGIN_PREFIXES = ("chrome-extension://", "moz-extension://", "safari-web-extension://")
+
+#: Anything here means the Origin is not a plain scheme://host and gets dropped.
+_ORIGIN_JUNK_RE = re.compile(r"[\s,;\\]")
+
+
+def _extension_origin(value: str | None) -> str:
+    """
+    The request's Origin when it is a browser extension, else an empty string.
+
+    The value is rebuilt from the scheme and host only, so nothing a client sends
+    (a path, a query, a stray space, an opaque "null") is ever echoed back.
+    """
+    origin = (value or "").strip()
+    if not origin or _ORIGIN_JUNK_RE.search(origin):
+        return ""
+    for prefix in EXTENSION_ORIGIN_PREFIXES:
+        if origin.startswith(prefix):
+            bare = origin[len(prefix) :].split("/", 1)[0].split("?", 1)[0].split("#", 1)[0].strip()
+            return prefix + bare if bare else ""
+    return ""
 
 # Chain app ids resolvable over the bridge: MeiRemote can say "open MAS" and
 # the desktop resolves the deployed URL from chain.json (single source of truth).
@@ -84,6 +114,10 @@ class BridgeHTTPServer(ThreadingHTTPServer):
 
 
 PAIRING_PREFIX = "MEI1"
+PAIRING_MAX_TOKEN_CHARS = 512
+#: A host that carries any of these cannot be rebuilt into a URL, so it is not a
+#: host. Shared, character for character, with the extension's parser.
+PAIRING_HOST_JUNK_RE = re.compile(r"[\s/\\|,]")
 
 
 def _utc_iso_z() -> str:
@@ -119,12 +153,23 @@ def pairing_qr_png(code: str, scale: int = 6) -> bytes:
 
 
 def parse_pairing_code(code: str) -> dict[str, str] | None:
-    """Parse a pairing code into host/port/token; None when malformed."""
+    """
+    Parse a pairing code into host/port/token; None when malformed.
+
+    The rules are shared with the browser extension's copy of this parser
+    (``Extensions/tab-window-bridge/bridge.js``): four parts, the MEI1 prefix, a
+    digit port inside the real TCP range, and a non-empty host and token. A code
+    that survives here is a code that survives there.
+    """
     parts = (code or "").strip().split("|")
     if len(parts) != 4 or parts[0] != PAIRING_PREFIX:
         return None
-    host, port, token = parts[1], parts[2], parts[3]
-    if not host or not port.isdigit() or not token:
+    host, port, token = parts[1].strip(), parts[2].strip(), parts[3].strip()
+    if not host or PAIRING_HOST_JUNK_RE.search(host):
+        return None
+    if not port.isdigit() or not (1 <= int(port) <= 65535):
+        return None
+    if not token or len(token) > PAIRING_MAX_TOKEN_CHARS:
         return None
     return {"host": host, "port": port, "token": token}
 
@@ -202,6 +247,17 @@ def _tags_suffix(tags: Any) -> str:
     if not parts:
         return ""
     return "\n\n" + "\n".join(f"# {p}" for p in parts)
+
+
+def _card_tags(tags: Any) -> str:
+    """Card bodies follow the deck convention: Anki tags carry no spaces (#tag)."""
+    if not isinstance(tags, list) or not tags:
+        return ""
+    parts = [str(t).strip().lstrip("#").replace(" ", "-") for t in tags if str(t).strip()]
+    parts = [p for p in parts if p]
+    if not parts:
+        return ""
+    return "\n\n" + " ".join(f"#{p}" for p in parts)
 
 
 def _safe_vault_target_dir(base_dir: str, relative_target: str) -> str | None:
@@ -472,6 +528,51 @@ def dispatch_ingest(profile_dir: str, envelope: dict[str, Any]) -> dict[str, Any
                 "error": None,
             }
 
+        if action == "save_selection":
+            url = (p.get("url") or "").strip()
+            text = p.get("text")
+            text = text if isinstance(text, str) else ""
+            if not text.strip():
+                raise ValueError("save_selection requires text")
+            title = (p.get("title") or "").strip() or url or "Selection"
+            as_what = (p.get("as") or "note").strip().lower()
+            tags_line = _tags_suffix(p.get("tags"))
+            if as_what == "card":
+                front = (p.get("front") or "").strip() or title
+                back = text.strip() + (f"\n\n{url}" if url else "") + _card_tags(p.get("tags"))
+                card = flashcard_service.add_card(profile_dir, front, back)
+                return {
+                    "ok": True,
+                    "action": action,
+                    "received_at": received,
+                    "result": {"card_id": card.get("id"), "front": card.get("front")},
+                    "error": None,
+                }
+            if as_what == "saved_page":
+                if not url:
+                    raise ValueError("save_selection as saved_page requires url")
+                page = life_service.add_saved_page(profile_dir, title, url, summary=(text.strip() + tags_line).strip())
+                return {
+                    "ok": True,
+                    "action": action,
+                    "received_at": received,
+                    "result": {"saved_page_id": page.get("id"), "url": page.get("url")},
+                    "error": None,
+                }
+            category = (p.get("category") or "Clippings").strip() or "Clippings"
+            body = text.strip()
+            if url:
+                body = f"{body}\n\nSource: {url}"
+            body = (body + tags_line).strip()
+            note = personal_service.create_note(profile_dir, title, body, category)
+            return {
+                "ok": True,
+                "action": action,
+                "received_at": received,
+                "result": {"note_id": note.get("id"), "category": note.get("category")},
+                "error": None,
+            }
+
         if action == "save_page":
             url = (p.get("url") or "").strip()
             if not url:
@@ -559,6 +660,73 @@ def dispatch_ingest(profile_dir: str, envelope: dict[str, Any]) -> dict[str, Any
             "result": None,
             "error": _json_error("service_failure", "The desktop app could not complete this action.")["error"],
         }
+
+
+#: A ``day`` query parameter must look like a date before it is handed to the
+#: desk, otherwise a junk value would reach datetime.strptime and become a 500.
+DAY_PARAM_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+#: Row fields the phone is allowed to see. The desk's rows carry a couple more
+#: internals (``command``, ``kind``) that mean nothing on a small screen.
+PHONE_ROW_KEYS = ("title", "subtitle", "marker", "kind", "id")
+
+
+def _read_day(value: str) -> str:
+    """The requested day when it is a real ``YYYY-MM-DD`` date, else "" (today)."""
+    day = (value or "").strip()
+    if not DAY_PARAM_RE.match(day):
+        return ""
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        return ""
+    return day
+
+
+def desk_for_phone(profile_dir: str, day: str = "") -> dict:
+    """
+    The desk as the phone reads it — the other direction of the bridge.
+
+    Ingest actions let the phone *write* into Mei. This is the answer to “hôm nay
+    học gì?”: the same four blocks Home opens on (``desk_service.build_desk``),
+    trimmed to what fits a small screen — one line per row, plus the four numbers
+    a home-screen widget can print. Read-only: no store is written, nothing is
+    created, so calling it in a loop costs nothing but JSON parsing.
+    """
+    desk = desk_service.build_desk(profile_dir, day=_read_day(day))
+    blocks = []
+    for block in desk.get("blocks", []):
+        rows = [
+            {key: row.get(key, "") for key in PHONE_ROW_KEYS if row.get(key, "")}
+            for row in block.get("rows", [])
+        ]
+        blocks.append(
+            {
+                "key": block.get("key", ""),
+                "title": block.get("title", ""),
+                "count": int(block.get("count", 0) or 0),
+                "unit": block.get("unit", ""),
+                "empty": block.get("empty", ""),
+                "rows": rows,
+            }
+        )
+    next_block = desk_service.block_by_key(desk, "next")
+    return {
+        "generated_at": _utc_iso_z(),
+        "protocol_version": API_VERSION,
+        "date": desk.get("date", ""),
+        "headline": desk.get("headline", ""),
+        "pulse": desk.get("pulse", ""),
+        "steps": list(desk.get("steps", [])),
+        "next": next_block.get("flow") or None,
+        "blocks": blocks,
+        "numbers": {
+            "on_the_plate": int(desk_service.block_by_key(desk, "today").get("count", 0) or 0),
+            "waiting": int(desk_service.block_by_key(desk, "due").get("count", 0) or 0),
+            "left_open": int(desk_service.block_by_key(desk, "in_progress").get("count", 0) or 0),
+            "cards_due": len(flashcard_service.due_cards(profile_dir)),
+        },
+    }
 
 
 def _parse_multipart(content_type: str, body: bytes) -> list[tuple[str, str, bytes | None, str | None]]:
@@ -695,6 +863,16 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
 
     def end_headers(self) -> None:
+        # CORS is answered for extension origins only, and every response carries
+        # it — including the error replies, so a failed call is readable by the
+        # extension instead of surfacing as an opaque network error.
+        origin = _extension_origin(self.headers.get("Origin"))
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Vary", "Origin")
         self._send_security_headers()
         super().end_headers()
 
@@ -743,7 +921,15 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
         return length is not None and length > MAX_BODY_BYTES
 
     def do_OPTIONS(self) -> None:
-        self._send_json(405, _json_error("method_not_allowed", "CORS is not enabled for the local bridge"))
+        """CORS preflight: answered for browser extensions, refused for the web."""
+        if not _extension_origin(self.headers.get("Origin")):
+            self._send_json(405, _json_error("method_not_allowed", "CORS is answered for browser extensions only"))
+            return
+        if not self._guard():
+            return
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:
         srv: BridgeHTTPServer = self.server  # type: ignore[assignment]
@@ -776,6 +962,14 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/api/mobile/today":
+            # The other direction: the phone asks what is on the desk. Read-only,
+            # same token as every other call, and a junk ?day= falls back to today
+            # instead of raising inside the desk builder.
+            day = parse_qs(urlparse(self.path).query).get("day", [""])[0]
+            self._send_json(200, {"ok": True, **desk_for_phone(profile_dir, day)})
+            return
+
         if path == "/api/mobile/capabilities":
             self._send_json(
                 200,
@@ -783,6 +977,7 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "protocol_version": API_VERSION,
                     "actions": list(SUPPORTED_ACTIONS),
+                    "read": {"today": "/api/mobile/today", "day_param": True},
                     "auth": {"mode": "bearer"},
                     "upload": {
                         "multipart": True,

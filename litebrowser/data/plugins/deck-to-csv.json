@@ -1,0 +1,11 @@
+{
+  "id": "deck-to-csv",
+  "name": "Deck → CSV",
+  "version": "1.0",
+  "api": 1,
+  "kind": "exporter",
+  "target": "cards",
+  "format": "csv",
+  "summary": "Writes the flashcard deck as a CSV (front, back, due) for Quizlet, Anki decks built elsewhere or a spreadsheet.",
+  "builtin": true
+}

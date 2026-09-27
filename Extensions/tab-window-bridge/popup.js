@@ -246,6 +246,115 @@ async function refreshStoredBatch() {
   setStatus(`Loaded stored batch with ${payload.tabs.length} tabs.`);
 }
 
+/* --- talking to Mei (desktop bridge) -------------------------------------- */
+
+const BRIDGE_KEY = "meiBridgeSettings";
+
+function setBridgeStatus(text, isError = false) {
+  const node = document.getElementById("bridgeStatus");
+  node.textContent = text || "";
+  node.style.color = isError ? "#fca5a5" : "#fde68a";
+}
+
+function setSendStatus(text, isError = false) {
+  const node = document.getElementById("sendStatus");
+  node.textContent = text || "";
+  node.style.color = isError ? "#fca5a5" : "#fde68a";
+}
+
+async function loadBridgeSettings() {
+  const data = await chrome.storage.local.get([BRIDGE_KEY]);
+  return MeiBridge.normalizeSettings(data[BRIDGE_KEY] || null);
+}
+
+async function saveBridgeSettings(settings) {
+  await chrome.storage.local.set({ [BRIDGE_KEY]: settings });
+}
+
+async function currentWebTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !/^https?:/i.test(tab.url || "")) {
+    throw new Error("Tab hiện tại không phải trang web (http/https) nên không gửi được.");
+  }
+  return tab;
+}
+
+/* Pair (or re-pair) with the desktop bridge, then prove it with a ping.
+ * Returns the settings in use, or null when Mei could not be reached — the
+ * status line already explains why in that case. */
+async function connectBridge(options = {}) {
+  const raw = document.getElementById("pairingInput").value.trim();
+  let settings = await loadBridgeSettings();
+  if (raw) {
+    const parsed = MeiBridge.parsePairingCode(raw);
+    if (!parsed) {
+      throw new Error("Mã ghép nối phải có dạng MEI1|host|port|token (copy từ Mei → Settings → Mobile bridge).");
+    }
+    // The code carries the LAN address so a phone can reach the desktop; this
+    // extension runs on that same machine, so it takes the shortest road and
+    // never needs the bridge opened to the network.
+    settings = MeiBridge.isLoopbackHost(parsed.host) ? parsed : { ...parsed, host: MeiBridge.DEFAULT_HOST };
+    await saveBridgeSettings(settings);
+    document.getElementById("pairingInput").value = "";
+  }
+  if (!settings.token) {
+    if (options.quiet) {
+      setBridgeStatus("Chưa nối Mei — dán mã ghép nối để bắt đầu.");
+      return null;
+    }
+    throw new Error("Dán mã ghép nối từ Mei → Settings → Mobile bridge (nút “Copy pairing code”).");
+  }
+  const reply = await MeiBridge.ping(settings);
+  if (!reply.ok) {
+    setBridgeStatus((raw ? "Đã lưu mã, nhưng " : "") + reply.message, true);
+    return null;
+  }
+  setBridgeStatus("Đã nối " + MeiBridge.capabilitiesLine(reply.body));
+  return settings;
+}
+
+async function readSelection(tabId) {
+  if (!chrome.scripting || !chrome.scripting.executeScript) return "";
+  try {
+    const frames = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => String(window.getSelection ? window.getSelection().toString() : ""),
+    });
+    const first = Array.isArray(frames) ? frames[0] : null;
+    return first && typeof first.result === "string" ? first.result : "";
+  } catch (error) {
+    console.warn("Could not read the page selection.", error);
+    throw new Error("Không đọc được đoạn bôi đen trên trang này — tải lại trang rồi bấm lại.");
+  }
+}
+
+async function sendTabToMei() {
+  const settings = await connectBridge({});
+  if (!settings) return;
+  const tab = await currentWebTab();
+  const reply = await MeiBridge.post(settings, "save_page", MeiBridge.tabPayload(tab));
+  setSendStatus(reply.message, !reply.ok);
+}
+
+async function sendSelectionToMei() {
+  const settings = await connectBridge({});
+  if (!settings) return;
+  const tab = await currentWebTab();
+  const text = (await readSelection(tab.id)).trim();
+  if (!text) {
+    throw new Error("Chưa thấy đoạn bôi đen nào — bôi đen trong trang rồi bấm lại.");
+  }
+  const payload = MeiBridge.selectionPayload({
+    text,
+    url: tab.url,
+    title: tab.title,
+    mode: document.getElementById("selectionMode").value,
+    tags: document.getElementById("tagsInput").value,
+  });
+  const reply = await MeiBridge.post(settings, "save_selection", payload);
+  setSendStatus(reply.message, !reply.ok);
+}
+
 /* --- wire-up -------------------------------------------------------------- */
 
 document.getElementById("captureBtn").addEventListener("click", async () => {
@@ -313,7 +422,44 @@ document.getElementById("refreshBtn").addEventListener("click", async () => {
   }
 });
 
+document.getElementById("connectBtn").addEventListener("click", async () => {
+  try {
+    setBridgeStatus("Đang nối…");
+    await connectBridge({});
+  } catch (error) {
+    console.error(error);
+    setBridgeStatus(error.message || "Không nối được Mei.", true);
+  }
+});
+
+document.getElementById("sendTabBtn").addEventListener("click", async () => {
+  try {
+    setSendStatus("Đang gửi…");
+    await sendTabToMei();
+  } catch (error) {
+    console.error(error);
+    setSendStatus(error.message || "Gửi tab thất bại.", true);
+  }
+});
+
+document.getElementById("sendSelectionBtn").addEventListener("click", async () => {
+  try {
+    setSendStatus("Đang gửi…");
+    await sendSelectionToMei();
+  } catch (error) {
+    console.error(error);
+    setSendStatus(error.message || "Gửi đoạn bôi đen thất bại.", true);
+  }
+});
+
 refreshStoredBatch().catch(error => {
   console.error(error);
   setStatus("Could not read stored batch.", true);
+});
+
+/* Opening the popup is the most common moment to notice Mei is (not) running,
+ * so the pairing is checked quietly instead of waiting for a click. */
+connectBridge({ quiet: true }).catch(error => {
+  console.error(error);
+  setBridgeStatus("Không đọc được cấu hình ghép nối.", true);
 });

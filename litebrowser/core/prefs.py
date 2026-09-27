@@ -308,6 +308,13 @@ def resolved_auto_theme(base_dir):
         "sand-day": ("sand-day", "ocean-night"),
         "lavender-day": ("lavender-day", "lavender-night"),
         "cocoa-day": ("cocoa-day", "mocha-mint"),
+        # 2026 pass: weather + time-of-day themes. The night half of each pair is
+        # listed as its own key too, so picking "Rainy Night" and leaving auto on
+        # cannot silently slide back to a different night theme.
+        "rain-day": ("rain-day", "rain-night"),
+        "rain-night": ("rain-day", "rain-night"),
+        "sunrise-day": ("sunrise-day", "midnight-ember"),
+        "autumn-day": ("autumn-day", "cafe-night"),
     }
     day, night = pairs.get(theme_id, (_theme_mod.DEFAULT_THEME, "cafe-night"))
     return day if day_mode else night

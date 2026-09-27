@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml/badge.svg)](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml)
 
-**Mei** is a café-themed, multi-workspace desktop browser and personal hub built on **PyQt5/PyQt6 + QtWebEngine** (Chromium). It runs on both Qt bindings through the `litebrowser/qt_compat.py` shim — when PyQt6-WebEngine 6.8 (Chromium 122) is installed it uses that; otherwise it falls back to PyQt5.
+**Mei** is one tidy window for a study day: the pages you read, the plan you keep, the cards you review, the notes you write. It is built on **PyQt5/PyQt6 + QtWebEngine** — a real Chromium underneath — and runs on both Qt bindings through the `litebrowser/qt_compat.py` shim: PyQt6-WebEngine 6.8 when it is installed, PyQt5 otherwise.
 
-It is not just a browsing window: one app holds a full Chromium browser, a Personal Hub (notes, tasks, flashcards, calendar, boards, files, sites), an AI workspace, a library, and a settings center — all linked by a search box that can find and jump to any feature in the app.
+It is deliberately not the best tool at any one job. It is the most convenient one. A full Chromium browser, a weekly planner, an SM-2 deck, notes with `[[wiki-links]]`, an AI workspace, a library and a settings center live in one process, because a **browser is where your reading already happens and a study desk is where it should end up**. There is no account and no cloud of ours: every byte stays in your profile folder, and the pieces talk to each other instead of to a server.
 
 > **Docs**
 > - 🚀 **Run & package** the app → [`RUN_AND_BUILD.md`](RUN_AND_BUILD.md)
@@ -74,13 +74,18 @@ internet can upgrade from a folder instead: copy `update.json` + `Mei.exe` into
 ## Highlights
 
 - **One loop, five stations** — capture → plan → study → review → reflect. Home reads every store (planner, deck, captures, pour journal, links) and offers the single next step with a **▶ Continue** button; `/flow` does the same from the omnibar.
+- **One desk, not a menu** — Home opens on four blocks: what is on the plate **today**, what is **due** (late or landing this week), what you left **unfinished**, and the loop's one **next step** with ▶ Continue. The launcher grid is one click away behind **☰ All features**, not the first thing you see.
+- **A search box that reaches your work** — the omnibar (`Ctrl+K`) finds app features *and* your own notes, cards, planner rows, tasks, saved pages and courses; Enter opens the item where it lives, not the workspace it lives in.
+- **A study session you can sit down to** — **☕ Study session** on Home asks which cup (every cup is a pace: 15/25/45/50 minutes) and what you will finish before the timer starts; the pour lands in the same journal the weekly review reads.
+- **Two directions, no cloud** — Settings → **Folder sync** merges this profile with a folder you already sync (OneDrive, Dropbox, a USB stick): *Preview* shows the plan, *Apply* keeps a backup and writes only what changed, and an edit always wins over a deletion.
+- **Open doors** — the **Mei Bridge extension** (`Extensions/tab-window-bridge`) pairs with the same code as the phone and sends the current tab or your selection into Mei; `GET /api/mobile/today` lets **MeiRemote** open on today's desk; Settings → **Plugins** imports/exports Todoist, TickTick, notes and deck CSV from manifests that declare fields instead of running code.
 - **Seven workspaces** behind one left rail — Home, Browser, History, AI, Personal, Library, Settings (`Ctrl+1…7`).
 - **Omnibar feature finder** — type any letters (`b`, `s`, `per…`) into the search box and get a live list of every matching feature; Enter or click jumps there. Works for *every* letter.
 - **Text selection everywhere** — every label is selectable with the mouse, every button has right-click **Copy text**.
 - **Full Chromium browser** — tab desk with workspace tabs, colored tab groups, split view, web panels (Telegram, WhatsApp, Discord…), tab hibernation, memory saver, zen mode.
 - **Personal Hub** — notes with Obsidian-style `[[wiki-links]]` and a neural graph, a **weekly student planner** (courses, deadlines, focus blocks, ▶ Study sessions that credit their minutes back), tasks, **SM-2 flashcard review**, calendar with ICS, sticky boards, files, sites.
 - **AI workspace** — RAG-local, OpenRouter, Ollama and llama.cpp providers, passcode-gated.
-- **16 café themes** with auto day/night pairing and 9 accent presets.
+- **20 café themes** — including *Rainy Day / Rainy Night*, *Sunrise* and *Autumn Table* — with auto day/night pairing and 9 accent presets.
 - **Privacy-first** — adblock, https-only, third-party cookie blocking, VPN/proxy support, incognito tabs, password vault, per-site permissions.
 - **Local-first** — all data lives on your machine under the profile folder; no mandatory accounts or cloud.
 
@@ -283,7 +288,10 @@ Every label in the app (titles, subtitles, stats, hints) is **selectable with th
 - **Calendar ICS** — import/export without any cloud.
 - **RSS reader** — RSS2 + Atom under the web-panel menu, items open as tabs.
 - **Global hotkey** `Ctrl+Alt+M` — quick-note overlay from anywhere in Windows.
-- **Android bridge** — push links, files and notes from your phone over Wi-Fi (optional).
+- **Android bridge** — push links, files and notes from your phone over Wi-Fi (optional); `GET /api/mobile/today` answers the other way, with the desk (today, due, unfinished, next step, cards due) so MeiRemote opens on today instead of an empty screen.
+- **Mei Bridge extension** — `Extensions/tab-window-bridge` for Chrome / Opera GX sends the current tab or the selection straight into Mei as a note, a flashcard or a saved page (tags included), and still exports a whole multi-monitor workspace as JSON/ZIP for the Import Center.
+- **Folder sync** — Settings → Folder sync merges Mei with a folder you already sync: three-way merge against a baseline, edits win over deletions, preview before writing, backup on every apply, and unwritable/unreadable folders are reported instead of half-applied.
+- **Plugins** — Settings → Plugins lists the manifests in your profile's `plugins/` folder: Todoist / TickTick CSV in, notes or deck CSV out. Declarative only — no plugin runs code.
 - **Self-update** — checks for new releases and can install them.
 
 ---

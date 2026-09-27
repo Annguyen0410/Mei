@@ -1,11 +1,18 @@
-"""Shell command palette: search every app feature and jump straight to it.
+"""Shell command palette: search every app feature *and your own content*.
 
 Typing filters workspaces, Personal sub-pages, the bundled/remote sites and
 every slash command by name — ``b`` surfaces Browser, Bí Mật, Bói Toán,
 Boards, ... Enter (or a click) executes the highlighted row through the
 shell's own dispatch, so password-protected workspaces (AI / Personal)
 prompt for the passcode first and then enter automatically.
+
+Since 1.0.0.0 the same box also reaches *what you wrote*: ``content_entries``
+adds your notes, cards, planner rows, tasks and saved pages under the feature
+rows, because "jump to Notes" was never the hard part — "jump to the note I
+half-remember" is. Feature rows and content rows are assembled here so the
+palette dialog, the omnibar popup and the tests all read one list.
 """
+from litebrowser.services import life_service, personal_service
 from PyQt5.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QWidget
 
 from litebrowser.core import app_paths, prefs
@@ -113,6 +120,84 @@ def _build_entries(parent) -> list[dict]:
     return entries
 
 
+#: Glyph + category per content kind returned by ``life_service.search_everything``
+#: (plus ``note``, which comes from the note store). Used to paint a content row
+#: exactly like a feature row so the popup does not need a second look.
+CONTENT_GLYPHS = {
+    "note": "✎",
+    "task": "✓",
+    "event": "◷",
+    "board": "◌",
+    "board-node": "◌",
+    "saved-page": "▦",
+    "planner-course": "▦",
+    "planner-item": "▦",
+    "planner-block": "◷",
+    "flashcard": "⇄",
+}
+
+CONTENT_CATEGORIES = {
+    "note": "Your note",
+    "task": "Your task",
+    "event": "Your calendar",
+    "board": "Your board",
+    "board-node": "Your board",
+    "saved-page": "Saved page",
+    "planner-course": "Your course",
+    "planner-item": "Your plan",
+    "planner-block": "Focus block",
+    "flashcard": "Your card",
+}
+
+#: Two characters minimum: one letter matches half the profile, which is noise.
+CONTENT_MIN_QUERY = 2
+
+
+def content_entries(base_dir: str, query: str, limit: int = 8) -> list[dict]:
+    """Your own records matching ``query``, shaped exactly like feature entries.
+
+    Reads ``life_service.search_everything`` (tasks, calendar, boards, saved
+    pages, courses, plan items, focus blocks, cards) plus the note store, which
+    that function deliberately does not touch. Rows carry ``kind: "content"``
+    with a payload the shell routes through ``open_library_item``, so a result
+    lands where the item actually lives instead of opening a workspace.
+    """
+    q = (query or "").strip()
+    if len(q) < CONTENT_MIN_QUERY or not base_dir:
+        return []
+    hits = list(life_service.search_everything(base_dir, q))
+    try:
+        # Notes come from their own store, and are tagged explicitly so the shell
+        # routes them to the note editor (a bare row would route nowhere).
+        hits.extend(
+            {
+                "kind": "note",
+                "title": note.get("title", ""),
+                "id": note.get("id", ""),
+                "subtitle": note.get("category", ""),
+            }
+            for note in personal_service.list_notes(base_dir, q)
+        )
+    except Exception:  # noqa: BLE001  a broken vault must not break the omnibar
+        pass
+    entries: list[dict] = []
+    for hit in hits[:limit]:
+        kind = str(hit.get("kind", ""))
+        title = str(hit.get("title", "") or "").strip() or "(untitled)"
+        subtitle = str(hit.get("subtitle", "") or "").strip()
+        entries.append(
+            {
+                "title": title,
+                "category": CONTENT_CATEGORIES.get(kind, "Your content"),
+                "keywords": f"{title.lower()} {subtitle.lower()} {kind}",
+                "glyph": CONTENT_GLYPHS.get(kind, "•"),
+                "kind": "content",
+                "payload": {"kind": kind, "id": hit.get("id", ""), "subtitle": subtitle},
+            }
+        )
+    return entries
+
+
 def _base_dir(parent) -> str:
     return getattr(parent, "profile_dir", None) or getattr(parent, "base_dir", None) or ""
 
@@ -123,6 +208,21 @@ def _entry_haystack(entry: dict) -> str:
         entry.get("category", "").lower(),
         entry.get("keywords", ""),
     )
+
+
+def search_entries(feature_entries: list, base_dir: str, query: str) -> list:
+    """Feature rows plus your content, ready for one popup.
+
+    Content is appended so a query that names a feature (``review``) still lands
+    on the feature first, while a query that names your work lands on your work.
+    When content matches, the feature list is trimmed so the content rows cannot
+    be pushed past a popup's row budget.
+    """
+    rows = filter_feature_entries(feature_entries, query)
+    content = content_entries(base_dir, query)
+    if content:
+        return (rows[:24] + content)[:40]
+    return rows
 
 
 def filter_feature_entries(entries: list, q: str) -> list:

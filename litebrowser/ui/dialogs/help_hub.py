@@ -47,6 +47,10 @@ from litebrowser.ui.dialogs.vpn_hub import show_vpn_hub
 GUIDE_FEATURES = (
     ("Two windows, seven workspaces", "Workspace 1 is browsing, Workspace 2 is your personal side. Ctrl+1..7 jumps between workspaces inside a window."),
     ("Command palette", "Ctrl+K searches tabs, bookmarks, history and every slash command. Fastest way to reach anything by name."),
+    ("The desk", "Home opens on four blocks: today's plate, what is due, what you left unfinished, and the loop's next step. The launcher grid moved behind ☰ All features."),
+    ("Search everything", "The same box reaches your own work: notes, cards, planner rows, courses, tasks, saved pages. Enter opens the item itself, not the workspace."),
+    ("Study session ritual", "Home → ☕ Study session: every cup is a pace (15/25/45/50 min), say what you will finish, and the pour starts — the weekly review counts it like any other."),
+    ("Weather & time-of-day themes", "Rainy Day / Rainy Night, Sunrise and Autumn Table joined the theme picker (/theme); auto day/night swaps within each pair."),
     ("Omnibar commands", "Type / in the address bar: /task, /note, /focus 25, /brief, /theme matcha, /group-tabs, /help — hints appear as you type."),
     ("Web panels", "The ◫ button docks Telegram, WhatsApp, Discord or Spotify beside the page instead of in another window."),
     ("Zen mode", "Ctrl+Shift+Z hides every bar for reading; Esc brings them back."),
@@ -63,6 +67,10 @@ GUIDE_FEATURES = (
     ("Tab memory control", "Ctrl+Shift+M freezes background tabs (or open tabs) so a heavy session stays responsive."),
     ("Clipboard history", "Ctrl+Shift+V reopens the last 20 things you copied, in the browser window."),
     ("Cross-device sync", "/sync pushes and pulls a snapshot from your own server; nothing is sent anywhere else."),
+    ("Folder sync (two-way)", "Settings → Folder sync points at a folder you already sync (OneDrive, Dropbox, a USB stick): Preview shows the plan, Apply merges both sides and takes a backup first. An edit wins over a deletion, and nothing is written when the two sides already agree."),
+    ("Plugins (declare, don't run)", "Settings → Plugins lists the manifests in your profile's plugins folder: importers (Todoist, TickTick CSV) and exporters (notes, deck → CSV). A manifest declares fields and a target store — no plugin executes code."),
+    ("Send from your browser", "The Mei Bridge extension (Extensions/tab-window-bridge) pairs with the same code as the phone app, then sends the current tab or the text you highlighted straight into Mei — as a note, a flashcard or a saved page, with tags."),
+    ("The phone asks what's on the desk", "GET /api/mobile/today answers the bridge with the same four blocks Home opens on, plus cards due and the loop's next step, so MeiRemote can open on today instead of an empty screen."),
     ("Auto theme", "Settings can follow the clock: the shell re-tints itself between day and night palettes."),
 )
 

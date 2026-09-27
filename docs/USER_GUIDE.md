@@ -169,6 +169,21 @@ it. Turn it off for purely local questions.
   the link table ride backups (zip format v4) and self-hosted sync, so a restored profile
   resumes with the same next step. Old backups (v≤3) never wipe newer study data.
 - **RSS** — mini-reader (RSS2 + Atom) under the web-panel menu.
+- **Folder sync** (Settings → **Folder sync**) — point Mei at a folder you already sync
+  (OneDrive, Dropbox, a USB stick). **Preview** shows what would move and writes nothing;
+  **Apply** merges both sides, keeps a backup in `backups\sync-<time>\` and writes only the
+  stores that changed. An edit beats a deletion; two different edits to the same row are
+  kept as a conflict instead of one overwriting the other.
+- **Send from your browser** — load `Extensions\tab-window-bridge` unpacked in Chrome or
+  Opera GX, paste the code from Settings → **Quick pairing** (the same code as the phone),
+  then use **Send this tab to Mei** or **Send selection** (note / flashcard / saved page,
+  with tags). The multi-window JSON/ZIP export is still there for when Mei is closed.
+- **Plugins** (Settings → **Plugins**) — drop a `plugin.json` manifest into your profile's
+  `plugins\` folder to import (Todoist, TickTick CSV ship in the box) or export (notes,
+  deck → CSV). Manifests declare fields; nothing executes code.
+- **Your phone can read the desk** — after pairing, `GET /api/mobile/today` on the bridge
+  answers with today's plate, what is due, what is left open, cards due and the loop's next
+  step, so MeiRemote opens on today instead of an empty screen.
 
 ---
 

@@ -11,6 +11,8 @@ import json
 import os
 import tempfile
 import unittest
+import urllib.error
+from unittest import mock
 
 import litebrowser  # noqa: F401  activates the Qt compatibility shim
 from litebrowser.core import product
@@ -41,6 +43,23 @@ class TestTagAndAssetNames(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             publish_release.assert_tag_matches_build("v0.6.9.0")
         self.assertIn("core/product.py", str(ctx.exception))
+
+    def test_a_suffixed_tag_is_an_alpha_and_needs_the_flag(self):
+        alpha = f"v{product.APP_VERSION}-alpha.2"
+        self.assertEqual(
+            publish_release.assert_tag_matches_build(alpha, prerelease=True),
+            product.APP_VERSION,
+            "the manifest records the build version, never the tag's suffix",
+        )
+        with self.assertRaises(ValueError) as ctx:
+            publish_release.assert_tag_matches_build(alpha)
+        self.assertIn("--prerelease", str(ctx.exception))
+
+    def test_a_tag_that_is_not_a_version_is_refused(self):
+        for tag in ("v1.0", "v1.0.0", "latest", "v1.0.0.0_alpha", ""):
+            with self.subTest(tag=tag):
+                with self.assertRaises(ValueError):
+                    publish_release.assert_tag_matches_build(tag)
 
     def test_download_url_is_the_release_asset(self):
         tag = f"v{product.APP_VERSION}"
@@ -73,6 +92,16 @@ class TestReleaseNotes(unittest.TestCase):
     def test_an_undocumented_version_is_refused(self):
         with self.assertRaises(ValueError):
             publish_release.changelog_section(self.changelog, "9.9.9.9")
+
+    def test_the_prerelease_body_says_ordinary_users_are_not_offered_it(self):
+        site = f"Mei-{product.APP_VERSION}-web_support.zip"
+        body = publish_release.build_release_body(
+            product.APP_VERSION, product.ASSET_NAME, site, self.changelog, prerelease=True
+        )
+        self.assertIn("pre-release", body)
+        self.assertIn("releases/latest", body)
+        self.assertIn(product.APP_VERSION, body)
+        self.assertIn("Folder sync", body, "the notes still quote the changelog section")
 
     def test_the_body_opens_in_vietnamese_and_quotes_the_changelog(self):
         site = f"Mei-{product.APP_VERSION}-web_support.zip"
@@ -151,6 +180,49 @@ class TestWebSupportZip(unittest.TestCase):
         self.assertNotIn("run.log", names)
 
 
+class TestReleaseFlags(unittest.TestCase):
+    """The flag that decides whether *everyone* is offered this build.
+
+    ``releases/latest`` skips pre-releases, so this boolean is the difference
+    between "the Alpha is download-from-the-releases-page" and "every installed
+    copy is told to install the Alpha tonight".
+    """
+
+    def _calls(self, prerelease: bool) -> list:
+        seen = []
+
+        def fake_request(method, url, token, **kwargs):
+            seen.append((method, url, kwargs.get("payload")))
+            if method == "GET":
+                return {"id": 7, "draft": False}
+            if method == "POST":  # 422 = this tag already has a release
+                raise urllib.error.HTTPError(url, 422, "already exists", {}, None)
+            return {"id": 7}
+
+        with mock.patch.object(publish_release, "_request", side_effect=fake_request):
+            publish_release._ensure_release(
+                product.RELEASES_REPO, f"v{product.APP_VERSION}-alpha.1", "tok", "body", False, prerelease
+            )
+        return seen
+
+    def test_a_new_release_carries_the_prerelease_flag(self):
+        payload = self._calls(True)[0][2]
+        self.assertTrue(payload["prerelease"])
+        self.assertFalse(payload["draft"])
+        self.assertEqual(payload["tag_name"], f"v{product.APP_VERSION}-alpha.1")
+        self.assertIn("alpha.1", payload["name"], "the release title is the tag people search for")
+
+    def test_an_ordinary_release_is_not_marked_as_a_prerelease(self):
+        self.assertFalse(self._calls(False)[0][2]["prerelease"])
+
+    def test_a_re_run_re_applies_the_flag_to_the_existing_release(self):
+        seen = self._calls(True)
+        patch = [payload for method, _url, payload in seen if method == "PATCH"]
+        self.assertEqual(len(patch), 1, "an existing tag is edited, not silently reused")
+        self.assertTrue(patch[0]["prerelease"])
+        self.assertEqual(patch[0]["body"], "body")
+
+
 class TestPublishRefusals(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -209,6 +281,17 @@ class TestPublishRefusals(unittest.TestCase):
             ["--tag", f"v{product.APP_VERSION}", "--exe", self.exe, "--no-web-support", "--dry-run"]
         )
         self.assertEqual(code, 0)
+
+    def test_the_cli_publishes_an_alpha_tag_as_a_prerelease(self):
+        result = self._publish(tag=f"v{product.APP_VERSION}-alpha.1", prerelease=True)
+        self.assertIn("pre-release", result["body"])
+        with open(result["manifest_path"], encoding="utf-8") as handle:
+            written = json.load(handle)
+        self.assertEqual(written["version"], product.APP_VERSION, "the updater compares the build version")
+
+    def test_the_cli_refuses_an_alpha_tag_without_the_flag(self):
+        with self.assertRaises(ValueError):
+            self._publish(tag=f"v{product.APP_VERSION}-alpha.1")
 
     def test_the_cli_explains_itself_without_arguments(self):
         self.assertEqual(publish_release.main([]), 2)

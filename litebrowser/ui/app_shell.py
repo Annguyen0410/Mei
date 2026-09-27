@@ -441,6 +441,10 @@ class AppShell(QMainWindow):
             elif kind == "hub":
                 self.switch_workspace("browser")
                 self.browser_page.open_project_hub()
+            elif kind == "content":
+                # A content row is already an ``open_library_item`` payload, so it
+                # lands on the note / card / planner row itself.
+                self.open_library_item(payload if isinstance(payload, dict) else {})
             elif kind == "command":
                 cmd = payload or ""
                 if cmd.endswith(" ") or cmd.startswith("/agent "):
@@ -491,15 +495,17 @@ class AppShell(QMainWindow):
         from litebrowser.ui.dialogs.shell_palette import (
             add_feature_row,
             clear_feature_rows,
-            filter_feature_entries,
+            search_entries,
         )
 
         clear_feature_rows(self._feature_popup)
-        rows = filter_feature_entries(self._feature_entries, q)
+        base = getattr(self, "profile_dir", None) or ""
+        # Features first, then your own records: the same box that jumps to a
+        # workspace also finds the note, card or deadline you half-remember.
+        rows = search_entries(self._feature_entries, base, q)
         if not rows:
             self._hide_feature_popup()
             return
-        base = getattr(self, "profile_dir", None) or ""
         visible = rows[:40]
         for entry in visible:
             item = add_feature_row(self._feature_popup, entry, base)

@@ -1,0 +1,11 @@
+{
+  "id": "notes-to-csv",
+  "name": "Notes → CSV",
+  "version": "1.0",
+  "api": 1,
+  "kind": "exporter",
+  "target": "notes",
+  "format": "csv",
+  "summary": "Writes every note as a CSV row (title, category, body) — the format most note apps can import.",
+  "builtin": true
+}

@@ -40,6 +40,18 @@
       display: flex;
       gap: 8px;
       margin-top: 10px;
+      align-items: center;
+    }
+    .row input, .row select {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .row button.compact {
+      flex: 0 0 auto;
+    }
+    .step {
+      font-weight: 700;
+      color: var(--accent);
     }
     button {
       flex: 1;
@@ -54,7 +66,7 @@
     button.secondary { background: linear-gradient(135deg, var(--accent-2), #2563eb); }
     button.ghost { background: #374151; }
     button.wide { flex-basis: 100%; }
-    textarea, input {
+    textarea, input, select {
       width: 100%;
       box-sizing: border-box;
       border-radius: 10px;
@@ -74,10 +86,38 @@
 </head>
 <body>
   <h1>Mei Window Bridge</h1>
-  <p>Bê nguyên workspace browser khác (Chrome / Opera GX) sang Mei. Mỗi cửa sổ = một màn hình, giữ riêng từng screen rồi chia lại trong Mei.</p>
+  <p>Bê nguyên workspace browser khác (Chrome / Opera GX) sang Mei. Mỗi cửa sổ = một màn hình, giữ riêng từng screen rồi chia lại trong Mei — hoặc gửi thẳng tab và đoạn đang bôi đen sang Mei khi Mei đang mở.</p>
 
   <div class="card">
-    <div class="small">Một cửa sổ hiện tại</div>
+    <div class="small"><span class="step">①</span> Nối với Mei (một lần)</div>
+    <div class="row">
+      <input id="pairingInput" type="text" placeholder="MEI1|127.0.0.1|18444|token…">
+      <button id="connectBtn" class="secondary compact">Nối</button>
+    </div>
+    <div id="bridgeStatus" class="status"></div>
+  </div>
+
+  <div class="card">
+    <div class="small"><span class="step">②</span> Gửi thẳng sang Mei</div>
+    <div class="row">
+      <button id="sendTabBtn" class="primary wide">Gửi tab này sang Mei</button>
+    </div>
+    <div class="row">
+      <select id="selectionMode">
+        <option value="note">Ghi chú (Clippings)</option>
+        <option value="card">Thẻ ôn tập</option>
+        <option value="saved_page">Trang đã lưu</option>
+      </select>
+      <button id="sendSelectionBtn" class="secondary compact">Gửi đoạn bôi đen</button>
+    </div>
+    <div class="row">
+      <input id="tagsInput" type="text" placeholder="Thẻ, cách nhau bằng dấu phẩy (networking, ôn thi)">
+    </div>
+    <div id="sendStatus" class="status"></div>
+  </div>
+
+  <div class="card">
+    <div class="small">Một cửa sổ hiện tại (xuất file)</div>
     <label for="labelInput">Batch label</label>
     <input id="labelInput" type="text" placeholder="Example: Work Window">
     <div class="row">
@@ -92,7 +132,7 @@
   </div>
 
   <div class="card">
-    <div class="small">Tất cả màn hình (đa cửa sổ)</div>
+    <div class="small">Tất cả màn hình — đa cửa sổ (xuất file)</div>
     <button id="captureAllBtn" class="primary wide">Chụp TẤT CẢ cửa sổ</button>
     <div class="row">
       <button id="downloadAllJsonBtn" class="secondary">Tải JSON tất cả</button>
@@ -101,11 +141,12 @@
   </div>
 
   <div class="card">
-    <div class="small">Payload cho Mei</div>
+    <div class="small">Payload xuất file (dùng khi chưa nối được bridge)</div>
     <textarea id="payloadOutput" placeholder="Chụp cửa sổ để sinh JSON payload..."></textarea>
   </div>
 
   <script src="zip.js"></script>
+  <script src="bridge.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

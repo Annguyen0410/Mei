@@ -1,0 +1,16 @@
+{
+  "id": "ticktick-csv",
+  "name": "TickTick → Quick tasks",
+  "version": "1.0",
+  "api": 1,
+  "kind": "importer",
+  "target": "tasks",
+  "format": "csv",
+  "summary": "Reads a TickTick CSV export (Title / Content / List Name) and adds the rows to Mei's quick-task inbox.",
+  "builtin": true,
+  "mapping": {
+    "title": "Title",
+    "notes": "Content",
+    "bucket": "List Name"
+  }
+}

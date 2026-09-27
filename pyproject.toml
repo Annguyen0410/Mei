@@ -17,9 +17,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-# Alternate Qt binding: the engine upgrade path (newer Chromium) is exercised by
-# installing these instead of PyQt5; litebrowser/qt_compat.py picks them up.
-qt6 = ["PyQt6>=6.6", "PyQt6-WebEngine>=6.6"]
+# The engine Mei ships with, pinned rather than ">=": which Chromium the user
+# gets is a product decision, and an unpinned install quietly turns into a
+# different browser. Qt 6.11 = Chromium 140 (the 6.8 line was 122). The PyQt5
+# fallback pins Qt 5.15, which is Chromium 87 — see docs/reports/qt611-spike.md.
+qt6 = ["PyQt6==6.11.0", "PyQt6-WebEngine==6.11.0"]
+# Packaging is the other half of the engine: 6.19.0 is what the shipped .exe is
+# built with and what the Qt 6.11 spike proved still packages the engine. Bump
+# it in its own commit, never in the same one as Qt, or a broken exe has two
+# possible causes.
+build = ["pyinstaller==6.19.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]

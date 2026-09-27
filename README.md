@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml/badge.svg)](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml)
 
-**Mei** is one tidy window for a study day: the pages you read, the plan you keep, the cards you review, the notes you write. It is built on **PyQt5/PyQt6 + QtWebEngine** — a real Chromium underneath — and runs on both Qt bindings through the `litebrowser/qt_compat.py` shim: PyQt6-WebEngine 6.8 when it is installed, PyQt5 otherwise.
+**Mei** is one tidy window for a study day: the pages you read, the plan you keep, the cards you review, the notes you write. It is built on **PyQt5/PyQt6 + QtWebEngine** — a real Chromium underneath — and runs on both Qt bindings through the `litebrowser/qt_compat.py` shim: **PyQt6-WebEngine 6.11 (Chromium 140)** when it is installed, PyQt5 otherwise — and Settings refuses to be quiet about which one you got, because the fallback is Qt 5.15, which is Chromium 87.
 
 It is deliberately not the best tool at any one job. It is the most convenient one. A full Chromium browser, a weekly planner, an SM-2 deck, notes with `[[wiki-links]]`, an AI workspace, a library and a settings center live in one process, because a **browser is where your reading already happens and a study desk is where it should end up**. There is no account and no cloud of ours: every byte stays in your profile folder, and the pieces talk to each other instead of to a server.
 

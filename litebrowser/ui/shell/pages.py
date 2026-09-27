@@ -1623,6 +1623,12 @@ class SettingsPage(QWidget):
         diag_copy.setWordWrap(True)
         diag_copy.setObjectName("MutedLabel")
         diag_layout.addWidget(diag_copy)
+        # The engine is the product surface of a browser and it was invisible
+        # here: everything else in this card was only readable inside the zip.
+        self.lbl_engine = QLabel("")
+        self.lbl_engine.setObjectName("MutedLabel")
+        self.lbl_engine.setWordWrap(True)
+        diag_layout.addWidget(self.lbl_engine)
         self.btn_export_diagnostics = primary_button("Export diagnostics zip")
         self.btn_open_log_folder = ghost_button("Open log folder", "Where mei.log lives")
         diag_actions = QHBoxLayout()
@@ -1667,6 +1673,7 @@ class SettingsPage(QWidget):
         # nowhere to go, and the plugin list is never empty-but-claimed.
         self._refresh_folder_sync()
         self._refresh_plugins()
+        self._refresh_engine_notice()
 
     def refresh(self):
         account = life_service.load_sync_account(self.shell.profile_dir)
@@ -1715,6 +1722,7 @@ class SettingsPage(QWidget):
         self._refresh_monitors()
         self._refresh_folder_sync()
         self._refresh_plugins()
+        self._refresh_engine_notice()
         self.chk_sync_enabled.setChecked(prefs.get_sync_enabled(self.shell.profile_dir))
         self.ed_sync_endpoint.setText(prefs.get_sync_endpoint(self.shell.profile_dir))
         self.ed_sync_token.setText(prefs.get_sync_token(self.shell.profile_dir))
@@ -1891,6 +1899,15 @@ class SettingsPage(QWidget):
             self.lbl_sync_status.setToolTip(f"Backup before this merge: {report['snapshot']}")
         if report.get("applied"):
             self.shell.refresh_shell(force_deep=True)
+
+    def _refresh_engine_notice(self):
+        """Say which engine this build is running, and flag the old branch."""
+        line = diagnostics.engine_notice(_ui_versions())
+        self.lbl_engine.setText(line)
+        self.lbl_engine.setToolTip(
+            "Chromium is the engine under the tabs. The PyQt6-WebEngine package "
+            "brings the newer one; Qt 5.15 pins Chromium 87."
+        )
 
     def _refresh_plugins(self):
         """List every accepted manifest, and name every refused one."""

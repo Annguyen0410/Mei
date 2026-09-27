@@ -16,7 +16,47 @@ _DISTRACTION_HOSTS = (
 
 _CACHED_CHROME_VERSION: str | None = None
 _CACHED_CHROME_FULL_VERSION: str | None = None
+# Only reachable before the engine can answer at all (no Qt yet). A plausible
+# major beats an empty client-hint header.
+_FALLBACK_CHROME_MAJOR = "122"
+_FALLBACK_CHROME_FULL = "122.0.6261.171"
+_FULL_CHROME_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
 _DOMAIN_RE = re.compile(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", re.IGNORECASE)
+
+
+def _engine_chrome_versions():
+    """``(major, full)`` straight from the binding, or ``("", "")``.
+
+    No QApplication needed, so this is the first thing the probe tries.
+    """
+    try:
+        from PyQt5.QtWebEngineCore import qWebEngineChromiumVersion
+
+        full = (qWebEngineChromiumVersion() or "").strip()
+    except Exception:
+        return "", ""
+    if _FULL_CHROME_VERSION_RE.match(full):
+        return full.split(".")[0], full
+    return "", ""
+
+
+def _ua_chrome_versions(user_agent: str):
+    """``(major, full)`` read out of a user-agent string, or ``("", "")``.
+
+    Pure text in, text out — no Qt — so the fallback rules stay testable, and so
+    the trap is on the record: Qt 6.8's UA carries a real build
+    (``Chrome/122.0.6261.171``) while Qt 6.11's says only ``Chrome/140.0.0.0``,
+    which matches this shape and would be sent as a build that never existed.
+    That is why the binding is asked first and this is only reached without it.
+    """
+    ua = user_agent or ""
+    m_full = re.search(r"Chrome/(\d+)\.(\d+)\.(\d+)\.(\d+)", ua)
+    if m_full:
+        return m_full.group(1), ".".join(m_full.groups())
+    m_major = re.search(r"Chrome/(\d+)", ua)
+    if m_major:
+        return m_major.group(1), f"{m_major.group(1)}.0.0.0"
+    return "", ""
 
 
 def _detect_chrome_versions():
@@ -25,32 +65,32 @@ def _detect_chrome_versions():
     Both values are cached after the first successful call because this runs on
     every HTTP request via ``interceptRequest`` — repeatedly creating /
     querying a default ``QWebEngineProfile`` is both expensive and (when called
-    before a QApplication exists) unstable on Windows. The probe falls back to
-    a sensible Chrome 122 default until the real Qt application is up.
+    before a QApplication exists) unstable on Windows.
+
+    The binding is asked first, and the UA is only a fallback: Qt 6.11's default
+    UA says just ``Chrome/140.0.0.0``, so a UA-derived "full" version would put a
+    build that never existed into ``sec-ch-ua-full-version``, the header the
+    Google-shaped compatibility path lives on. On PyQt5 there is no
+    ``qWebEngineChromiumVersion()`` at all, so that branch really does read the
+    default profile's UA once and cache it.
     """
     global _CACHED_CHROME_VERSION, _CACHED_CHROME_FULL_VERSION
     if _CACHED_CHROME_VERSION is not None and _CACHED_CHROME_FULL_VERSION is not None:
         return _CACHED_CHROME_VERSION, _CACHED_CHROME_FULL_VERSION
-    major = _CACHED_CHROME_VERSION or "122"
-    full = _CACHED_CHROME_FULL_VERSION or "122.0.6261.171"
-    try:
-        from PyQt5.QtWidgets import QApplication
-        if QApplication.instance() is None:
-            return major, full
-        from PyQt5.QtWebEngineWidgets import QWebEngineProfile
-        ua = QWebEngineProfile.defaultProfile().httpUserAgent() or ""
-        import re
-        m_full = re.search(r"Chrome/(\d+)\.(\d+)\.(\d+)\.(\d+)", ua)
-        if m_full:
-            major = m_full.group(1)
-            full = ".".join(m_full.groups())
-        else:
-            m = re.search(r"Chrome/(\d+)", ua)
-            if m:
-                major = m.group(1)
-                full = f"{major}.0.0.0"
-    except Exception:
-        pass
+    major, full = _engine_chrome_versions()
+    if not full:
+        major = _CACHED_CHROME_VERSION or _FALLBACK_CHROME_MAJOR
+        full = _CACHED_CHROME_FULL_VERSION or _FALLBACK_CHROME_FULL
+        try:
+            from PyQt5.QtWidgets import QApplication
+            if QApplication.instance() is None:
+                return major, full
+            from PyQt5.QtWebEngineWidgets import QWebEngineProfile
+            ua_major, ua_full = _ua_chrome_versions(QWebEngineProfile.defaultProfile().httpUserAgent())
+            if ua_full:
+                major, full = ua_major, ua_full
+        except Exception:
+            pass
     _CACHED_CHROME_VERSION = major
     _CACHED_CHROME_FULL_VERSION = full
     return major, full
@@ -359,7 +399,7 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
             # Doing so would trigger CORS preflights on cross-origin requests
             # because referrer-policy is not CORS-safelisted and Google et al.
             # don't include it in Access-Control-Allow-Headers.
-            # Qt WebEngine (Chromium ~122) already enforces
+            # Qt WebEngine already enforces
             # strict-origin-when-cross-origin by default.
             if self.strip_client_hints and not is_compat:
                 # These headers leak OS / CPU / GPU details to every site.

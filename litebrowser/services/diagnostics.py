@@ -32,6 +32,12 @@ from litebrowser.core import app_paths, product
 # signal. 256 KB is several thousand lines.
 LOG_TAIL_BYTES = 256 * 1024
 
+# The PyQt6-WebEngine branch ships Chromium 122+; the PyQt5 fallback pins Qt
+# 5.15, which is Chromium 87. Below this line the engine is old enough that
+# sign-in and "are you a bot" flows start treating the browser as unsupported,
+# and the number is worth showing rather than hiding in a bundle.
+OLD_CHROMIUM_MAJOR = 120
+
 README = """Mei diagnostics bundle
 
 What this is
@@ -82,6 +88,41 @@ def versions_payload(ui: dict | None = None) -> dict:
         "ui": dict(ui or {}),
         "collected_at": datetime.now().isoformat(timespec="seconds"),
     }
+
+
+def engine_notice(ui: dict | None = None) -> str:
+    """One line naming the engine, with a caution when it is the old branch.
+
+    The caller passes what only the running GUI can know — ``binding``, ``qt``,
+    ``chromium``, exactly as :func:`versions_payload` takes them — because this
+    module has to stay importable without a display. Returns "" when the caller
+    could not read any of it, so the page shows nothing rather than a guess.
+    """
+    facts = dict(ui or {})
+    chromium = str(facts.get("chromium") or "").strip()
+    qt = str(facts.get("qt") or "").strip()
+    binding = str(facts.get("binding") or "").strip()
+    if not (chromium or qt or binding):
+        return ""
+    parts = [part for part in (f"Qt {qt}" if qt else "", binding) if part]
+    line = "Engine: Chromium " + (chromium or "unknown")
+    if parts:
+        line += " · " + " · ".join(parts)
+    try:
+        major = int(chromium.split(".")[0])
+    except (TypeError, ValueError, IndexError):
+        major = 0
+    # PyQt5 has no qWebEngineChromiumVersion() to ask at all, so on that branch
+    # the number is missing rather than low — and it is exactly the branch the
+    # caution is for: Qt 5.15 is Chromium 87.
+    old_branch = (major and major < OLD_CHROMIUM_MAJOR) or (not major and qt.startswith("5"))
+    if old_branch:
+        engine_version = chromium or "87.0.4280.144 (Qt 5.15)"
+        line += (
+            f"\nThis build runs the old engine branch (Chromium {engine_version}): "
+            "some sites refuse it. Installing PyQt6-WebEngine moves Mei onto the new one."
+        )
+    return line
 
 
 def _json_shape(raw) -> dict:

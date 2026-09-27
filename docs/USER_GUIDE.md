@@ -153,10 +153,13 @@ it. Turn it off for purely local questions.
 - **Google account** (Settings) — device-code sign-in; Mei never sees your password, and
   **Verify token** reuses the cached token without a network call whenever it is still fresh.
 - **Passcode lock** (Settings) — **Lock now** re-locks Personal and AI without restarting Mei.
-- **Diagnostics** (Settings) — **Export diagnostics zip** writes one small archive with the log tail,
-  every component version and the size/schema of each store, for a bug report. It never contains
-  note text, passwords, vault files or browsing history; **Open log folder** shows where `mei.log`
-  lives (that file does name pages you had open, so read it before sharing).
+- **Diagnostics** (Settings) — the card names the engine you are running (Chromium, Qt, binding).
+  If it says you are on the old branch — Qt 5.15 is Chromium 87 — some sites will refuse Mei,
+  and installing the `PyQt6-WebEngine` package moves you onto the current engine.
+  **Export diagnostics zip** writes one small archive with the log tail, every component version
+  and the size/schema of each store, for a bug report. It never contains note text, passwords,
+  vault files or browsing history; **Open log folder** shows where `mei.log` lives (that file
+  does name pages you had open, so read it before sharing).
 
 ## 8. Sync, export & automation
 

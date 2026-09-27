@@ -28,12 +28,18 @@ jobs:
           # here either split it badly or keep the quotes), and pip then fails
           # before a single test runs. Quoting each expression separately is the
           # shape that works in pwsh and bash alike.
+          # PyQt5 is the fallback a source checkout often already has, and it
+          # pins Qt 5.15 = Chromium 87: this job is the canary for that branch.
           - binding: PyQt5
             qt_core: "PyQt5>=5.15"
             qt_web: "PyQtWebEngine>=5.15"
+          # PyQt6 is the engine the shipped .exe is built on, so this job is
+          # pinned to exactly what we ship (Chromium 140). Left unpinned it
+          # silently became a beta channel for whatever PyPI published that day,
+          # which is how a Qt upgrade used to reach users untested.
           - binding: PyQt6
-            qt_core: "PyQt6>=6.6"
-            qt_web: "PyQt6-WebEngine>=6.6"
+            qt_core: "PyQt6==6.11.0"
+            qt_web: "PyQt6-WebEngine==6.11.0"
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONIOENCODING: utf-8
@@ -54,6 +60,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "${{ matrix.qt_core }}" "${{ matrix.qt_web }}" "cryptography>=40.0.0" "segno>=1.6.0" "pytest>=7.0" "ruff>=0.5"
+
+      - name: Engine version
+        # Record which Chromium the suite is about to run on. Without this the
+        # log of a green run cannot tell Chromium 87 from 140.
+        run: python tools/engine_report.py
 
       - name: Lint (unused imports, shadowed names, dead locals)
         run: python -m ruff check --select F401,F811,F841,F821 litebrowser tests tools

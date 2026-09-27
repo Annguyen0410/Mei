@@ -31,8 +31,10 @@ def _fake_build(path: str) -> str:
 
 class TestTagAndAssetNames(unittest.TestCase):
     def test_tag_accepts_both_spellings(self):
-        self.assertEqual(publish_release.version_from_tag("v0.7.0.0"), product.APP_VERSION)
-        self.assertEqual(publish_release.version_from_tag(" 0.7.0.0 "), product.APP_VERSION)
+        # Built from the app's own version: a literal here would fail on the next
+        # bump for a reason that has nothing to do with tag parsing.
+        self.assertEqual(publish_release.version_from_tag(f"v{product.APP_VERSION}"), product.APP_VERSION)
+        self.assertEqual(publish_release.version_from_tag(f" {product.APP_VERSION} "), product.APP_VERSION)
 
     def test_tag_must_be_the_build_in_this_tree(self):
         publish_release.assert_tag_matches_build(f"v{product.APP_VERSION}")
@@ -41,15 +43,19 @@ class TestTagAndAssetNames(unittest.TestCase):
         self.assertIn("core/product.py", str(ctx.exception))
 
     def test_download_url_is_the_release_asset(self):
-        url = publish_release.asset_download_url(product.RELEASES_REPO, "v0.7.0.0", product.ASSET_NAME)
+        tag = f"v{product.APP_VERSION}"
+        url = publish_release.asset_download_url(product.RELEASES_REPO, tag, product.ASSET_NAME)
         self.assertEqual(
             url,
-            f"https://github.com/{product.RELEASES_REPO}/releases/download/v0.7.0.0/Mei.exe",
+            f"https://github.com/{product.RELEASES_REPO}/releases/download/{tag}/{product.ASSET_NAME}",
         )
         self.assertTrue(update_service.asset_is_ours(url))
 
     def test_web_support_zip_name_carries_the_version(self):
-        self.assertEqual(publish_release.web_support_name("0.7.0.0"), "Mei-0.7.0.0-web_support.zip")
+        self.assertEqual(
+            publish_release.web_support_name(product.APP_VERSION),
+            f"Mei-{product.APP_VERSION}-web_support.zip",
+        )
 
 
 class TestReleaseNotes(unittest.TestCase):
@@ -69,12 +75,11 @@ class TestReleaseNotes(unittest.TestCase):
             publish_release.changelog_section(self.changelog, "9.9.9.9")
 
     def test_the_body_opens_in_vietnamese_and_quotes_the_changelog(self):
-        body = publish_release.build_release_body(
-            product.APP_VERSION, product.ASSET_NAME, "Mei-0.7.0.0-web_support.zip", self.changelog
-        )
+        site = f"Mei-{product.APP_VERSION}-web_support.zip"
+        body = publish_release.build_release_body(product.APP_VERSION, product.ASSET_NAME, site, self.changelog)
         self.assertTrue(body.startswith("**Tải về:**"))
         self.assertIn(product.ASSET_NAME, body)
-        self.assertIn("Mei-0.7.0.0-web_support.zip", body)
+        self.assertIn(site, body)
         self.assertIn(product.APP_VERSION, body)
 
 
@@ -100,7 +105,7 @@ class TestManifest(unittest.TestCase):
         self.assertNotIn("web_support", manifest)
 
     def test_manifest_records_the_site_zip_when_one_is_shipped(self):
-        site = os.path.join(self._tmp.name, "Mei-0.7.0.0-web_support.zip")
+        site = os.path.join(self._tmp.name, publish_release.web_support_name(product.APP_VERSION))
         with open(site, "wb") as handle:
             handle.write(b"PK\3\4payload")
         manifest = publish_release.build_manifest(
@@ -108,7 +113,7 @@ class TestManifest(unittest.TestCase):
             exe_path=self.exe,
             download_url="https://h/x/Mei.exe",
             web_support_path=site,
-            web_support_url="https://h/x/Mei-0.7.0.0-web_support.zip",
+            web_support_url=f"https://h/x/{publish_release.web_support_name(product.APP_VERSION)}",
         )
         self.assertEqual(manifest["web_support"]["size"], os.path.getsize(site))
         self.assertEqual(manifest["web_support"]["sha256"], update_service.file_sha256(site))

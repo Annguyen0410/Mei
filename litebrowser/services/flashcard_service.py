@@ -41,9 +41,13 @@ def save_cards(base_dir: str, cards: list[dict]) -> None:
         write_json(cards_path(base_dir), {"version": 1, "cards": cards})
 
 
-def add_card(base_dir: str, front: str, back: str, source_note_id: str = "") -> dict:
-    cards = load_cards(base_dir)
-    card = {
+def new_card(front: str, back: str, source_note_id: str = "") -> dict:
+    """The card shape in one place: the Add button and the deck importer agree.
+
+    Trimming lives here too, so an importer can compare what it is about to add
+    against what is already stored without re-deriving the limits.
+    """
+    return {
         "id": os.urandom(8).hex(),
         "front": (front or "").strip()[:500],
         "back": (back or "").strip()[:2000],
@@ -55,8 +59,27 @@ def add_card(base_dir: str, front: str, back: str, source_note_id: str = "") -> 
         "reviews": 0,
         "lapses": 0,
     }
-    cards.insert(0, card)
-    save_cards(base_dir, cards)
+
+
+def add_cards(base_dir: str, cards: list[dict]) -> list[dict]:
+    """Store several prepared cards (see :func:`new_card`) in a single write.
+
+    Like :func:`add_card`, this stores what it is handed: deciding that a card is
+    too blank to keep belongs to the caller that can say so (the Add field pair,
+    the deck importer's skip count), not to the store.
+    """
+    fresh = [card for card in cards if isinstance(card, dict)]
+    if not fresh:
+        return []
+    stored = load_cards(base_dir)
+    stored[0:0] = fresh
+    save_cards(base_dir, stored)
+    return fresh
+
+
+def add_card(base_dir: str, front: str, back: str, source_note_id: str = "") -> dict:
+    card = new_card(front, back, source_note_id)
+    add_cards(base_dir, [card])
     history_service.log_event(base_dir, "flashcard", card["front"][:80], "Card created", {"card_id": card["id"]})
     return card
 

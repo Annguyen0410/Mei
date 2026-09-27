@@ -55,6 +55,8 @@ GUIDE_FEATURES = (
     ("AI assistant", "The AI button asks about the current page or your notes; local Ollama and OpenRouter are both supported. “Read my browser” attaches the open page and tabs to every question."),
     ("Study reminders", "Settings → Study reminders: Mei sends a native toast with the loop's next step — quiet at night and never during a pour."),
     ("This Week reflection", "Home's This Week card reads the pour journal, the planner and the deck: minutes, streak, and the rows nothing touched this week."),
+    ("Anki decks", "Review's ⋯ button imports an .apkg from Anki and exports this deck back as one; interval and ease travel with the cards."),
+    ("Diagnostics", "Settings → Diagnostics exports one zip with the log tail, versions and store shapes — no note text, passwords or history."),
     ("Google account", "Settings → Google account signs in with a device code and keeps a refreshable token; your password never reaches Mei."),
     ("Capture", "Ctrl+S screenshots the visible page, Ctrl+Shift+S saves a PDF, Ctrl+Shift+E extracts the page text."),
     ("Privacy", "VPN hub, per-site permissions, cookie policy, profiles and the password vault all live under Control > Privacy."),

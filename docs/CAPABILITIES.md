@@ -52,6 +52,7 @@ accepted alternative to deleting the code.
 | Loop memoization | `study_flow._memoized` (1 s TTL + store signature) → `reset_flow_cache` for callers that must see a write immediately |
 | Brief markdown export | `brief_service.brief_markdown` → Home “📝 Save as note” |
 | Release integrity | `update_service.file_sha256` / `verify_package(expected_sha256)` → the manifest `tools/publish_release.py` (and `tools/write_local_update.py`) writes, verified after every download |
+| Anki deck files | `services/anki_service.py` (`import_package`, `export_package`) → Review page **⋯** menu (Import an .apkg / Export as an Anki deck); reads `collection.anki2` and the zstd `collection.anki21`/`anki21b` through whichever decoder exists (`zstandard`/`pyzstd`/`zstd`), writes a legacy package Anki imports, with interval and ease carried both ways |
 | Diagnostics bundle | `services/diagnostics.py` (`build_bundle`, `versions_payload`, `profile_inventory`) → Settings “Diagnostics” card (Export zip / Open log folder); carries the log tail, component versions and store shapes, never note text, passwords or history |
 | Release channel | `product.DEFAULT_UPDATE_CHANNEL_URL` (`releases/latest/download/update.json`) → `update_service.check_for_updates` → Settings “Updates” card; `product.RELEASES_PAGE_URL` → “Open release page” |
 | Qt binding selection | `litebrowser/qt.py` over `qt_compat.py` |

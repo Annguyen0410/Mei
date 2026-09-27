@@ -2057,9 +2057,23 @@ class PersonalWindow(QMainWindow):
         self.btn_card_delete = QPushButton("🗑")
         self.btn_card_delete.setObjectName("NavToggle")
         self.btn_card_delete.setToolTip("Delete the current card")
+        # Importing a deck from Anki (and exporting this one back) is what the
+        # deck does occasionally, not what this page is for, so the two verbs
+        # sit in an overflow menu instead of adding two more look-alike buttons.
+        self.btn_deck_file = more_menu(
+            [
+                ("📥  Import an Anki deck (.apkg)…", self._import_deck),
+                ("📤  Export as an Anki deck…", self._export_deck),
+            ],
+            label="⋯",
+            tooltip="Import a deck from Anki, or export this one for Anki",
+        )
+        self.btn_deck_file.setObjectName("QuietButton")
+        self.btn_deck_file.setFixedSize(28, 28)
         tool_row.addWidget(self.btn_review_prev)
         tool_row.addWidget(self.btn_review_next)
         tool_row.addWidget(self.btn_card_delete)
+        tool_row.addWidget(self.btn_deck_file)
         l.addLayout(tool_row)
 
         # Card surface: front/back flip in one themed card.
@@ -2321,6 +2335,52 @@ class PersonalWindow(QMainWindow):
         self.ed_card_front.clear()
         self.ed_card_back.clear()
         self._reload_deck()
+
+    def _import_deck(self):
+        """An .apkg from Anki → cards here, with its interval and ease intact."""
+        from litebrowser.services import anki_service
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import an Anki deck", "", "Anki deck (*.apkg);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            report = anki_service.import_package(self.base_dir, path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Deck", f"Import failed: {exc}")
+            return
+        self._reload_deck()
+        self._update_review_stats()
+        imported = int(report["imported"])
+        note = f"Imported {imported} card{'' if imported == 1 else 's'} from “{report['deck']}”."
+        if report["duplicates"]:
+            note += f"\n{report['duplicates']} were already in the deck."
+        if report["skipped"]:
+            note += f"\n{report['skipped']} notes had no answer and were skipped."
+        if report["media"]:
+            note += f"\n{report['media']} media files stayed in Anki — Mei cards are text."
+        QMessageBox.information(self, "Deck", note)
+
+    def _export_deck(self):
+        """The whole deck as one .apkg Anki can open, scheduling included."""
+        from litebrowser.services import anki_service
+
+        default = os.path.join(self.base_dir, "mei-deck-" + time.strftime("%Y%m%d") + ".apkg")
+        path, _ = QFileDialog.getSaveFileName(self, "Export the deck", default, "Anki deck (*.apkg)")
+        if not path:
+            return
+        try:
+            report = anki_service.export_package(self.base_dir, path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Deck", f"Export failed: {exc}")
+            return
+        exported = int(report["cards"])
+        QMessageBox.information(
+            self,
+            "Deck",
+            f"Exported {exported} card{'' if exported == 1 else 's'} to:\n{path}\n\nAnki: File → Import.",
+        )
 
     def make_flashcard_from_note(self, front: str, back: str, note_id: str = ""):
         """Entry point for the notes page ('Make flashcard' on selection)."""

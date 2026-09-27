@@ -92,6 +92,29 @@ class TestTemplateEdges(unittest.TestCase):
         self.assertIn("Pages visited", note["content"])
         self.assertIn("Reflections", note["content"])
 
+    def test_weekly_review_counts_today_as_today(self):
+        """The note had the same day-bucket bug as the Home chart.
+
+        ``(midnight - ts) // 86400`` is -1 for anything that happened after
+        midnight, so today's visits were dropped and every row read as the day
+        before it. The morning brief disagreed with the review it wrote.
+        """
+        from datetime import date, datetime, time as _time, timedelta
+
+        def noon(days_ago):
+            return datetime.combine(date.today() - timedelta(days=days_ago), _time(12, 0)).timestamp()
+
+        prefs.save_history_entries(
+            self.base,
+            [(int(noon(0)), "https://today.example/a"), (int(noon(1)), "https://yday.example/b"),
+             (int(noon(9)), "https://old.example/c")],
+        )
+        content = note_templates.create_weekly_review(self.base)["content"]
+        self.assertIn("- today: 1", content)
+        self.assertIn("- yesterday: 1", content)
+        self.assertIn("today.example", content)
+        self.assertNotIn("old.example", content, "nine days ago is outside the window")
+
     def test_repeated_daily_notes_get_distinct_files(self):
         first = note_templates.create_daily_note(self.base)
         second = note_templates.create_daily_note(self.base)

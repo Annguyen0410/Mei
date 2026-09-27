@@ -85,6 +85,66 @@ class TestRendererPaletteFollowsTheShell(_ThemeFollowHost):
         self.assertFalse(theme_data.is_night_theme(DAY_THEME))
 
 
+class TestRendererPaletteFollowsTheAccent(_ThemeFollowHost):
+    """The other half of the same bug: accent, not just mode.
+
+    Reported from a screenshot: a profile on ``cafe-night`` with the **rose**
+    accent, whose "Your Week" chart drew a gold bar (the palette's stock accent)
+    inside a window whose buttons, chips and active nav row were rose — the same
+    app in two colours. The shell QSS is built with
+    ``prefs.get_accent(profile_dir)``; ``theme.palette()`` resolved the palette
+    alone, so every hand-painted widget was the odd one out.
+    """
+
+    def test_the_default_palette_carries_the_profiles_accent(self):
+        prefs.set_accent(self.base, "rose")
+        prefs.set_default_base_dir(self.base)
+        palette = theme.palette()
+        stock = theme_data._palette(NIGHT_THEME)  # guard: the stock accent differs
+        self.assertNotEqual(theme_data.ACCENTS["rose"][0], stock["ACCENT"])
+        self.assertEqual(palette["ACCENT"], theme_data.ACCENTS["rose"][0])
+        self.assertEqual(palette["ACCENT_HOVER"], theme_data.ACCENTS["rose"][1])
+
+    def test_an_explicit_accent_still_wins(self):
+        prefs.set_accent(self.base, "rose")
+        prefs.set_default_base_dir(self.base)
+        self.assertEqual(theme.palette(accent="teal")["ACCENT"], theme_data.ACCENTS["teal"][0])
+
+    def test_an_empty_accent_means_the_palettes_own(self):
+        prefs.set_accent(self.base, "rose")
+        prefs.set_default_base_dir(self.base)
+        self.assertEqual(theme.palette(accent="")["ACCENT"], theme_data._palette(NIGHT_THEME)["ACCENT"])
+
+    def test_a_widget_can_ask_for_another_profile(self):
+        other = os.path.join(self._tmp, "second")
+        prefs.ensure_profile_layout(other)
+        prefs.set_shell_theme(other, NIGHT_THEME)
+        prefs.set_accent(other, "violet")
+        prefs.set_accent(self.base, "rose")
+        prefs.set_default_base_dir(self.base)
+        self.assertEqual(theme.palette(base_dir=other)["ACCENT"], theme_data.ACCENTS["violet"][0])
+        self.assertEqual(theme.palette()["ACCENT"], theme_data.ACCENTS["rose"][0])
+
+    def test_a_bar_is_the_accent_not_the_button_token(self):
+        """``ACCENT_SOFT`` is a button surface, not a chart fill.
+
+        On night palettes it is deliberately dark (``ACCENT_HOVER`` text sits on
+        it), so as a bar it read as mud. The bar rule keeps the accent's own
+        RGB and only drops the opacity, which works in every palette.
+        """
+        for mode in ("cafe-night", NIGHT_THEME, DAY_THEME):
+            tokens = theme_data._palette(mode, "rose")
+            today = theme.accent_bar_color(tokens, True)
+            past = theme.accent_bar_color(tokens, False)
+            with self.subTest(mode=mode):
+                self.assertEqual(today.name(), tokens["ACCENT"].lower())
+                self.assertEqual(today.alphaF(), 1.0)
+                self.assertEqual(past.name(), tokens["ACCENT"].lower())
+                self.assertLess(past.alphaF(), 1.0)
+                self.assertGreater(past.alphaF(), 0.3)
+                self.assertNotEqual(past.name(), tokens["ACCENT_SOFT"].lower())
+
+
 class TestChartCardsAreOneSurface(_ThemeFollowHost):
     """Rendered pixels: a chart canvas must not be a second colour inside its card.
 
@@ -133,6 +193,90 @@ class TestChartCardsAreOneSurface(_ThemeFollowHost):
             return corners
         finally:
             _app.setStyleSheet(previous)
+
+    def _rendered_week_chart(self, mode, accent, size=(600, 320)):
+        """Render the "Your Week" chart inside a real #SectionCard, with visits.
+
+        Inside a card on purpose: the chart canvas is transparent, so a grab of
+        the widget alone composites the bars onto nothing and the blend below
+        becomes untestable.
+        """
+        import time as _time
+
+        from litebrowser.ui.shell.pages import _WeekActivityChart
+
+        prefs.set_shell_theme(self.base, mode)
+        prefs.set_accent(self.base, accent)
+        now = int(_time.time())
+        prefs.save_history_entries(
+            self.base,
+            [(now, "https://example.com/a"), (now, "https://example.com/b"), (now - 86400, "https://example.com/c")],
+        )
+        page = types.SimpleNamespace(shell=types.SimpleNamespace(profile_dir=self.base))
+        previous = _app.styleSheet()
+        _app.setStyleSheet(theme.main_qss(mode, accent))
+        try:
+            root = QtWidgets.QWidget()
+            root.setObjectName("HomeScrollContent")
+            root_layout = QtWidgets.QVBoxLayout(root)
+            root_layout.setContentsMargins(0, 0, 0, 0)
+            card = QtWidgets.QFrame()
+            card.setObjectName("SectionCard")
+            card_layout = QtWidgets.QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 12, 14, 12)
+            chart = _WeekActivityChart(page)
+            card_layout.addWidget(chart, 1)
+            root_layout.addWidget(card, 1)
+            root.resize(*size)
+            root.show()
+            _app.processEvents()
+            chart.refresh()
+            _app.processEvents()
+            image = root.grab().toImage()
+            root.close()
+        finally:
+            _app.setStyleSheet(previous)
+        return image, theme_data._palette(mode, accent)
+
+    def test_the_bars_paint_the_profiles_accent(self):
+        """Pixels, not tokens: the reported bug was visible colour, not a value."""
+        for mode in ("cafe-night", DAY_THEME):
+            image, tokens = self._rendered_week_chart(mode, "rose")
+            accent = tokens["ACCENT"].lower()
+            stock = theme_data._palette(mode)["ACCENT"].lower()
+            card = tokens["CARD_BG"].lower()
+            colours = [
+                image.pixelColor(x, y).name()
+                for x in range(0, image.width(), 2)
+                for y in range(0, image.height(), 2)
+            ]
+            with self.subTest(mode=mode):
+                self.assertNotEqual(accent, stock, "guard: rose and the stock accent differ")
+                self.assertIn(accent, colours, "the today bar must be the profile accent")
+                self.assertNotIn(stock, colours, "and never the palette's own accent")
+                # A past day is the same hue at reduced opacity, so its pixels are
+                # a blend of the accent over the card: neither the accent itself
+                # nor the card, and never the near-invisible ACCENT_SOFT token.
+                self.assertNotIn(
+                    tokens["ACCENT_SOFT"].lower(), colours, "the button token must not be a bar fill"
+                )
+                nearby = [
+                    colour
+                    for colour in colours
+                    if colour not in (accent, card) and self._close_to_blend(colour, accent, card, 0.55, 14)
+                ]
+                self.assertTrue(nearby, "a past-day bar should be a softened accent, not mud")
+
+    @staticmethod
+    def _close_to_blend(colour, accent, back, alpha, tolerance):
+        def channel(value, index):
+            return int(value.lstrip("#")[index * 2:index * 2 + 2], 16)
+
+        for index in range(3):
+            blended = channel(back, index) + (channel(accent, index) - channel(back, index)) * alpha
+            if abs(channel(colour, index) - blended) > tolerance:
+                return False
+        return True
 
     def test_the_canvas_paints_with_the_card_colour(self):
         for mode in ("cafe-night", DAY_THEME):

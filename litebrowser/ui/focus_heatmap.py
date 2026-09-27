@@ -10,7 +10,6 @@ from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PyQt5.QtWidgets import QWidget
 
-from litebrowser.core import prefs
 from litebrowser.services import focus_service
 from litebrowser.ui import theme
 
@@ -54,13 +53,13 @@ class FocusHeatmap(QWidget):
 
         The dashboard re-polishes with the profile's *effective* theme (auto
         day/night included) and accent, so painting must follow the same
-        resolution - not theme.palette(), which only reads the stored default
-        profile theme and painted a light panel inside a dark dashboard.
+        resolution. ``theme.palette`` now does exactly that for the profile the
+        caller names — this used to re-derive it here because palette() only
+        read the stored default profile, and a light panel ended up inside a
+        dark dashboard.
         """
         try:
-            mode = prefs.resolved_auto_theme(base_dir) if base_dir else prefs.get_shell_theme(base_dir)
-            accent = prefs.get_accent(base_dir)
-            return theme.palette_tokens(mode, accent)
+            return theme.palette(base_dir=base_dir or None)
         except Exception:
             return theme.palette()
 

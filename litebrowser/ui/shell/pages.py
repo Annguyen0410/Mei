@@ -136,6 +136,19 @@ def _activity_item(kind: str, title: str, detail: str = "", meta: str = "") -> Q
 
 
 
+def _chart_tokens(page) -> dict:
+    """Palette for the profile hosting a hand-painted chart.
+
+    The dashboard belongs to the *active* profile, which is not always the
+    default one, and it has to paint with the accent the shell QSS around it is
+    already using — see ``theme.palette`` for why the accent default matters.
+    """
+    from litebrowser.ui import theme as _theme
+
+    base_dir = getattr(getattr(page, "shell", None), "profile_dir", None)
+    return _theme.palette(base_dir=base_dir) if base_dir else _theme.palette()
+
+
 class _DomainWeekChart(QWidget):
     """Top domains this week as horizontal theme bars — the wellbeing view.
 
@@ -172,11 +185,9 @@ class _DomainWeekChart(QWidget):
         self.update()
 
     def paintEvent(self, _event):
-        from litebrowser.ui import theme as _theme
-
         painter = QPainter(self)
         w, h = self.width(), self.height()
-        p = _theme.palette()
+        p = _chart_tokens(self._page)
         # No surface here on purpose: the surrounding #SectionCard paints the
         # card colour and this widget stays transparent on top of it. Filling the
         # rect with MAIN_BG_ALT painted the chart as a second, slightly different
@@ -221,28 +232,32 @@ class _WeekActivityChart(QWidget):
         self.setMinimumHeight(200)
 
     def refresh(self):
-        import time as _time
+        """Bucket the last seven *calendar days*, today included.
+
+        The bucket used to be ``(midnight_today - ts) // 86400``, and a visit
+        made today is *after* midnight, so that subtraction is negative and
+        floor-divides to -1: every one of today's visits fell out of the window.
+        The chart was a day late across the board — the reported week showed
+        Friday's 40 on Thursday's bar, put Friday's 9 on today's bar, and never
+        showed the 30 visits that had actually happened (the morning brief said
+        "9 pages yesterday", which is what gave it away).
+        """
+        from datetime import date, timedelta
 
         from litebrowser.core import prefs as _prefs
 
         base_dir = self._page.shell.profile_dir
-        entries = _prefs.load_history_entries(base_dir)
-        today = _time.localtime()
-        midnight_today = _time.mktime((today.tm_year, today.tm_mon, today.tm_mday, 0, 0, 0, 0, 0, -1))
         counts = [0] * 7
-        for ts, _url in entries:
-            age_days = int((midnight_today - int(ts or 0)) // 86400)
+        today = date.today()
+        for ts, _url in _prefs.load_history_entries(base_dir):
+            try:
+                age_days = (today - date.fromtimestamp(int(ts or 0))).days
+            except (OSError, OverflowError, ValueError):
+                continue
             if 0 <= age_days < 7:
                 counts[6 - age_days] += 1
         self._counts = counts
-        try:
-            from datetime import datetime as _dt
-
-            self._day_labels = [
-                (_dt.now() - __import__("datetime").timedelta(days=6 - i)).strftime("%a") for i in range(7)
-            ]
-        except Exception:
-            self._day_labels = [""] * 7
+        self._day_labels = [(today - timedelta(days=6 - i)).strftime("%a") for i in range(7)]
         self.update()
 
     def paintEvent(self, _event):
@@ -250,7 +265,7 @@ class _WeekActivityChart(QWidget):
 
         painter = QPainter(self)
         w, h = self.width(), self.height()
-        p = _theme.palette()
+        p = _chart_tokens(self._page)
         # Transparent by design: the chart must read as part of its
         # #SectionCard, never as a second coloured panel inside it (see
         # _DomainWeekChart.paintEvent for the full story).
@@ -278,7 +293,7 @@ class _WeekActivityChart(QWidget):
                 continue
             bar_h = int((count / max_count) * max(8, bottom - top))
             y = bottom - bar_h
-            color = QColor(p["ACCENT"] if is_today else p["ACCENT_SOFT"])
+            color = _theme.accent_bar_color(p, is_today)
             painter.setPen(QPen(QColor(p["INPUT_BORDER"]), 1))
             painter.setBrush(color)
             painter.drawRoundedRect(x, y, bar_w, max(4, bar_h), 4, 4)

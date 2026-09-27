@@ -7,6 +7,7 @@ notes, so [[wiki-links]], backlinks and the AI index see them too.
 from __future__ import annotations
 
 import time
+from datetime import date
 
 from litebrowser.core import prefs
 from litebrowser.services import (
@@ -66,13 +67,18 @@ def create_weekly_review(base_dir: str) -> dict:
     title = "Weekly Review — " + time.strftime("%Y-%m-%d")
     lines = [f"# Weekly Review — {time.strftime('%Y-%m-%d')}", ""]
 
-    entries = prefs.load_history_entries(base_dir)
-    midnight = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+    # Bucket by calendar day. ``(midnight - ts) // 86400`` put today's visits at
+    # -1 (they happen *after* midnight) and dropped every one of them, so the
+    # whole table was a day late and "today" always read zero — the same shape of
+    # bug the Home chart had (see tests/test_week_chart_days.py).
+    today = date.today()
     per_day = [0] * 7
     top = {}
-    for ts, url in entries:
-        ts = int(ts or 0)
-        age = int((midnight - ts) // 86400)
+    for ts, url in prefs.load_history_entries(base_dir):
+        try:
+            age = (today - date.fromtimestamp(int(ts or 0))).days
+        except (OSError, OverflowError, ValueError):
+            continue
         if 0 <= age < 7:
             per_day[6 - age] += 1
             domain = url.split("/")[2] if "://" in url else url[:30]

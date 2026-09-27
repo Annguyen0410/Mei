@@ -36,9 +36,48 @@ def resolved_mode(base_dir: str | None = None) -> str:
     return _prefs.resolved_auto_theme(base_dir or _prefs.DEFAULT_BASE_DIR) or DEFAULT_THEME
 
 
-def palette(mode: str | None = None, accent: str | None = None) -> dict:
-    """Resolved tokens for the active profile when no mode is given."""
-    return _palette(mode or resolved_mode(), accent)
+def palette(mode: str | None = None, accent: str | None = None, base_dir: str | None = None) -> dict:
+    """Resolved tokens for the active profile when the caller does not say.
+
+    Both defaults are load-bearing, and both were once wrong in the same way —
+    hand-painted widgets showing colours the rest of the window did not have:
+
+    * ``mode`` follows the auto day/night *resolution*, not the stored name: a
+      widget painted with the stored name kept day colours inside the night
+      window (see ``tests/test_theme_follows_shell.py``).
+    * ``accent`` follows the profile's accent preset, not the palette's own
+      accent. The shell QSS is built with the chosen accent
+      (``theme.main_qss(mode, prefs.get_accent(base_dir))``), so a chart that
+      resolved the palette alone drew the theme's stock accent — a gold bar on
+      a desk whose buttons, chips and active nav row were rose.
+
+    Pass ``base_dir`` for a widget that belongs to a profile other than the
+    default one. Pass ``accent=""`` to mean "the palette's own accent".
+    """
+    from litebrowser.core import prefs as _prefs
+
+    base = base_dir or _prefs.DEFAULT_BASE_DIR
+    chosen = _prefs.get_accent(base) if accent is None else accent
+    return _palette(mode or resolved_mode(base), chosen)
+
+
+def accent_bar_color(tokens: dict, is_today: bool):
+    """Fill colour for one bar of a hand-painted chart.
+
+    Today gets the accent at full strength; every other day gets the *same*
+    accent at reduced opacity, so the bar reads as the theme's colour in every
+    palette. The ``ACCENT_SOFT`` token is deliberately not used here: it is a
+    surface meant to carry ``ACCENT_HOVER`` text (a dark tone by design on night
+    palettes, a paper tint on light ones), and as a chart fill it came out as
+    mud — a brown bar inside a near-black card, which is what made the two
+    dashboard charts look like they belonged to a different theme.
+    """
+    from PyQt5.QtGui import QColor
+
+    color = QColor(tokens.get("ACCENT", "#A66A2E"))
+    if not is_today:
+        color.setAlphaF(0.55)
+    return color
 
 
 # ---------- 6.7 dialog verbs: one action, one row --------------------------

@@ -38,9 +38,11 @@ jobs:
       QT_QPA_PLATFORM: offscreen
       PYTHONIOENCODING: utf-8
     steps:
-      - uses: actions/checkout@v4
+      # v5 / v6: the v4 and v5 majors still target Node 20, which runners now
+      # force onto Node 24 and report as a deprecation warning on every run.
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip

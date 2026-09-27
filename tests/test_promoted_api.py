@@ -9,6 +9,7 @@ caller) disappears, and the two dialog paths are driven end to end offscreen.
 import os
 import tempfile
 import unittest
+import zipfile
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -243,6 +244,30 @@ class TestSettingsPromotions(_ProfileCase):
         self.assertEqual(prefs.get_google_account(self.base)["email"], "mei@example.com")
         self.assertEqual(prefs.get_google_token_cache(self.base)["refresh_token"], "r")
         self.assertTrue(self.page.btn_google_sign_in.isEnabled())
+
+    def test_the_settings_card_writes_a_bundle_where_the_user_asked(self):
+        target = os.path.join(self.base, "diag.zip")
+        with mock.patch.object(
+            pages_module.QFileDialog, "getSaveFileName", return_value=(target, "Zip archive (*.zip)")
+        ), mock.patch.object(pages_module.QMessageBox, "information") as told:
+            self.page._export_diagnostics()
+        self.assertTrue(os.path.isfile(target))
+        with zipfile.ZipFile(target) as bundle:
+            self.assertIn("versions.json", bundle.namelist())
+        self.assertIn("no note text", told.call_args[0][2])
+
+    def test_cancelling_the_save_dialog_writes_nothing(self):
+        with mock.patch.object(
+            pages_module.QFileDialog, "getSaveFileName", return_value=("", "")
+        ), mock.patch.object(pages_module.QMessageBox, "information") as told:
+            self.page._export_diagnostics()
+        told.assert_not_called()
+
+    def test_the_log_folder_button_points_at_the_log_dir(self):
+        with mock.patch.object(pages_module.QDesktopServices, "openUrl") as opened:
+            self.page._open_log_folder()
+        self.assertTrue(opened.called)
+        self.assertTrue(self.page._log_dir().endswith("logs"))
 
     def test_every_settings_button_is_on_the_page(self):
         # The rewire that folded the Google card's verbs into one menu first left

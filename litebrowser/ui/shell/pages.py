@@ -40,6 +40,7 @@ from litebrowser.core import time_utils as _time_utils
 from litebrowser.services import (
     android_bridge_service,
     brief_service,
+    diagnostics,
     focus_service,
     google_auth,
     history_service,
@@ -52,6 +53,33 @@ from litebrowser.services import (
 )
 from litebrowser.ui import components, dialogs, theme
 from litebrowser.ui.dialogs.common import ghost_button, menu_action, more_menu, primary_button, quiet_button
+
+
+def _ui_versions() -> dict:
+    """The component versions only the running GUI can answer.
+
+    Taken from the façade (``litebrowser.qt``) rather than a binding: which one is
+    active is decided by the compatibility shim, and a diagnostics bundle that
+    reports the wrong Qt is worse than one that reports none.
+    """
+    info: dict = {}
+    try:
+        from litebrowser.qt import QtCore
+
+        info["binding"] = str(getattr(QtCore, "__name__", "")).split(".")[0]
+        info["qt"] = getattr(QtCore, "QT_VERSION_STR", "")
+        info["pyqt"] = getattr(QtCore, "PYQT_VERSION_STR", "")
+    except Exception:  # noqa: BLE001 - diagnostics must never break the page
+        pass
+    try:
+        from litebrowser.qt import QtWebEngineCore
+
+        chromium = getattr(QtWebEngineCore, "qWebEngineChromiumVersion", None)
+        if callable(chromium):
+            info["chromium"] = chromium()
+    except Exception:  # noqa: BLE001
+        pass
+    return info
 
 
 def _dedupe_library_items(items: list) -> list:
@@ -1364,6 +1392,30 @@ class SettingsPage(QWidget):
         update_actions.addStretch(1)
         updates_layout.addLayout(update_actions)
         content_layout.addWidget(updates_card)
+
+        diagnostics_card = QFrame()
+        diagnostics_card.setObjectName("SectionCard")
+        diag_layout = QVBoxLayout(diagnostics_card)
+        diag_layout.setContentsMargins(12, 12, 12, 12)
+        diag_layout.setSpacing(6)
+        diag_layout.addWidget(
+            components.section_header("Diagnostics", "Evidence for a bug report")
+        )
+        diag_copy = QLabel(
+            "Pack the log tail, the version of every component and the size/schema of each store "
+            "into one zip. Note text, passwords, vault files and browsing history are never included."
+        )
+        diag_copy.setWordWrap(True)
+        diag_copy.setObjectName("MutedLabel")
+        diag_layout.addWidget(diag_copy)
+        self.btn_export_diagnostics = primary_button("Export diagnostics zip")
+        self.btn_open_log_folder = ghost_button("Open log folder", "Where mei.log lives")
+        diag_actions = QHBoxLayout()
+        diag_actions.addWidget(self.btn_export_diagnostics)
+        diag_actions.addWidget(self.btn_open_log_folder)
+        diag_actions.addStretch(1)
+        diag_layout.addLayout(diag_actions)
+        content_layout.addWidget(diagnostics_card)
         content_layout.addStretch(1)
 
         self.btn_save_account.clicked.connect(self.save_account)
@@ -1381,6 +1433,8 @@ class SettingsPage(QWidget):
         self.btn_check_updates.clicked.connect(lambda: self.shell.run_update_check(manual=True))
         self.btn_install_update.clicked.connect(self.shell.install_available_update)
         self.btn_open_release_page.clicked.connect(lambda: self.shell.open_release_page())
+        self.btn_export_diagnostics.clicked.connect(self._export_diagnostics)
+        self.btn_open_log_folder.clicked.connect(self._open_log_folder)
         self.btn_open_profile_folder.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.shell.profile_dir))
         )
@@ -1484,6 +1538,46 @@ class SettingsPage(QWidget):
         prefs.set_google_oauth_client_id(self.shell.profile_dir, client_id)
         self._refresh_google()
         return client_id
+
+    def _log_dir(self) -> str:
+        return os.path.join(app_paths.data_root(self.shell.app_dir), "logs")
+
+    def _export_diagnostics(self):
+        """Write the support bundle where the user asks, then say what it holds.
+
+        The dialog names the exclusions on purpose: a person attaching a file to a
+        public issue should know what is *not* in it before they send it.
+        """
+        # The profile's own downloads folder, not QStandardPaths: Qt 5 and Qt 6
+        # spell that enum differently (`DownloadLocation` vs
+        # `StandardLocation.DownloadLocation`) and this page runs on both.
+        suggested = os.path.join(
+            app_paths.downloads_dir(self.shell.profile_dir), diagnostics.default_bundle_name()
+        )
+        path, _selected = QFileDialog.getSaveFileName(
+            self, "Save diagnostics bundle", suggested, "Zip archive (*.zip)"
+        )
+        if not path:
+            return
+        try:
+            result = diagnostics.build_bundle(
+                self.shell.profile_dir, path, app_dir=self.shell.app_dir, ui=_ui_versions()
+            )
+        except Exception as exc:  # noqa: BLE001 - report, never crash the page
+            QMessageBox.warning(self, "Diagnostics", f"Could not write the bundle:\n{exc}")
+            return
+        size_kb = max(1, result["bytes"] // 1024)
+        QMessageBox.information(
+            self,
+            "Diagnostics",
+            f"Wrote {os.path.basename(result['path'])} ({size_kb} KB, {len(result['members'])} files).\n\n"
+            "It holds the log tail, the component versions and the shape of your stores — "
+            "no note text, no passwords, no browsing history. Read the log inside it if you "
+            "had private pages open: Mei logs page titles at debug level.",
+        )
+
+    def _open_log_folder(self):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self._log_dir()))
 
     def _refresh_google(self):
         account = prefs.get_google_account(self.shell.profile_dir)

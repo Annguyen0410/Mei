@@ -69,6 +69,15 @@ jobs:
       - name: Lint (unused imports, shadowed names, dead locals)
         run: python -m ruff check --select F401,F811,F841,F821 litebrowser tests tools
 
+      - name: Both halves of the day
+        # Auto day/night reads the wall clock, so a palette assertion can pass
+        # here and fail on a runner six hours away (it did: green at 23:xx local,
+        # red at 06:2x UTC). Freeze the hour and check the clock-sensitive modules
+        # in both directions before the full suite runs.
+        run: |
+          python tools/run_at_hour.py 10
+          python tools/run_at_hour.py 22
+
       - name: Tests
         # Tee the run into a file so the next step can say *what* failed.
         shell: pwsh

@@ -292,15 +292,21 @@ class TestChartCardsAreOneSurface(_ThemeFollowHost):
         (``app_shell._sync_auto_theme_timer`` → ``refresh_shell``), and the
         dashboard is not rebuilt on the way — the same widget is repainted. So
         the assertion is about what the widget paints, not about which colours
-        the shell handed it: the day labels and the counts are drawn with
-        ``TEXT_MUTED``/``TEXT``, which no stylesheet can reach.
+        the shell handed it, so the widget's own palette lookups are recorded:
+        every paint after the flip must ask again and get the night tokens. A
+        widget that resolved its palette once (in ``__init__``, or into a token
+        dict it keeps) still passes the card-colour checks — the card is QSS —
+        and leaves that record empty.
 
-        A widget that resolves its palette once (in ``__init__``, or into a
-        token dict it keeps) still passes the card-colour checks here — the card
-        is painted by QSS — and fails the text ones, which is the bug shape.
+        Colour is deliberately *not* read out of rasterised text: PyQt5 and
+        PyQt6 rasterise the same label differently (subpixel antialiasing gave
+        this test a colour no tolerance could match on the Qt5 job), and a test
+        whose teeth depend on the font rasteriser is a test that fails for the
+        wrong reason.
         """
         import time as _time
 
+        from litebrowser.ui.shell import pages as _pages
         from litebrowser.ui.shell.pages import _WeekActivityChart
 
         prefs.set_accent(self.base, "rose")
@@ -309,9 +315,19 @@ class TestChartCardsAreOneSurface(_ThemeFollowHost):
         prefs.save_history_entries(self.base, [(int(_time.time()), "https://example.com/a")])
         day_palette = theme_data._palette("dawn", "rose")
         night_palette = theme_data._palette("cafe-night", "rose")
-        for token in ("CARD_BG", "TEXT_MUTED"):
+        for token in ("CARD_BG", "BORDER_SOFT"):
             self.assertNotEqual(day_palette[token].lower(), night_palette[token].lower(), token)
 
+        # Every palette the widget asks for while painting, in order.
+        real_tokens = _pages._chart_tokens
+        asked: list[dict] = []
+
+        def recording_tokens(page):
+            tokens = real_tokens(page)
+            asked.append(tokens)
+            return tokens
+
+        _pages._chart_tokens = recording_tokens
         page = types.SimpleNamespace(shell=types.SimpleNamespace(profile_dir=self.base))
         previous = _app.styleSheet()
         root = QtWidgets.QWidget()
@@ -335,6 +351,7 @@ class TestChartCardsAreOneSurface(_ThemeFollowHost):
                 chart.refresh()  # what home_page.refresh() does
                 _app.processEvents()
                 by_day = self._canvas_colours(root)
+            day_paints = len(asked)
             with _at(22):
                 self.assertEqual(theme.resolved_mode(self.base), "cafe-night")
                 _app.setStyleSheet(theme.main_qss("cafe-night", "rose"))
@@ -342,20 +359,21 @@ class TestChartCardsAreOneSurface(_ThemeFollowHost):
                 _app.processEvents()
                 by_night = self._canvas_colours(root)
         finally:
+            _pages._chart_tokens = real_tokens
             root.close()
             _app.setStyleSheet(previous)
 
         day_card = day_palette["CARD_BG"].lower()
         night_card = night_palette["CARD_BG"].lower()
         self.assertIn(day_card, by_day, "the day render starts on the day card")
-        self.assertTrue(self._painted(by_day, day_palette["TEXT_MUTED"]), "day labels in the day colour")
         self.assertIn(night_card, by_night, "night falls, the canvas follows")
         self.assertNotIn(day_card, by_night, "no day surface is left over")
-        self.assertTrue(self._painted(by_night, night_palette["TEXT_MUTED"]), "labels in the night colour")
-        self.assertFalse(
-            self._painted(by_night, day_palette["TEXT_MUTED"]),
-            "the widget must not keep painting with a palette it resolved once",
-        )
+
+        self.assertTrue(day_paints, "the widget resolved a palette while it was day")
+        night_asks = asked[day_paints:]
+        self.assertTrue(night_asks, "and again after night fell: it must not paint a kept palette")
+        for tokens in night_asks:
+            self.assertEqual(tokens["CARD_BG"].lower(), night_card, "painted from the night palette")
 
     @staticmethod
     def _canvas_colours(root):
@@ -365,16 +383,6 @@ class TestChartCardsAreOneSurface(_ThemeFollowHost):
             for x in range(0, image.width(), 2)
             for y in range(0, image.height(), 2)
         ]
-
-    @staticmethod
-    def _painted(colours, token, tolerance=12):
-        """Is ``token`` on the canvas? Text is antialiased, so allow a little."""
-        want = [int(token.lstrip("#")[i * 2:i * 2 + 2], 16) for i in range(3)]
-        for colour in colours:
-            got = [int(colour.lstrip("#")[i * 2:i * 2 + 2], 16) for i in range(3)]
-            if all(abs(got[i] - want[i]) <= tolerance for i in range(3)):
-                return True
-        return False
 
     def test_the_canvas_paints_with_the_card_colour(self):
         for mode in ("cafe-night", DAY_THEME):

@@ -26,7 +26,7 @@ qt6 = ["PyQt6==6.11.0", "PyQt6-WebEngine==6.11.0"]
 # built with and what the Qt 6.11 spike proved still packages the engine. Bump
 # it in its own commit, never in the same one as Qt, or a broken exe has two
 # possible causes.
-build = ["pyinstaller==6.19.0"]
+build = ["pyinstaller==6.22.3"]
 
 [tool.setuptools.packages.find]
 where = ["."]

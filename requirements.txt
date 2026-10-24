@@ -1,4 +1,4 @@
-PyQt5>=5.15
-PyQtWebEngine>=5.15
-cryptography>=40.0.0
-segno>=1.6.0
+PyQt5>=5.15.11
+PyQtWebEngine>=5.15.7
+cryptography>=50.0.2
+segno>=1.6.6

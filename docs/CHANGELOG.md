@@ -4,6 +4,45 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 > **Run & build the desktop app**: see the dedicated **`RUN_AND_BUILD.md`** — app testing checklist, how to use `.venv`, common run errors, and the full PyInstaller command (`--collect-all PyQt6.QtWebEngine*`) to produce the `.exe`.
 
+> ## 1.0.1.0 — The desk holds together
+>
+> A stability release for the 1.0 desk: the crashes that could take the whole
+> application down without a traceback are gone, and the AI workspace, Notes and
+> Idea Boards have been rebuilt around the work each screen is actually for.
+>
+> - **Idea Boards no longer crash.** Creating or opening any board that held a
+>   sticky card aborted the process, because `QGraphicsItem.itemChange()` raised
+>   an AttributeError that PyQt6 answers with `qFatal`. The compatibility shim now
+>   exposes the whole Qt5 enum surface (`GraphicsItemChange`, `QTextCursor.
+>   MoveAnchor/KeepAnchor`, `QMessageBox` standard buttons, `QIODevice` open modes,
+>   `QListWidget` drag/drop modes, `QCompleter` completion modes, `QFont` spacing),
+>   so the same class of failure cannot reach a user through a new call site.
+> - **The shell's own commands work.** `/routines` and `/export` passed the shell
+>   to dialogs that read `parent.base_dir`, which the shell never defined; both now
+>   open instead of aborting the process.
+> - **Find-in-note and wiki-links work again.** Both anchor a selection with the
+>   Qt5 `MoveAnchor`/`KeepAnchor` spellings, and the AI workspace's “capture this
+>   tab” path encodes its screenshot through `QIODevice.WriteOnly` — all three
+>   raised before drawing anything.
+> - **AI Workspace:** the question composer is the starting point, provider setup
+>   sits behind it as secondary, the enabled context options are named for the next
+>   question, the three panes give the conversation the primary space, and the empty
+>   thread and evidence panes explain what will appear there.
+> - **Notes:** search, category filter and `New note` share one row; two-line rows
+>   elide long titles and carry the note's own opening lines in the tooltip; the open
+>   note owns its title, save state and verbs; occasional tools sit behind `Tools ▾`;
+>   a wide window keeps prose near a 760 px measure; and the editor says “Pick a note
+>   to start writing” instead of showing an empty page that looks broken.
+> - **Idea Boards:** `Add sticky`, Pan/Draw/Link and Undo/Redo on one primary row,
+>   a wrapping settings row that never clips, a named board shelf with counts, a
+>   quiet zoom cluster, an intentional empty stage, and a themed desk with an
+>   optional dot grid behind the paper. Saved paper colours and every board record
+>   are unchanged.
+> - **Tests:** a static audit now fails CI if the app dereferences a Qt member the
+>   active binding does not have, the sticky-card and note-find paths are pinned
+>   (the card test runs in a subprocess so a crash fails the test rather than the
+>   run), and the shell's `base_dir` contract is asserted.
+
 > ## 1.0.0.0 Alpha — Next Horizon
 >
 > Mei 1.0.0.0 brings the Next Horizon desktop experience together around connected

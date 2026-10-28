@@ -1,14 +1,16 @@
-"""Idea Boards refinement: shelf rows, empty stage, modes, wrapping settings.
+"""Idea Boards refinement: shelf rows, empty stage, modes, cards, ink.
 
 Exercised on a real offscreen PersonalWindow, like the notes tests, so the
 assertions cover the widget tree the app builds rather than a parallel mock.
-Sticky-card scenes are deliberately not opened here: constructing a
-QGraphicsTextItem card aborts this PyQt/offscreen build (pre-existing, unrelated
-to the board chrome), so the parked board's card count is checked from its row
-payload without selecting it.
+
+The sticky-card scene is exercised for real now: constructing a card used to
+abort the process (a Qt member missing from the shim, see test_enum_compat), and
+the crash guard at the bottom of this file runs that path in a subprocess so a
+regression fails a test instead of killing the whole run.
 """
 import gc
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,8 +20,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import litebrowser  # noqa: F401 - activates the Qt shim
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QApplication, QWidget
+from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtWidgets import QApplication, QInputDialog, QWidget
 
 from litebrowser.core import prefs
 from litebrowser.services import life_service
@@ -89,6 +92,132 @@ class TestBoardsPageUI(unittest.TestCase):
             board["background"] = background
         life_service.update_board(self.base, board)
         return board
+
+    # ---------------------------------------------------------------- cards
+
+    def test_a_board_with_cards_and_links_opens_its_scene(self):
+        window = self._window(show=False)
+        board = self._board("Cards", cards=2)
+        board["edges"] = [{"id": "e1", "from": "Cards-n0", "to": "Cards-n1"}]
+        life_service.update_board(self.base, board)
+
+        window.open_life_item("board", board["id"])
+        QApplication.processEvents()
+
+        items = window.board_scene.items()
+        cards = [item for item in items if isinstance(item, pw.StickyCardItem)]
+        edges = [item for item in items if isinstance(item, pw.EdgeItem)]
+        self.assertEqual(2, len(cards))
+        self.assertEqual(1, len(edges))
+        self.assertEqual(2, len([i for i in items if isinstance(i, pw.StickyCardItem)]))
+
+    def test_a_link_follows_the_card_it_connects(self):
+        window = self._window(show=False)
+        board = self._board("Links", cards=2)
+        board["edges"] = [{"id": "e1", "from": "Links-n0", "to": "Links-n1"}]
+        life_service.update_board(self.base, board)
+        window.open_life_item("board", board["id"])
+        QApplication.processEvents()
+
+        edge = next(item for item in window.board_scene.items() if isinstance(item, pw.EdgeItem))
+        before = edge.path().pointAtPercent(0.0)
+        card = edge.from_item
+        card.setPos(card.pos() + QPointF(90, 40))
+        after = edge.path().pointAtPercent(0.0)
+        self.assertNotEqual(before, after)
+        self.assertAlmostEqual(card.pos().x() + card.rect().width() / 2, after.x(), places=3)
+
+    def test_adding_a_card_persists_it(self):
+        window = self._window(show=False)
+        board = self._board("Notes board")
+        window.open_life_item("board", board["id"])
+        QApplication.processEvents()
+
+        with mock.patch.object(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Next step", True))):
+            window._add_board_card()
+        QApplication.processEvents()
+
+        saved = next(b for b in life_service.load_boards(self.base) if b["id"] == board["id"])
+        self.assertEqual(["Next step"], [node["title"] for node in saved["nodes"]])
+        self.assertEqual(1, len([i for i in window.board_scene.items() if isinstance(i, pw.StickyCardItem)]))
+
+    def test_a_swept_stroke_is_saved_and_can_be_undone(self):
+        window = self._window(show=False)
+        board = self._board("Sketch")
+        window.open_life_item("board", board["id"])
+        QApplication.processEvents()
+        view = window.board_view
+        view.set_mode("draw")
+        view.set_tool("pen")
+        viewport = view.viewport()
+
+        def send(kind, pos, buttons):
+            event = QMouseEvent(
+                kind,
+                QPointF(pos),
+                QPointF(viewport.mapToGlobal(pos)),
+                Qt.MouseButton.LeftButton,
+                buttons,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            if kind == QEvent.Type.MouseButtonPress:
+                view.mousePressEvent(event)
+            elif kind == QEvent.Type.MouseMove:
+                view.mouseMoveEvent(event)
+            else:
+                view.mouseReleaseEvent(event)
+
+        send(QEvent.Type.MouseButtonPress, QPoint(120, 120), Qt.MouseButton.LeftButton)
+        for step in range(1, 8):
+            send(QEvent.Type.MouseMove, QPoint(120 + step * 8, 120 + step * 6), Qt.MouseButton.LeftButton)
+        send(QEvent.Type.MouseButtonRelease, QPoint(180, 160), Qt.MouseButton.NoButton)
+        QApplication.processEvents()
+
+        strokes = window._board_snapshot()["strokes"]
+        self.assertEqual(1, len(strokes))
+        self.assertGreaterEqual(len(strokes[0]["points"]), 2)
+        self.assertTrue(window.btn_board_undo.isEnabled())
+
+        window._save_current_board_positions(notify=False)
+        saved = next(b for b in life_service.load_boards(self.base) if b["id"] == board["id"])
+        self.assertEqual(1, len(saved["strokes"]))
+
+        view.undo()
+        QApplication.processEvents()
+        self.assertEqual([], window._board_snapshot()["strokes"])
+        view.redo()
+        QApplication.processEvents()
+        self.assertEqual(1, len(window._board_snapshot()["strokes"]))
+
+    def test_creating_a_sticky_card_does_not_abort_the_process(self):
+        """Regression guard for the qFatal in QGraphicsItem.itemChange()."""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        probe = (
+            "import os, sys\n"
+            "os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')\n"
+            f"sys.path.insert(0, {root!r})\n"
+            "import litebrowser\n"
+            "from PyQt5.QtWidgets import QApplication, QGraphicsScene\n"
+            "from litebrowser.ui import personal_window as pw\n"
+            "app = QApplication([])\n"
+            "scene = QGraphicsScene()\n"
+            "item = pw.StickyCardItem({'id': 'n1', 'title': 'Card', 'payload': 'body',\n"
+            "                          'x': 20, 'y': 20, 'color': '#f5e4ad'})\n"
+            "scene.addItem(item)\n"
+            "item.setPos(120.0, 80.0)\n"
+            "item.setPos(200.0, 140.0)\n"
+            "print('CARD_OK', len(scene.items()))\n"
+        )
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen", LITEBROWSER_UPDATE_METADATA_URL="")
+        completed = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr[-2000:])
+        self.assertIn("CARD_OK", completed.stdout)
 
     # ---------------------------------------------------------------- shelf
 

@@ -379,6 +379,55 @@ class TestNotesPageUI(unittest.TestCase):
         self.assertFalse(self._shown(win._note_tools))
         self.assertIn("▾", win.btn_note_tools.text())
 
+    # -------------------------------------------------- find / wiki-link
+
+    def test_find_in_note_highlights_every_match_and_steps_between_them(self):
+        """QTextCursor.KeepAnchor is a Qt5 spelling; a missing alias aborts Qt6."""
+        win = self._window()
+        note = personal_service.create_note(
+            self.base, "Foxes", "The quick brown fox. Another brown fox."
+        )
+        win._refresh_notes()
+        win.select_note(note["id"])
+
+        win.ed_note_find.setText("brown")
+        win._find_in_note()
+        self.assertEqual(2, len(win._note_find_matches))
+        self.assertEqual("2 matches", win.lbl_find_count.text())
+        self.assertTrue(win.note_editor.extraSelections(), "matches are painted")
+
+        win._find_next()
+        self.assertEqual("brown", win.note_editor.textCursor().selectedText())
+        win._find_prev()
+        self.assertEqual("brown", win.note_editor.textCursor().selectedText())
+
+        win.ed_note_find.setText("zebra")
+        win._find_in_note()
+        self.assertEqual([], win._note_find_matches)
+        self.assertEqual("No matches", win.lbl_find_count.text())
+
+    def test_wiki_link_insertion_replaces_the_typed_brackets(self):
+        win = self._window()
+        note = personal_service.create_note(self.base, "Links", "Start ")
+        win._refresh_notes()
+        win.select_note(note["id"])
+
+        editor = win.note_editor
+        editor.setPlainText("Start [[tar")
+        cursor = editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        editor.setTextCursor(cursor)
+        win._wiki_start = len("Start ")
+        win._insert_wiki_link("Target note")
+
+        self.assertEqual("Start [[Target note]]", editor.toPlainText())
+        self.assertEqual(-1, win._wiki_start)
+
+        win.note_editor.setPlainText("Start [[Target note]] and more")
+        win._save_note()
+        saved = personal_service.read_note(self.base, win.current_note_id)
+        self.assertIn("[[Target note]]", saved["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

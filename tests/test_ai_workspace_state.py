@@ -1,4 +1,5 @@
 """AI workspace state must match what the thread actions act on."""
+import base64
 import os
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import litebrowser  # noqa: F401 - activates the Qt compatibility shim
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor, QPixmap
 from PyQt5.QtWidgets import QApplication, QLabel, QListWidgetItem, QPushButton
 
 from litebrowser.core import prefs
@@ -172,6 +174,35 @@ class TestAIWorkspaceState(unittest.TestCase):
         self.window.cmb_provider.setCurrentIndex(local)
         self.assertIn("local", self.window.lbl_privacy.text().lower())
         self.assertNotIn("opens the question remotely", self.window.lbl_privacy.text().lower())
+
+    # --------------------------------------------------------- vision capture
+
+    def test_capture_without_a_browser_explains_itself_instead_of_raising(self):
+        with mock.patch.object(AIWindow, "_host_browser", return_value=None):
+            self.window._capture_current_tab()
+        self.assertEqual("", self.window._pending_screenshot_b64)
+        self.assertIn("no browser tab", self.window.lbl_vision.text().lower())
+        self.assertIn("open or select a browser tab", self.window.txt_answer.toPlainText().lower())
+
+    def test_capture_encodes_the_visible_tab_as_png(self):
+        """QBuffer.open(QIODevice.WriteOnly) is a Qt5 spelling of OpenModeFlag."""
+        pixmap = QPixmap(12, 8)
+        pixmap.fill(QColor("#c08040"))
+        with mock.patch.object(AIWindow, "_host_browser", return_value=mock.Mock(grab=lambda: pixmap)):
+            self.window._capture_current_tab()
+
+        encoded = self.window._pending_screenshot_b64
+        self.assertTrue(encoded)
+        raw = base64.b64decode(encoded)
+        self.assertTrue(raw.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertIn("screenshot ready", self.window.lbl_vision.text().lower())
+
+    def test_an_empty_capture_is_reported_and_never_kept(self):
+        empty = QPixmap()
+        with mock.patch.object(AIWindow, "_host_browser", return_value=mock.Mock(grab=lambda: empty)):
+            self.window._capture_current_tab()
+        self.assertEqual("", self.window._pending_screenshot_b64)
+        self.assertIn("failed", self.window.lbl_vision.text().lower())
 
 
 if __name__ == "__main__":

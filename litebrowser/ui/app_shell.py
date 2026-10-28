@@ -72,6 +72,11 @@ class AppShell(QMainWindow):
         self._closing = False
         self._private_locked = False
         self.profile_dir = prefs.ensure_profile_layout(profile_dir)
+        # The shared dialogs (routines, export, privacy centre…) were written for
+        # SearchWindow and read `parent.base_dir`; /routines and /export hand them
+        # this shell, which used to raise AttributeError from inside a slot and
+        # take the process down with it. Same folder, one name.
+        self.base_dir = self.profile_dir
         self.app_dir = app_dir or app_paths.project_root()
         self.window_slot = window_slot
         self.browser_workspace_id = browser_workspace_id or workspace_manager.PRIMARY_WORKSPACE_ID

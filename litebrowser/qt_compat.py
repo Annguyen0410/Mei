@@ -92,6 +92,30 @@ if PYQT6:
             if not hasattr(cls, old):
                 setattr(cls, old, new)
 
+    def _patch_enum(cls, enum_name, names=None):
+        """Expose a scoped Qt6 enum's members under their Qt5 names.
+
+        Missing members are not cosmetic: PyQt6 turns an AttributeError raised
+        inside a reimplemented virtual (``itemChange``, ``paintEvent``…) into
+        ``qFatal``, so the whole application aborts instead of logging. Listing
+        every member of the enum (rather than the handful in use today) keeps
+        the PyQt5 surface complete for code added later.
+        """
+        enum = getattr(cls, enum_name, None)
+        if enum is None:
+            return
+        for name in (names if names is not None else dir(enum)):
+            if name.startswith("_"):
+                continue
+            value = getattr(enum, name, None)
+            # Members only. ``dir()`` of a scoped enum is members today, but a
+            # future PyQt that adds descriptors (name/value) must not have them
+            # pasted onto the widget class.
+            if isinstance(enum, type) and not isinstance(value, enum):
+                continue
+            if value is not None:
+                _patch(cls, {name: value})
+
     _patch(Qt, {
         # Orientation
         "Horizontal": Qt.Orientation.Horizontal,
@@ -260,16 +284,12 @@ if PYQT6:
 
     # --- QMessageBox ---
     from PyQt6.QtWidgets import QMessageBox
-    _patch(QMessageBox, {
-        "Yes": QMessageBox.StandardButton.Yes,
-        "No": QMessageBox.StandardButton.No,
-        "NoToAll": QMessageBox.StandardButton.NoToAll,
-    })
-    if hasattr(QMessageBox, "Icon"):
-        _patch(QMessageBox, {
-            "Warning": QMessageBox.Icon.Warning,
-            "Information": QMessageBox.Icon.Information,
-        })
+    # Every standard button, not just the three above: QMessageBox.Cancel and
+    # friends are used to compose confirmation prompts in the session and
+    # profile dialogs.
+    _patch_enum(QMessageBox, "StandardButton")
+    _patch_enum(QMessageBox, "Icon")
+    _patch_enum(QMessageBox, "ButtonRole")
 
     # --- QDialog ---
     from PyQt6.QtWidgets import QDialog
@@ -284,8 +304,16 @@ if PYQT6:
         "Bold": QFont.Weight.Bold,
         "DemiBold": QFont.Weight.DemiBold,
     })
-    if hasattr(QFont, "StyleStrategy"):
-        _patch(QFont, {"PreferAntialias": QFont.StyleStrategy.PreferAntialias})
+    _patch_enum(QFont, "SpacingType")
+    _patch_enum(QFont, "StyleStrategy")
+    _patch_enum(QFont, "StyleHint")
+
+    # --- QTextCursor ---
+    # QTextCursor.MoveAnchor / KeepAnchor are Qt5 spellings of MoveMode
+    # members; the note find bar and wiki-link insertion both rely on them.
+    from PyQt6.QtGui import QTextCursor as _QTextCursor
+    _patch_enum(_QTextCursor, "MoveMode")
+    _patch_enum(_QTextCursor, "SelectionType")
 
     # --- QPainter ---
     from PyQt6.QtGui import QPainter
@@ -311,13 +339,33 @@ if PYQT6:
         _patch(QGraphicsView, {"FullViewportUpdate": QGraphicsView.ViewportUpdateMode.FullViewportUpdate})
 
     # --- QGraphicsItem / QGraphicsRectItem ---
-    from PyQt6.QtWidgets import QGraphicsItem, QGraphicsRectItem
-    if hasattr(QGraphicsItem, "GraphicsItemFlag"):
-        for name in ("ItemIsMovable", "ItemIsSelectable", "ItemSendsGeometryChanges"):
-            val = getattr(QGraphicsItem.GraphicsItemFlag, name, None)
-            if val is not None:
-                _patch(QGraphicsItem, {name: val})
-                _patch(QGraphicsRectItem, {name: val})
+    from PyQt6.QtWidgets import QGraphicsItem
+    # Flags are what callers pass to setFlags(); changes are what a subclass
+    # receives in itemChange(). Both used to be flat class attributes in Qt5.
+    # ItemPositionHasChanged lives in GraphicsItemChange, was never patched, and
+    # its absence aborted the app the first time a sticky card was created.
+    _patch_enum(QGraphicsItem, "GraphicsItemFlag")
+    _patch_enum(QGraphicsItem, "GraphicsItemChange")
+    # QGraphicsRectItem inherits QGraphicsItem, so the members above are visible
+    # on every item subclass without patching each of them.
+
+    # --- QListWidget / QAbstractItemView ---
+    from PyQt6.QtWidgets import QAbstractItemView, QListWidget
+    for _view_cls in (QAbstractItemView, QListWidget):
+        _patch_enum(_view_cls, "DragDropMode")
+        _patch_enum(_view_cls, "SelectionMode")
+        _patch_enum(_view_cls, "SelectionBehavior")
+        _patch_enum(_view_cls, "EditTrigger")
+        _patch_enum(_view_cls, "ScrollMode")
+
+    # --- QCompleter ---
+    from PyQt6.QtWidgets import QCompleter
+    _patch_enum(QCompleter, "CompletionMode")
+
+    # --- QIODevice ---
+    from PyQt6.QtCore import QIODevice
+    _patch_enum(QIODevice, "OpenModeFlag")
+    _patch_enum(QIODevice, "OpenMode")
 
     # --- QNetworkProxy ---
     from PyQt6.QtNetwork import QNetworkProxy

@@ -101,7 +101,14 @@ class TestReleaseNotes(unittest.TestCase):
         self.assertIn("pre-release", body)
         self.assertIn("releases/latest", body)
         self.assertIn(product.APP_VERSION, body)
-        self.assertIn("Folder sync", body, "the notes still quote the changelog section")
+        # The body must quote this version's own section, whole. Compare a line
+        # from the section body (not the heading, and not a phrase that only
+        # exists in whichever release happened to be current when this test was
+        # written — that failed on every version bump).
+        section = publish_release.changelog_section(self.changelog, product.APP_VERSION)
+        quoted = [line for line in section.splitlines()[1:] if line.strip().strip(">").strip()]
+        self.assertTrue(quoted, "this version's changelog section has body text")
+        self.assertIn(quoted[-1], body, "the notes still quote the changelog section")
 
     def test_the_body_opens_in_english_and_quotes_the_changelog(self):
         site = f"Mei-{product.APP_VERSION}-web_support.zip"

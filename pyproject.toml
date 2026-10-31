@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=9.2.0"]
 # The engine Mei ships with, pinned rather than ">=": which Chromium the user
 # gets is a product decision, and an unpinned install quietly turns into a
 # different browser. Qt 6.11 = Chromium 140 (the 6.8 line was 122). The PyQt5

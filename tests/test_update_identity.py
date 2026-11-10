@@ -9,12 +9,39 @@ import os
 import shutil
 import tempfile
 import time
-import unittest
 import urllib.request
+import unittest
 from unittest import mock
 
-from litebrowser.core import app_version, product
-from litebrowser.services import update_service
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from litebrowser.core import app_version, product, update_keys
+from litebrowser.services import update_service, update_signature
+
+_TEST_PRIVATE_KEY = Ed25519PrivateKey.generate()
+_TEST_KEY_ID = "test-release"
+
+
+def _signed(metadata):
+    """Sign a fixture manifest with an ephemeral test key.
+
+    Production pins a real publisher key (core/update_keys.py). Tests generate
+    their own pair so no private key ever enters the repository.
+    """
+    return update_signature.sign_manifest(dict(metadata), _TEST_PRIVATE_KEY, _TEST_KEY_ID)
+
+
+def _install_test_trust():
+    update_keys.TRUSTED_UPDATE_KEYS.clear()
+    update_keys.TRUSTED_UPDATE_KEYS[_TEST_KEY_ID] = update_signature.public_key_b64(_TEST_PRIVATE_KEY)
+
+
+def setUpModule():
+    _install_test_trust()
+
+
+def tearDownModule():
+    update_keys.TRUSTED_UPDATE_KEYS.clear()
 
 
 def _newer_than_current() -> str:
@@ -26,7 +53,7 @@ def _newer_than_current() -> str:
 
 class TestChannelOwnership(unittest.TestCase):
     def _check(self, metadata, url="https://example.invalid/update.json"):
-        with mock.patch.object(update_service, "_read_remote_json", return_value=metadata):
+        with mock.patch.object(update_service, "_read_remote_json", return_value=_signed(metadata)):
             return update_service.check_for_updates(url)
 
     def test_channel_serving_another_product_is_refused(self):
@@ -165,7 +192,7 @@ class TestManifestHash(unittest.TestCase):
         self._tmp.cleanup()
 
     def _check(self, metadata):
-        with mock.patch.object(update_service, "_read_remote_json", return_value=metadata):
+        with mock.patch.object(update_service, "_read_remote_json", return_value=_signed(metadata)):
             return update_service.check_for_updates("https://example.invalid/update.json")
 
     def test_manifest_hash_reaches_the_update_info(self):
@@ -334,13 +361,13 @@ class TestPackageVerification(unittest.TestCase):
             update_service.verify_package(path, "not-a-sha256")
 
     def test_manifest_size_above_the_ceiling_is_refused(self):
-        with mock.patch.object(update_service, "_read_remote_json", return_value={
+        with mock.patch.object(update_service, "_read_remote_json", return_value=_signed({
             "product": product.PRODUCT_ID,
             "version": _newer_than_current(),
             "download_url": "https://h/v/Mei.exe",
             "sha256": "a" * 64,
             "size": update_service.MAX_PACKAGE_BYTES + 1,
-        }):
+        })):
             with self.assertRaises(ValueError):
                 update_service.check_for_updates("https://example.invalid/update.json")
 

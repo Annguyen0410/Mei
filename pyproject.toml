@@ -5,22 +5,30 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mei"
 version = "1.0.1.0"
-description = "Mei — PyQt5 WebEngine shell with Personal and AI hubs"
+description = "Mei — Qt WebEngine desktop browser with Personal and AI hubs"
 readme = "README.md"
 requires-python = ">=3.10"
+# The engine is a product decision, not a resolver outcome. A plain
+# ``pip install .`` used to pull PyQt5/Qt 5.15 — Chromium 87 — while the shipped
+# .exe was built on PyQt6/Qt 6.11 — Chromium 140. Two engines meant two very
+# different browser behaviours, and the old one is refused by modern sites.
+# Production is Qt 6.11 only; see
+# docs/audit/MEI_BROWSER_COMPATIBILITY_MATRIX.md.
 dependencies = [
-    "PyQt5>=5.15",
-    "PyQtWebEngine>=5.15",
+    "PyQt6==6.11.0",
+    "PyQt6-WebEngine==6.11.0",
     "cryptography>=41",
     "segno>=1.6.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-# The engine Mei ships with, pinned rather than ">=": which Chromium the user
-# gets is a product decision, and an unpinned install quietly turns into a
-# different browser. Qt 6.11 = Chromium 140 (the 6.8 line was 122). The PyQt5
-# fallback pins Qt 5.15, which is Chromium 87 — see docs/reports/qt611-spike.md.
+# LEGACY, not a supported engine. PyQt5 pins Qt 5.15 = Chromium 87, which most
+# of the modern web treats as unsupported (sign-in, WebAuthn, many JS APIs).
+# Kept only so an old checkout can still run its test suite; never ship it and
+# never advertise it as an install path.
+qt5 = ["PyQt5>=5.15", "PyQtWebEngine>=5.15"]
+# Compatibility alias for the old extra name.
 qt6 = ["PyQt6==6.11.0", "PyQt6-WebEngine==6.11.0"]
 # Packaging is the other half of the engine: 6.19.0 is what the shipped .exe is
 # built with and what the Qt 6.11 spike proved still packages the engine. Bump

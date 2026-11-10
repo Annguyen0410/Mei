@@ -11,6 +11,7 @@ into live feature results without opening a separate dialog.
 """
 import os
 import sys
+import threading
 import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +40,7 @@ from PyQt5.QtWidgets import (
 
 from litebrowser.core import app_paths, app_version, prefs
 from litebrowser.services import (
+    backup_scheduler,
     history_service,
     life_service,
     personal_service,
@@ -65,6 +67,7 @@ class AppShell(QMainWindow):
     update_downloaded = pyqtSignal(object, object)
     sync_finished = pyqtSignal(bool, str)
     monitor_checked = pyqtSignal(object)
+    scheduled_backup_done = pyqtSignal(object)
     background_done = pyqtSignal(object, object)
 
     def __init__(self, profile_dir: str, app_dir: str = None, window_slot: str = "primary", browser_workspace_id: str | None = None):
@@ -95,6 +98,7 @@ class AppShell(QMainWindow):
         self.update_downloaded.connect(self._finish_downloaded_update)
         self.sync_finished.connect(self._show_sync_result)
         self.monitor_checked.connect(self._on_monitor_checked)
+        self.scheduled_backup_done.connect(self._finish_scheduled_backup)
         self.background_done.connect(self._deliver_background_result)
         title_suffix = "Workspace 1" if self.window_slot == "primary" else "Workspace 2"
         # Brand comes from core/product.py: the taskbar used to spell out a name
@@ -214,6 +218,21 @@ class AppShell(QMainWindow):
         top_layout.addWidget(self.btn_toggle_topbar)
         self._top_bar = top_bar
         shell_layout.addWidget(top_bar)
+        # One warning surface for every unavailable store.  It deliberately sits
+        # above the workspace: a corrupt task store must not make Home look like
+        # a user with no tasks.
+        self.storage_banner = components.StorageHealthBanner(self)
+        shell_layout.addWidget(self.storage_banner)
+        self._storage_health_timer = QTimer(self)
+        self._storage_health_timer.setInterval(30_000)
+        self._storage_health_timer.timeout.connect(self.storage_banner.refresh)
+        self._storage_health_timer.start()
+        self._backup_scheduler = backup_scheduler.BackupScheduler(self.profile_dir)
+        self._backup_timer = QTimer(self)
+        self._backup_timer.setInterval(30 * 60 * 1000)
+        self._backup_timer.timeout.connect(self._maybe_scheduled_backup)
+        self._backup_timer.start()
+        QTimer.singleShot(5000, self._maybe_scheduled_backup)
 
         # Omnibar hints come from the shared registry (core.commands) — both the
         # description and the example, so hints cannot drift from the palette or
@@ -625,6 +644,36 @@ class AppShell(QMainWindow):
         # A cheap read-back makes the rail reflect the flush immediately.
         self._insight_cache = None
         self.refresh_shell()
+
+    def _maybe_scheduled_backup(self):
+        """Ask the scheduler off the GUI thread; one attempt at a time."""
+        if self._closing:
+            return
+
+        def work():
+            try:
+                result = self._backup_scheduler.run_if_due()
+            except Exception as exc:  # visible in the status strip, never silent
+                result = backup_scheduler.SchedulerResult("failed", error=str(exc))
+            if not self._closing:
+                self.scheduled_backup_done.emit(result)
+
+        threading.Thread(target=work, name="mei-backup-scheduler", daemon=True).start()
+
+    def _finish_scheduled_backup(self, result):
+        if self._closing:
+            return
+        status = getattr(result, "status", "failed")
+        if status == "created":
+            self.lbl_sync_pill.setText("Backup ✓")
+            self.lbl_sync_pill.setToolTip("A scheduled backup was verified and saved.")
+            if hasattr(self, "storage_banner"):
+                self.storage_banner.refresh()
+        elif status == "failed":
+            self.lbl_sync_pill.setText("Backup failed")
+            self.lbl_sync_pill.setToolTip(
+                getattr(result, "error", "") or "Scheduled backup failed"
+            )
 
     def toggle_insights(self):
         self._insights_user_toggled = True

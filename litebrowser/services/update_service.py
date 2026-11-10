@@ -89,6 +89,13 @@ class UpdateInfo:
     # A local ``update\\update.json`` may omit the hash for a hand-built package;
     # that exception is narrow, visible, and never applies to a remote channel.
     manual_channel: bool = False
+    # Publisher authentication. A remote release must carry an Ed25519 signature
+    # from a pinned key; ``signature_verified`` is only True after that check.
+    key_id: str = ""
+    signature_verified: bool = False
+    # "local-manual" or "remote" — shown to the user instead of hiding where an
+    # update came from.
+    channel_kind: str = "remote"
 
 
 def file_sha256(path: str, chunk_size: int = 1024 * 1024) -> str:
@@ -327,6 +334,28 @@ def check_for_updates(metadata_url: str | None = None, app_dir: str = "") -> Upd
     current_version = app_version.APP_VERSION
     has_update = _version_is_newer(latest_version, current_version)
     manual = bool(local_source(download_url) or local_channel_path(app_dir))
+    channel_is_local = bool(local_source(url) or local_channel_path(app_dir))
+
+    # Publisher authentication, before anything can be offered for install.
+    # A SHA-256 in the manifest only proves the download matches the manifest;
+    # whoever can replace one can replace both. A local hand-dropped channel is
+    # a deliberate action on this machine and is labelled as such; a *remote*
+    # channel is only installable when a pinned key signed it. Fail closed.
+    key_id = ""
+    signature_verified = False
+    if not channel_is_local and (has_update or download_url):
+        from litebrowser.core import update_keys
+        from litebrowser.services import update_signature
+
+        try:
+            key_id = update_signature.verify_manifest(
+                metadata,
+                update_keys.trusted_keys(),
+                update_keys.REVOKED_UPDATE_KEY_IDS,
+            )
+            signature_verified = True
+        except update_signature.UpdateSignatureError as exc:
+            raise ValueError(str(exc)) from exc
 
     if has_update and download_url and not asset_is_ours(download_url):
         raise ValueError(
@@ -353,6 +382,9 @@ def check_for_updates(metadata_url: str | None = None, app_dir: str = "") -> Upd
         size=size,
         release_url=release_url,
         manual_channel=manual,
+        key_id=key_id,
+        signature_verified=signature_verified,
+        channel_kind="local-manual" if channel_is_local or manual else "remote",
     )
 
 

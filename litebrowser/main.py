@@ -261,6 +261,18 @@ def main(app_dir=None):
 
         _QMB.warning(None, "Mei — profile in use", lock_msg)
         sys.exit(2)
+    # Crash/disaster recovery runs only after this process owns the profile.
+    # Safe facts (a migration that already landed) are reconciled here; an
+    # ambiguous restore or migration is left for Data Management.
+    from litebrowser.services import recovery_service
+
+    try:
+        recovery_service.begin_session(profile_dir)
+        recovery_service.recover_startup(profile_dir)
+    except Exception as exc:
+        from litebrowser.core.log import get_logger as _get_logger
+
+        _get_logger("main").warning("startup recovery inspection failed: %s", exc)
     # VPN auto-connect: re-enable the last proxy before Chromium flags are
     # finalized, so an auto-connected session protects every tab from launch.
     smart_restart = os.environ.pop("MEI_SMART_RESTART", "").strip() == "1"
@@ -322,6 +334,12 @@ def main(app_dir=None):
     android_bridge_service.start_from_prefs(profile_dir)
     def finish_application():
         android_bridge_service.stop()
+        try:
+            recovery_service.end_session(profile_dir)
+        except Exception as exc:
+            from litebrowser.core.log import get_logger as _get_logger
+
+            _get_logger("main").warning("could not mark the session clean: %s", exc)
         for window in windows:
             if not window._closing:
                 window.persist_state()

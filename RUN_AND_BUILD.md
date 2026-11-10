@@ -8,7 +8,7 @@ as a desktop app (.exe on Windows). For code / architecture content, see `README
 ## 1. Requirements
 
 - **Python 3.11+** (Windows Store or python.org both work).
-- The repo already ships a virtual environment: **`.venv`** (contains PyQt5, PyQt6, QtWebEngine,
+- The repo already ships a virtual environment: **`.venv`** (PyQt6 6.11, QtWebEngine,
   cryptography…). If you don't have `.venv` yet, recreate it:
   ```powershell
   python -m venv .venv
@@ -17,8 +17,10 @@ as a desktop app (.exe on Windows). For code / architecture content, see `README
   > Note: prefer `python -m pip` over `pip.exe` — the venv's `pip.exe` sometimes has a broken
   > path (the `Fatal error in launcher` error). `python -m pip` always works.
 
-- The app runs on both PyQt5 and PyQt6 (shim `litebrowser/qt_compat.py`). When PyQt6-WebEngine
-  is installed (Qt 6.8 → Chromium 122) the app uses it; otherwise it falls back to PyQt5.
+- **Production engine: PyQt6 6.11.0 / QtWebEngine 6.11 (Chromium 140), pinned in
+  `requirements.txt` and `pyproject.toml`.** There is no silent PyQt5 fallback: Qt 5.15 is
+  Chromium 87 and modern sites refuse it. PyQt5 remains available only as the `qt5` extra for
+  running the legacy test matrix — never for a release build.
 
 ---
 

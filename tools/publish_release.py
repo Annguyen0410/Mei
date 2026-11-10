@@ -195,6 +195,30 @@ def build_manifest(
             "size": os.path.getsize(web_support_path) if web_support_path else 0,
             "sha256": update_service.file_sha256(web_support_path) if web_support_path else "",
         }
+
+    # Publisher authentication. The app refuses a remote manifest that is not
+    # signed by a pinned key, so an unsigned publish is a known-broken release
+    # rather than a silent downgrade in trust. The private key lives only in CI
+    # (MEI_UPDATE_SIGNING_KEY, base64 raw Ed25519) — never in this repository.
+    import base64 as _b64
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from litebrowser.services import update_signature
+
+    key_id = str(os.environ.get("MEI_UPDATE_KEY_ID") or "").strip()
+    secret = str(os.environ.get("MEI_UPDATE_SIGNING_KEY") or "").strip()
+    if key_id and secret:
+        try:
+            raw = _b64.b64decode(secret, validate=True)
+            manifest = update_signature.sign_manifest(
+                manifest, Ed25519PrivateKey.from_private_bytes(raw), key_id
+            )
+        except Exception as exc:  # noqa: BLE001 - fail loudly, never ship half-signed
+            raise ValueError(f"Update signing failed: {type(exc).__name__}") from exc
+    else:
+        manifest["signature"] = ""
+        manifest["key_id"] = ""
     return manifest
 
 

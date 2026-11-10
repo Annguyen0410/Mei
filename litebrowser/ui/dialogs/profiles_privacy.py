@@ -134,9 +134,13 @@ def show_privacy_dialog(parent):
     chk_3p_cookie_priv.setChecked(prefs.get_block_third_party_cookies(base_dir))
     layout.addWidget(chk_3p_cookie_priv)
 
-    chk_chrome_shim = QCheckBox("Chrome compatibility mode (hide automation detection)")
+    chk_chrome_shim = QCheckBox("Sign-in compatibility headers (Chromium Client Hints)")
     chk_chrome_shim.setChecked(prefs.get_chrome_compat_shim(base_dir))
-    chk_chrome_shim.setToolTip("Injects a script impersonating real Chrome — avoids being blocked by Google, OpenAI, Anthropic, etc.")
+    chk_chrome_shim.setToolTip(
+        "Sends this engine's real Chromium Client Hints to the sign-in origins that require them; "
+        "it never changes navigator.*, WebGL or window.chrome, and never applies to ordinary browsing. "
+        "Off by default: nothing fabricated leaves the machine."
+    )
     layout.addWidget(chk_chrome_shim)
 
     layout.addSpacing(6)

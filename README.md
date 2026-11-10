@@ -8,7 +8,8 @@ can move from the page you are reading into the work you want to do next.
 
 Mei is designed around a local profile and connected workflows: capture a source,
 organize it in a research workspace, make a plan, study, and review. It runs on
-QtWebEngine and supports the PyQt5 and PyQt6 compatibility paths.
+QtWebEngine (Qt 6.11 / Chromium 140). PyQt5 is a legacy test path only, never a
+supported engine; see `docs/audit/MEI_BROWSER_COMPATIBILITY_MATRIX.md`.
 
 ## Highlights
 
@@ -134,3 +135,24 @@ requires a SHA-256 and a plausible size for the executable, and the `web_support
 ZIP is re-read before upload to reject private files, traversal entries, or a
 missing `hub/index.html` entry point. Earlier good files are preserved when either
 check fails.
+
+## Data integrity & recovery
+
+Settings → Data Management provides verified, versioned backups, a staged
+Restore Center with rollback, a read-only integrity check, and a Sync Conflicts
+archive. Backups exclude `secrets.dat`, proxy configuration and Chromium
+`BrowserData`; see `docs/audit/MEI_DATA_MANAGEMENT_GUIDE.md` for the workflow and
+`docs/audit/MEI_DATA_INTEGRITY_AUDIT.md` for the guarantees and remaining risks.
+
+## Data safety, recovery and proxy
+
+`Settings → Data Management` now includes Storage Health, Record Restore,
+Recovery and Proxy views. Backups are verified and can run on a daily/weekly
+schedule while Mei is open; conflict archives are an explicit backup category.
+Page Monitor and filter refreshes refuse to bypass a configured proxy unless
+direct access is explicitly selected. See
+`docs/audit/MEI_DATA_INTEGRITY_AUDIT.md`,
+`docs/audit/MEI_BACKUP_RESTORE.md`, and
+`docs/audit/MEI_BACKUP_ENCRYPTION.md`. Encrypted backups are opt-in
+AES-256-GCM/scrypt containers; scheduled backups remain unencrypted because
+Mei never stores the password.

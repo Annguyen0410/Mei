@@ -44,6 +44,7 @@ from litebrowser.services import (
     brief_service,
     desk_service,
     diagnostics,
+    engine_diagnostics,
     plugins,
     sync_folder,
     focus_service,
@@ -436,6 +437,21 @@ class HomeDashboardPage(QWidget):
             trailing,
         )
         layout.addWidget(masthead)
+        self.page_store_notice = components.PageStoreNotice(
+            self.shell,
+            (
+                "tasks.json",
+                "calendar.json",
+                "boards.json",
+                "saved_pages.json",
+                "personal_plan.json",
+                "flashcards.json",
+                "bookmarks.json",
+                "entity_links.json",
+                "tab_sets.json",
+            ),
+        )
+        layout.addWidget(self.page_store_notice)
 
         # ---- one command line, the full width of the table
         start_block = QWidget()
@@ -1332,6 +1348,7 @@ class HomeDashboardPage(QWidget):
         QMessageBox.information(self, "Café Focus", "25-minute pour started. Track it with /status or /focus.")
 
     def refresh(self):
+        self.page_store_notice.refresh()
         locked = getattr(self.shell, "_private_locked", False) is True or (
             security.has_passcode(self.shell.profile_dir) and not (
                 security.is_unlocked(self.shell.profile_dir) or getattr(self.shell, "_unlocked_spaces", set())
@@ -1522,6 +1539,22 @@ class LibraryPage(QWidget):
         filter_row.setColumnStretch(5, 1)
         hero_layout.addLayout(filter_row)
         layout.addWidget(hero)
+        self.page_store_notice = components.PageStoreNotice(
+            self.shell,
+            (
+                "tasks.json",
+                "calendar.json",
+                "boards.json",
+                "saved_pages.json",
+                "personal_plan.json",
+                "flashcards.json",
+                "bookmarks.json",
+                "bookmark_folders.json",
+                "entity_links.json",
+                "tab_sets.json",
+            ),
+        )
+        layout.addWidget(self.page_store_notice)
 
         self.library_stats = {
             "results": components.stat_tile("0", "on this shelf"),
@@ -1571,6 +1604,7 @@ class LibraryPage(QWidget):
         return kind in mapping.get(value, set())
 
     def refresh(self, query: str | None = None):
+        self.page_store_notice.refresh()
         q = query if isinstance(query, str) else self.ed_search.text().strip()
         self.ed_search.setText(q)
         items = []
@@ -1696,6 +1730,18 @@ class SettingsPage(QWidget):
         hero_note.setWordWrap(True)
         hero_note.hide()
         layout.addWidget(hero)
+        self.page_store_notice = components.PageStoreNotice(
+            self.shell,
+            (
+                "prefs.json",
+                "profile_meta.json",
+                "permissions.json",
+                "ai_settings.json",
+                "monitors.json",
+                "feeds.json",
+            ),
+        )
+        layout.addWidget(self.page_store_notice)
 
         self.settings_scroll = QScrollArea()
         self.settings_scroll.setObjectName("SettingsScroll")
@@ -2092,6 +2138,11 @@ class SettingsPage(QWidget):
         open_row.addWidget(self.btn_open_data_folder)
         open_row.addStretch(1)
         backup_layout.addLayout(open_row)
+        self.btn_data_management = primary_button("Data Management…")
+        self.btn_data_management.setToolTip(
+            "Versioned backups, verified restore, integrity checks and sync conflicts"
+        )
+        backup_layout.addWidget(self.btn_data_management, 0, Qt.AlignLeft)
         content_layout.addWidget(backup_card)
 
         guide_card = QFrame()
@@ -2232,9 +2283,13 @@ class SettingsPage(QWidget):
         self.lbl_engine.setWordWrap(True)
         diag_layout.addWidget(self.lbl_engine)
         self.btn_export_diagnostics = primary_button("Export diagnostics zip")
+        self.btn_browser_diagnostics = ghost_button(
+            "Browser diagnostics", "Engine, GPU, sandbox, profile and compatibility warnings"
+        )
         self.btn_open_log_folder = ghost_button("Open log folder", "Where mei.log lives")
         diag_actions = QHBoxLayout()
         diag_actions.addWidget(self.btn_export_diagnostics)
+        diag_actions.addWidget(self.btn_browser_diagnostics)
         diag_actions.addWidget(self.btn_open_log_folder)
         diag_actions.addStretch(1)
         diag_layout.addLayout(diag_actions)
@@ -2257,6 +2312,7 @@ class SettingsPage(QWidget):
         self.btn_install_update.clicked.connect(self.shell.install_available_update)
         self.btn_open_release_page.clicked.connect(lambda: self.shell.open_release_page())
         self.btn_export_diagnostics.clicked.connect(self._export_diagnostics)
+        self.btn_browser_diagnostics.clicked.connect(self._show_browser_diagnostics)
         self.btn_choose_sync_folder.clicked.connect(self._choose_sync_folder)
         self.btn_clear_sync_folder.clicked.connect(self._clear_sync_folder)
         self.btn_preview_sync.clicked.connect(self._preview_sync)
@@ -2270,6 +2326,7 @@ class SettingsPage(QWidget):
         self.btn_open_data_folder.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(app_paths.data_root(self.shell.app_dir)))
         )
+        self.btn_data_management.clicked.connect(lambda: dialogs.show_data_management(self.shell))
         # Paint the folder and plugin cards once at build time, so a profile
         # without a folder cannot show an enabled "Sync now" for a sync that has
         # nowhere to go, and the plugin list is never empty-but-claimed.
@@ -2343,6 +2400,7 @@ class SettingsPage(QWidget):
         return result
 
     def refresh(self):
+        self.page_store_notice.refresh()
         values = self._form_values()
         drafts = {w: value for w, value in values.items() if w in self._form_baseline and value != self._form_baseline[w]}
         account = life_service.load_sync_account(self.shell.profile_dir)
@@ -2654,6 +2712,38 @@ class SettingsPage(QWidget):
             self.lbl_sync_status.setToolTip(f"Backup before this merge: {report['snapshot']}")
         if report.get("applied"):
             self.shell.refresh_shell(force_deep=True)
+
+    def _show_browser_diagnostics(self):
+        """Settings → Browser Diagnostics.
+
+        Reports the engine the app is *actually* running, with ``Unknown`` for
+        anything that cannot be determined. It is deliberately not a marketing
+        panel: the Chromium floor and the legacy-PyQt5 warning are the point.
+        """
+        facts = _ui_versions()
+        try:
+            profile = getattr(self.shell, "profile", None)
+            if profile is not None:
+                facts["user_agent"] = profile.httpUserAgent()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            raw_profile = str(getattr(self.shell, "profile_dir", "")).replace(chr(92), "/")
+            facts["profile"] = os.path.basename(raw_profile.rstrip("/"))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from litebrowser.qt import QtWebEngineCore
+            facts["qtwebengine"] = getattr(QtWebEngineCore, "QTWEBENGINE_VERSION_STR", "") or ""
+        except Exception:  # noqa: BLE001
+            pass
+        report = engine_diagnostics.collect(facts)
+        box = QMessageBox(self)
+        box.setWindowTitle("Browser diagnostics")
+        box.setText("The engine facts this build can verify")
+        box.setDetailedText(engine_diagnostics.format_report(report))
+        box.setStandardButtons(QMessageBox.Ok)
+        box.exec_()
 
     def _refresh_engine_notice(self):
         """Say which engine this build is running, and flag the old branch."""

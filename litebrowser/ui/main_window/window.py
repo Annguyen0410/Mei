@@ -1,7 +1,6 @@
 # Mei - Search window (main browser UI)
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -1144,14 +1143,17 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
 
     @staticmethod
     def _build_clean_ua(profile):
-        raw_ua = profile.httpUserAgent() or ""
-        m = re.search(r"Chrome/(\d+)", raw_ua)
-        ver = m.group(1) if m else "122"
-        return (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            f"Chrome/{ver}.0.0.0 Safari/537.36"
-        )
+        """The UA Mei sends: real Chromium version, honest product name.
+
+        The old builder stripped ``QtWebEngine`` and returned a plain
+        ``Chrome/<n>.0.0.0`` string, i.e. it claimed to be Google Chrome. It now
+        names Mei and keeps the engine's real major version (see
+        ``browser/engine_identity.py``). If the version cannot be read the
+        ``Chrome/`` token is omitted rather than guessed.
+        """
+        from litebrowser.browser import engine_identity
+
+        return engine_identity.build_user_agent(profile)
 
     def _shell_slot(self):
         slot = (getattr(self, "_window_slot_hint", "") or "").strip()
@@ -1164,6 +1166,12 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         os.makedirs(slot_dir, exist_ok=True)
         chrome_ua = self._build_clean_ua(profile)
         profile.setHttpUserAgent(chrome_ua)
+        # Keep the engine's real identity available to diagnostics and to the
+        # request interceptor; the UA above never invents a Chromium build.
+        try:
+            self._engine_user_agent = chrome_ua
+        except Exception:
+            pass
         if hasattr(profile, "setHttpAcceptLanguage"):
             profile.setHttpAcceptLanguage("en-US,en;q=0.9")
         if off_the_record:

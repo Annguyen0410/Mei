@@ -75,6 +75,39 @@ jobs:
             --exclude-module PyQt5 --clean browser.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
+      # Authenticode is not a substitute for the update-manifest signature: it
+      # proves the publisher to Windows, while the Ed25519 manifest signature
+      # proves it to Mei. Both are needed. This step is a no-op until a real
+      # code-signing certificate is stored as a repository secret — Mei never
+      # generates or embeds a fake certificate to look trusted.
+      - name: Sign the executable (Authenticode)
+        if: ${{ secrets.MEI_SIGNING_PFX_BASE64 != '' }}
+        shell: pwsh
+        env:
+          MEI_SIGNING_PFX_BASE64: ${{ secrets.MEI_SIGNING_PFX_BASE64 }}
+          MEI_SIGNING_PFX_PASSWORD: ${{ secrets.MEI_SIGNING_PFX_PASSWORD }}
+          MEI_TIMESTAMP_URL: ${{ vars.MEI_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "mei-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:MEI_SIGNING_PFX_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kitsin\*d\signtool.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found; cannot sign the release" }
+          & $signtool.FullName sign /fd SHA256 /td SHA256 /tr "$env:MEI_TIMESTAMP_URL" `
+            /f $pfx /p $env:MEI_SIGNING_PFX_PASSWORD dist/Mei.exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with $LASTEXITCODE" }
+          & $signtool.FullName verify /pa /v dist/Mei.exe
+          if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed" }
+          Remove-Item -LiteralPath $pfx -Force
+          "Authenticode: signed and timestamped" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Record signing status
+        shell: pwsh
+        run: |
+          $signed = $null -ne (Get-AuthenticodeSignature "dist/Mei.exe").SignerCertificate
+          if ($signed) { $state = "signed" } else { $state = "UNSIGNED (no signing certificate configured)" }
+          "Authenticode status: $state" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
       - name: Record packaged artifact hash
         shell: pwsh
         run: |

@@ -1,11 +1,18 @@
 # Mei - Tracking/Ad blocker + HTTPS-only
+import hashlib
 import os
 import re
+import tempfile
+import threading
 
 from PyQt5.QtCore import QUrl
 from PyQt5.QtWebEngineCore import QWebEngineUrlRequestInterceptor
 
-from litebrowser.services import focus_service
+from litebrowser.core import app_version
+from litebrowser.core.log import get_logger
+from litebrowser.services import focus_service, safe_http
+
+_log = get_logger("adblock")
 
 # Distraction Shield defaults: the loud corners of the internet. Custom hosts
 # join these via prefs (shield_custom_hosts).
@@ -202,63 +209,248 @@ def _domain_from_filter_line(line: str) -> str:
     return domain if _DOMAIN_RE.fullmatch(domain) else ""
 
 
+MAX_FILTER_FILE_BYTES = 8 * 1024 * 1024
+MAX_FILTER_LINES = 200_000
+MAX_FILTER_LINE_CHARS = 8192
+MAX_MERGED_RULES = 200_000
+MAX_SUBSCRIPTIONS = 32
+
+#: One subscription refresh at a time. A second caller gets ``busy`` instead of
+#: running duplicate DNS lookups and racing two writers over the same cache.
+_SUBSCRIPTION_LOCK = threading.Lock()
+
+
 def load_domains_from_filter_file(path):
-    """Parse filter file for ||domain^ or plain domain lines; return set of domain substrings to block."""
+    """Parse ``||domain^`` / bare-domain lines from a bounded filter file.
+
+    Bounds are explicit because the file can come from a subscription: an
+    unbounded read is a memory-exhaustion path. Unsupported syntax is skipped
+    (see docs/audit/MEI_BROWSER_COMPATIBILITY_MATRIX.md) rather than guessed.
+    """
     domains = set()
     if not path or not os.path.isfile(path):
         return domains
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
+        if os.path.getsize(path) > MAX_FILTER_FILE_BYTES:
+            _log.warning("filter file is larger than the parser accepts; ignoring it")
+            return domains
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            for index, line in enumerate(handle):
+                if index >= MAX_FILTER_LINES:
+                    _log.warning("filter file exceeds the line limit; truncated")
+                    break
+                if len(line) > MAX_FILTER_LINE_CHARS:
+                    continue
                 domain = _domain_from_filter_line(line)
                 if domain:
                     domains.add(domain)
-    except Exception:
-        pass
+    except OSError as exc:
+        _log.warning("could not read the filter file (%s)", type(exc).__name__)
     return domains
 
 
-def fetch_and_update_subscriptions(base_dir):
-    """Download subscribed filter lists, merge into a local cached file."""
+def _cache_filename(name, url):
+    """A safe, stable cache name: sanitized label + URL hash, never raw input."""
+    digest = hashlib.sha256(str(url).encode("utf-8")).hexdigest()[:16]
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", str(name or "")).strip(".-")[:40]
+    return f"{slug or 'subscription'}-{digest}.txt"
+
+
+def _atomic_write_text(path, text):
+    """Write beside the target and ``os.replace``: no partial cache file."""
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".adblock-", suffix=".tmp", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
+
+
+def _bounded_rules(text):
+    """Return ``(rules, error)``; an error means the list must not replace cache."""
+    rules = []
+    seen = set()
+    for index, raw in enumerate(str(text or "").splitlines()):
+        if index >= MAX_FILTER_LINES:
+            return [], "the list has too many lines"
+        if len(raw) > MAX_FILTER_LINE_CHARS:
+            return [], "a filter line is too long"
+        line = raw.strip()
+        if not line or line.startswith(("!", "[")):
+            continue
+        if not _domain_from_filter_line(line):
+            # Unsupported syntax (cosmetic filters, regex, options) is skipped
+            # by design; it is not silently treated as a domain rule.
+            continue
+        if line in seen:
+            continue
+        if len(rules) >= MAX_MERGED_RULES:
+            return [], "the list has too many rules"
+        seen.add(line)
+        rules.append(line)
+    return rules, ""
+
+
+def fetch_and_update_subscriptions(
+    base_dir,
+    should_cancel=None,
+    *,
+    timeout: float = safe_http.DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = MAX_FILTER_FILE_BYTES,
+    fetcher=None,
+):
+    """Download filter lists and replace the merged cache only when it is safe.
+
+    Guarantees:
+
+    * each URL is validated (HTTPS only) before any request;
+    * DNS is resolved and every answer validated by ``safe_http``; the socket
+      connects to the validated IP, so a redirect cannot reach the local network;
+    * a failed, truncated, oversized, malformed or empty download never replaces
+      the last known-good cache for that subscription;
+    * cache names are derived from a sanitized label + URL hash, so a
+      subscription name cannot traverse paths;
+    * one subscription failing does not disable the others;
+    * status is returned per subscription instead of being swallowed.
+
+    Returns a list of ``{name, status, error, rules}`` dictionaries. Statuses:
+    ``updated``, ``unchanged``, ``cached``, ``failed``, ``rejected``,
+    ``cancelled``, ``busy``.
+    """
+    if not _SUBSCRIPTION_LOCK.acquire(blocking=False):
+        return [{"name": "", "status": "busy", "error": "Another refresh is already running.", "rules": 0}]
     try:
         from litebrowser.core import prefs
-        subs = prefs.get_adblock_subscriptions(base_dir)
-        if not subs:
-            return
-        import urllib.request
-        merged = []
+
+        try:
+            configured = prefs.get_adblock_subscriptions(base_dir)
+        except Exception:  # noqa: BLE001 - prefs failure must not crash refresh
+            configured = []
+        if not isinstance(configured, list):
+            configured = []
+
+        results = []
         cached_dir = os.path.join(base_dir, "adblock_cache")
-        os.makedirs(cached_dir, exist_ok=True)
-        for sub in subs:
-            url = sub.get("url", "")
-            name = sub.get("name", "unknown")
-            if not url:
+        merged = []
+        merged_seen = set()
+        seen_urls = set()
+
+        for raw in configured[:MAX_SUBSCRIPTIONS]:
+            if not isinstance(raw, dict):
                 continue
-            cache_path = os.path.join(cached_dir, f"{name}.txt")
+            if should_cancel is not None and should_cancel():
+                results.append({"name": "", "status": "cancelled", "error": "Cancelled.", "rules": 0})
+                break
+            name = str(raw.get("name") or "subscription")[:80]
+            raw_url = str(raw.get("url") or "").strip()
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mei/3.0"})
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    data = resp.read().decode("utf-8", errors="replace")
-                    with open(cache_path, "w", encoding="utf-8") as f:
-                        f.write(data)
-            except Exception:
+                url = safe_http.normalize_http_url(raw_url)
+                scheme = url.split(":", 1)[0].lower()
+                if scheme != "https":
+                    raise ValueError("Filter lists must be downloaded over HTTPS.")
+            except (safe_http.UnsafeUrl, ValueError) as exc:
+                results.append(
+                    {"name": name, "status": "rejected", "error": str(exc)[:200], "rules": 0}
+                )
+                _log.warning("subscription %r rejected: %s", name, type(exc).__name__)
+                continue
+            if url in seen_urls:
+                results.append({"name": name, "status": "unchanged", "error": "", "rules": 0})
+                continue
+            seen_urls.add(url)
+
+            cache_path = os.path.join(cached_dir, _cache_filename(name, url))
+            rules = []
+            status = "failed"
+            error = ""
+            try:
+                call = fetcher or safe_http.fetch
+                request = {
+                    "timeout": timeout,
+                    "max_bytes": max_bytes,
+                    "headers": {
+                        "User-Agent": f"Mei/{app_version.APP_VERSION}",
+                        "Accept": "text/plain,text/*;q=0.9,*/*;q=0.1",
+                    },
+                }
+                if fetcher is None:
+                    # A subscription refresh must follow the same proxy policy
+                    # as Page Monitor.  The explicit direct preference is the
+                    # only way to bypass a configured app proxy.
+                    request["proxy_config"] = prefs.get_proxy_config(base_dir)
+                    request["proxy_mode"] = (
+                        "direct" if prefs.get_page_monitor_direct(base_dir) else "auto"
+                    )
+                response = call(url, **request)
+                if int(getattr(response, "status", 0) or 0) >= 400:
+                    raise ValueError(f"The server returned HTTP {int(response.status)}.")
+                text = bytes(getattr(response, "body", b"") or b"").decode("utf-8", errors="replace")
+                rules, problem = _bounded_rules(text)
+                if problem:
+                    raise ValueError(problem)
+                if not rules:
+                    raise ValueError("The list contained no usable domain rules.")
+                previous = ""
                 if os.path.isfile(cache_path):
-                    with open(cache_path, "r", encoding="utf-8", errors="replace") as f:
-                        data = f.read()
+                    with open(cache_path, "r", encoding="utf-8", errors="replace") as handle:
+                        previous = handle.read(MAX_FILTER_FILE_BYTES + 1)
+                if previous == text:
+                    status = "unchanged"
                 else:
+                    _atomic_write_text(cache_path, text)
+                    status = "updated"
+            except Exception as exc:  # noqa: BLE001 - per-subscription isolation
+                error = str(exc)[:200]
+                cached_text = ""
+                if os.path.isfile(cache_path):
+                    try:
+                        with open(cache_path, "r", encoding="utf-8", errors="replace") as handle:
+                            cached_text = handle.read(MAX_FILTER_FILE_BYTES + 1)
+                    except OSError:
+                        cached_text = ""
+                rules, problem = _bounded_rules(cached_text) if cached_text else ([], "no cache")
+                if rules and not problem:
+                    status = "cached"
+                    _log.warning("subscription %r failed; using last-known-good cache", name)
+                else:
+                    status = "failed"
+                    _log.warning("subscription %r failed with no usable cache", name)
+
+            for line in rules:
+                if line in merged_seen:
                     continue
-            for line in data.splitlines():
-                line = line.strip()
-                if not line or line.startswith("!") or line.startswith("["):
-                    continue
+                if len(merged) >= MAX_MERGED_RULES:
+                    break
+                merged_seen.add(line)
                 merged.append(line)
+            results.append({"name": name, "status": status, "error": error, "rules": len(rules)})
+
         if merged:
             merged_path = os.path.join(cached_dir, "_merged.txt")
-            with open(merged_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(merged))
-            prefs.set_adblock_filter_file(base_dir, merged_path)
-    except Exception:
-        pass
+            body = chr(10).join(merged)
+            previous = ""
+            if os.path.isfile(merged_path):
+                try:
+                    with open(merged_path, "r", encoding="utf-8", errors="replace") as handle:
+                        previous = handle.read(MAX_FILTER_FILE_BYTES + 1)
+                except OSError:
+                    previous = ""
+            if previous != body:
+                _atomic_write_text(merged_path, body)
+            try:
+                prefs.set_adblock_filter_file(base_dir, merged_path)
+            except Exception:  # noqa: BLE001 - never lose the parsed result over a pref write
+                _log.warning("could not point the filter setting at the merged cache")
+        return results
+    finally:
+        _SUBSCRIPTION_LOCK.release()
 
 
 class TrackingBlocker(QWebEngineUrlRequestInterceptor):
@@ -297,6 +489,7 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
             from litebrowser.core import prefs
             self.strict_referrer = bool(prefs.get_strict_referrer(self._base_dir))
             self.strip_client_hints = bool(prefs.get_strip_client_hints(self._base_dir))
+            self.sign_in_compat = bool(prefs.get_chrome_compat_shim(self._base_dir))
             self.shield_always = bool(prefs.get_pref(self._base_dir, "shield_always_on", False))
             self._shield_custom = set(prefs.get_pref(self._base_dir, "shield_custom_hosts", []) or [])
         except Exception:
@@ -341,28 +534,23 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
         return False
 
     def _apply_compat_headers(self, info, host):
-        """Chrome-shaped Client Hints for compatibility hosts (the single
-        biggest factor in 'This browser or app may not be secure' blocks)."""
-        ver, full_ver = _detect_chrome_versions()
-        sec_ch_ua = (
-            f'"Chromium";v="{ver}", "Not(A:Brand";v="24", "Google Chrome";v="{ver}"'
-        ).encode("ascii")
-        info.setHttpHeader(b"sec-ch-ua", sec_ch_ua)
-        info.setHttpHeader(b"sec-ch-ua-mobile", b"?0")
-        info.setHttpHeader(b"sec-ch-ua-platform", b'"Windows"')
-        info.setHttpHeader(b"sec-ch-ua-platform-version", b'"15.0.0"')
-        info.setHttpHeader(b"sec-ch-ua-arch", b'"x86"')
-        info.setHttpHeader(b"sec-ch-ua-bitness", b'"64"')
-        info.setHttpHeader(b"sec-ch-ua-model", b'""')
-        info.setHttpHeader(b"sec-ch-ua-full-version", f'"{full_ver}"'.encode("ascii"))
-        info.setHttpHeader(
-            b"sec-ch-ua-full-version-list",
-            (
-                f'"Chromium";v="{full_ver}", '
-                f'"Not(A:Brand";v="24.0.0.0", '
-                f'"Google Chrome";v="{full_ver}"'
-            ).encode("ascii"),
-        )
+        """Real Client Hints for an allowlisted sign-in origin.
+
+        This is the only compatibility mechanism left. It is network-layer
+        (the page's JavaScript is untouched), origin-scoped (see
+        ``engine_identity.SIGN_IN_COMPAT_HOSTS``) and opt-in. Values come from
+        the running Chromium build, so ``sec-ch-ua`` can never claim a version
+        the engine is not, and the brand list names Chromium and Mei rather
+        than impersonating Google Chrome.
+        """
+        from litebrowser.browser import engine_identity
+
+        major, full = _detect_chrome_versions()
+        for key, value in engine_identity.client_hint_headers(major, full).items():
+            info.setHttpHeader(key, value)
+        # A real platform version is Chromium-specific and not exposed to us;
+        # omit it rather than assert a Windows build the machine may not run.
+        info.setHttpHeader(b"sec-ch-ua-platform-version", b"")
 
     def _apply_https_upgrade(self, info, url_str):
         """Auto-upgrade http:// to https:// (localhost exempt). Returns True
@@ -387,11 +575,14 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
         host = info.requestUrl().host().lower()
         is_compat = _is_compat_domain(host)
         is_challenge = self._is_trusted_challenge_url(host)
-        if is_compat:
-            # Google Gaia (and friends) refuse sign-in when requests don't carry the
-            # Client Hints headers that real Chrome sends. Inject a consistent
-            # Chrome/Windows fingerprint matching the actual Qt Chromium build.
-            self._apply_compat_headers(info, host)
+        sign_in_compat = bool(getattr(self, "sign_in_compat", False))
+        if is_compat and sign_in_compat:
+            # Sign-in origins reject an embedded engine that sends no Client
+            # Hints. Send the engine's real ones — never a fabricated Chrome
+            # fingerprint, and never on ordinary browsing.
+            from litebrowser.browser import engine_identity
+            if engine_identity.is_sign_in_host(host):
+                self._apply_compat_headers(info, host)
         if not is_challenge:
             info.setHttpHeader(b"DNT", b"1")
             info.setHttpHeader(b"Sec-GPC", b"1")

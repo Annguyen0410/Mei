@@ -15,300 +15,12 @@ except ImportError:  # pragma: no cover - PyQt6 without shim
 
 from litebrowser.core import prefs
 
-_CHROME_STUB_JS = r"""
-(function(){
-    'use strict';
-    /* ----------------------------------------------------------------
-       Mei Chrome-compat shim.
-       Goal: make Qt WebEngine (Chromium 122) look enough like real
-       desktop Chrome that Google Gaia ("accounts.google.com"),
-       Cloudflare bot-checks, and similar fingerprint scripts do not
-       refuse sign-in with "This browser or app may not be secure".
-       Runs at DocumentCreation in MainWorld so it executes BEFORE
-       any page script reads navigator.* / window.chrome.
-       ---------------------------------------------------------------- */
-
-    /* Defining a non-configurable native property throws TypeError; wrap in try.
-       Returns true when the override stuck, false otherwise — callers can fall back. */
-    function tryDefine(obj, prop, descriptor) {
-        try {
-            var existing = Object.getOwnPropertyDescriptor(obj, prop);
-            if (existing && existing.configurable === false) return false;
-            Object.defineProperty(obj, prop, descriptor);
-            return true;
-        } catch (e) { return false; }
-    }
-
-    /* Make spoofed function look native to Function.prototype.toString fingerprinting.
-       Real Chrome getters serialize to "function get foo() { [native code] }". Without
-       this, anti-bot scripts can call e.g. navigator.__lookupGetter__('webdriver').toString()
-       and immediately see our patched function source. */
-    function makeNative(fn, name) {
-        try {
-            var label = 'function ' + (name || fn.name || '') + '() { [native code] }';
-            Object.defineProperty(fn, 'toString', {
-                value: function toString() { return label; },
-                configurable: true,
-                writable: true
-            });
-            Object.defineProperty(fn.toString, 'toString', {
-                value: function toString() { return 'function toString() { [native code] }'; },
-                configurable: true,
-                writable: true
-            });
-        } catch (e) {}
-        return fn;
-    }
-
-    /* 1. navigator.webdriver — Gaia explicitly checks this and refuses sign-in
-          when it is true. Qt WebEngine returns false (real Chrome returns
-          undefined when not under automation). Force undefined. */
-    try { delete navigator.webdriver; } catch (e) {}
-    try { delete Object.getPrototypeOf(navigator).webdriver; } catch (e) {}
-    var webdriverGetter = makeNative(function() { return undefined; }, 'get webdriver');
-    tryDefine(navigator, 'webdriver', {
-        get: webdriverGetter, configurable: true, enumerable: true
-    });
-    tryDefine(Object.getPrototypeOf(navigator), 'webdriver', {
-        get: webdriverGetter, configurable: true, enumerable: true
-    });
-
-    var host = (location.hostname || '').toLowerCase();
-    var sensitiveHosts = [
-        'accounts.google.com',
-        'google.com',
-        'googleusercontent.com',
-        'gstatic.com',
-        'youtube.com',
-        'googleapis.com',
-        'gemini.google.com',
-        'openai.com',
-        'chatgpt.com',
-        'oaistatic.com',
-        'oaiusercontent.com',
-        'anthropic.com',
-        'claude.ai',
-        'microsoft.com',
-        'bing.com',
-        'copilot.microsoft.com',
-        'perplexity.ai'
-    ];
-    var isSensitive = sensitiveHosts.some(function(d){ return host === d || host.endsWith('.' + d); });
-
-    /* 2. window.chrome.* — Chromium 122 ships an empty stub `window.chrome`,
-          but Gaia probes for chrome.app, chrome.csi(), chrome.loadTimes(), and
-          chrome.runtime. Missing any of those is read as "embedded WebView".
-          Real Chrome on a normal page exposes ALL of them. */
-    function ensureChromeShape() {
-        try {
-            if (!window.chrome || typeof window.chrome !== 'object') window.chrome = {};
-            var c = window.chrome;
-            if (!c.app) {
-                c.app = {
-                    isInstalled: false,
-                    InstallState: {DISABLED:'disabled', INSTALLED:'installed', NOT_INSTALLED:'not_installed'},
-                    RunningState: {CANNOT_RUN:'cannot_run', READY_TO_RUN:'ready_to_run', RUNNING:'running'},
-                    getDetails: function(){ return null; },
-                    getIsInstalled: function(){ return false; },
-                    runningState: function(){ return 'cannot_run'; }
-                };
-            }
-            if (typeof c.csi !== 'function') {
-                c.csi = makeNative(function csi(){
-                    return { startE: Date.now(), onloadT: Date.now(), pageT: 0, tran: 15 };
-                }, 'csi');
-            }
-            if (typeof c.loadTimes !== 'function') {
-                c.loadTimes = makeNative(function loadTimes(){
-                    var now = Date.now() / 1000;
-                    return {
-                        requestTime: now, startLoadTime: now, commitLoadTime: now,
-                        finishDocumentLoadTime: now, finishLoadTime: now,
-                        firstPaintTime: 0, firstPaintAfterLoadTime: 0,
-                        navigationType: 'Other',
-                        wasFetchedViaSpdy: true, wasNpnNegotiated: true,
-                        npnNegotiatedProtocol: 'h2',
-                        wasAlternateProtocolAvailable: false, connectionInfo: 'h2'
-                    };
-                }, 'loadTimes');
-            }
-            /* chrome.runtime: Chromium 122 already provides an empty {} on most
-               regular pages; only fill in the enums Gaia inspects. Do NOT add
-               .id (real Chrome leaves it undefined on non-extension contexts). */
-            if (!c.runtime || typeof c.runtime !== 'object') c.runtime = {};
-            var rt = c.runtime;
-            if (!rt.OnInstalledReason)         rt.OnInstalledReason         = {INSTALL:'install',UPDATE:'update',CHROME_UPDATE:'chrome_update',SHARED_MODULE_UPDATE:'shared_module_update'};
-            if (!rt.OnRestartRequiredReason)   rt.OnRestartRequiredReason   = {APP_UPDATE:'app_update',OS_UPDATE:'os_update',PERIODIC:'periodic'};
-            if (!rt.PlatformOs)                rt.PlatformOs                = {MAC:'mac',WIN:'win',ANDROID:'android',CROS:'cros',LINUX:'linux',OPENBSD:'openbsd'};
-            if (!rt.PlatformArch)              rt.PlatformArch              = {ARM:'arm',X86_32:'x86-32',X86_64:'x86-64',MIPS:'mips',MIPS64:'mips64'};
-            if (!rt.PlatformNaclArch)          rt.PlatformNaclArch          = {ARM:'arm',X86_32:'x86-32',X86_64:'x86-64',MIPS:'mips',MIPS64:'mips64'};
-            if (!rt.RequestUpdateCheckStatus)  rt.RequestUpdateCheckStatus  = {THROTTLED:'throttled',NO_UPDATE:'no_update',UPDATE_AVAILABLE:'update_available'};
-            if (!c.webstore) {
-                c.webstore = {
-                    onInstallStageChanged: {addListener: function(){}, removeListener: function(){}},
-                    onDownloadProgress: {addListener: function(){}, removeListener: function(){}},
-                    install: function(url, onSuccess, onFailure){ (onFailure || function(){})('In-app store is not supported in Mei', 'INTERNAL_ERROR'); },
-                    setStoreLoginState: function(){}
-                };
-            }
-        } catch (e) {}
-    }
-
-    /* 3. navigator.plugins — non-empty PDF list mirrors real Chrome on Windows. */
-    function ensurePlugins() {
-        if (navigator.plugins && navigator.plugins.length > 0) return;
-        var fakePlugins = [
-            { name: 'PDF Viewer',              filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'Chrome PDF Viewer',       filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'Chromium PDF Viewer',     filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'WebKit built-in PDF',     filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
-        ];
-        tryDefine(navigator, 'plugins', {
-            get: makeNative(function(){ return fakePlugins; }, 'get plugins'),
-            configurable: true
-        });
-    }
-
-    /* 4. navigator.languages — empty array reads as headless. */
-    function ensureLanguages() {
-        if (navigator.languages && navigator.languages.length > 0) return;
-        tryDefine(navigator, 'languages', {
-            get: makeNative(function(){ return ['en-US','en']; }, 'get languages'),
-            configurable: true
-        });
-    }
-
-    /* 5. navigator.userAgentData — JS side of Client Hints.
-          Chromium 122 in Qt provides a userAgentData but its `brands` may miss
-          the "Google Chrome" brand that Gaia keys on. We patch ONLY when the
-          existing object is missing brands or platform; never blindly redefine. */
-    function ensureUserAgentData() {
-        var current = navigator.userAgentData;
-        var hasGoodBrands = current && Array.isArray(current.brands) && current.brands.length >= 2 &&
-            current.brands.some(function(b){ return /chrome/i.test(b.brand || ''); });
-        var hasGoodPlatform = current && typeof current.platform === 'string' && current.platform;
-        if (hasGoodBrands && hasGoodPlatform) return;
-
-        var uaMatch = /Chrome\/(\d+)(?:\.(\d+)\.(\d+)\.(\d+))?/.exec(navigator.userAgent || '');
-        var chromeMajor = uaMatch ? uaMatch[1] : '122';
-        var fullVer = uaMatch && uaMatch[2] ? (uaMatch[1]+'.'+uaMatch[2]+'.'+uaMatch[3]+'.'+uaMatch[4]) : (chromeMajor + '.0.0.0');
-        var brands = [
-            { brand: 'Chromium',      version: chromeMajor },
-            { brand: 'Not(A:Brand',   version: '24'       },
-            { brand: 'Google Chrome', version: chromeMajor }
-        ];
-        var fullVersionList = [
-            { brand: 'Chromium',      version: fullVer    },
-            { brand: 'Not(A:Brand',   version: '24.0.0.0' },
-            { brand: 'Google Chrome', version: fullVer    }
-        ];
-        var uad = {
-            brands: brands,
-            mobile: false,
-            platform: 'Windows',
-            getHighEntropyValues: makeNative(function(hints){
-                var out = {
-                    brands: brands, mobile: false, platform: 'Windows',
-                    platformVersion: '15.0.0', architecture: 'x86', bitness: '64',
-                    model: '', uaFullVersion: fullVer,
-                    fullVersionList: fullVersionList, wow64: false
-                };
-                var result = {};
-                (hints || []).forEach(function(h){ if (h in out) result[h] = out[h]; });
-                return Promise.resolve(result);
-            }, 'getHighEntropyValues'),
-            toJSON: function(){ return { brands: brands, mobile: false, platform: 'Windows' }; }
-        };
-        tryDefine(navigator, 'userAgentData', {
-            get: makeNative(function(){ return uad; }, 'get userAgentData'),
-            configurable: true
-        });
-    }
-
-    /* 6. navigator.permissions.query — Notifications API quirk.
-          Real Chrome returns the actual Notification.permission state for the
-          'notifications' query; some builds of Qt WebEngine return 'denied'
-          which scripts read as "embedded view". Patch on every host. */
-    function patchPermissions() {
-        try {
-            if (!navigator.permissions || typeof navigator.permissions.query !== 'function') return;
-            var origQuery = navigator.permissions.query.bind(navigator.permissions);
-            navigator.permissions.query = makeNative(function(params){
-                if (params && params.name === 'notifications') {
-                    try {
-                        if (typeof Notification !== 'undefined') {
-                            return Promise.resolve({ state: Notification.permission, onchange: null });
-                        }
-                    } catch (eN) {}
-                }
-                // Notification missing / unknown param: fall through to the
-                // real query instead of returning undefined (v6.4: callers
-                // doing .then() on the result then threw).
-                return origQuery(params);
-            }, 'query');
-        } catch (e) {}
-    }
-
-    /* 7. navigator hardware signals — headless / embedded Chromium builds
-          sometimes omit or zero these. A missing deviceMemory or a 0
-          hardwareConcurrency is a classic bot/WebView tell. Only patch when
-          the real value is missing; never clobber real hardware info. */
-    function ensureDeviceSignals() {
-        if (typeof navigator.deviceMemory === 'undefined') {
-            tryDefine(navigator, 'deviceMemory', { get: makeNative(function(){ return 8; }, 'get deviceMemory'), configurable: true });
-        }
-        if (!navigator.hardwareConcurrency) {
-            tryDefine(navigator, 'hardwareConcurrency', { get: makeNative(function(){ return 8; }, 'get hardwareConcurrency'), configurable: true });
-        }
-        if (!navigator.vendor) {
-            tryDefine(navigator, 'vendor', { get: makeNative(function(){ return 'Google Inc.'; }, 'get vendor'), configurable: true });
-        }
-        if (typeof navigator.maxTouchPoints === 'undefined') {
-            tryDefine(navigator, 'maxTouchPoints', { get: makeNative(function(){ return 0; }, 'get maxTouchPoints'), configurable: true });
-        }
-        if (typeof navigator.onLine === 'undefined') {
-            tryDefine(navigator, 'onLine', { get: makeNative(function(){ return true; }, 'get onLine'), configurable: true });
-        }
-    }
-
-    /* 8. WebGL unmasked renderer/vendor — anti-bot scripts call
-          gl.getParameter(UNMASKED_VENDOR_WEBGL / UNMASKED_RENDERER_WEBGL) to
-          read the GPU string. Some embedded builds return '' or a software
-          renderer (SwiftShader/llvmpipe) that real desktop Chrome wouldn't.
-          We only rewrite when the value looks wrong; real GPU strings pass
-          through untouched so WebGL sites are unaffected. */
-    function patchWebGL() {
-        var VENDOR = 37445, RENDERER = 37446;  // UNMASKED_VENDOR_WEBGL, UNMASKED_RENDERER_WEBGL
-        var cleanVendor = 'Google Inc.';
-        var cleanRenderer = 'ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)';
-        var bad = /Qt|WebKit|SwiftShader|llvmpipe|softpipe|software|Mesa|llvm/i;
-        function wrap(proto) {
-            if (!proto || typeof proto.getParameter !== 'function') return;
-            var orig = proto.getParameter;
-            proto.getParameter = function(p) {
-                var val = orig.apply(this, arguments);
-                if (p === VENDOR && (!val || bad.test(String(val)))) return cleanVendor;
-                if (p === RENDERER && (!val || bad.test(String(val)))) return cleanRenderer;
-                return val;
-            };
-        }
-        var glCtx = (typeof WebGLRenderingContext !== 'undefined') ? WebGLRenderingContext : (window.WebGLRenderingContext || null);
-        var gl2Ctx = (typeof WebGL2RenderingContext !== 'undefined') ? WebGL2RenderingContext : (window.WebGL2RenderingContext || null);
-        try { wrap(glCtx && glCtx.prototype); } catch (e) {}
-        try { wrap(gl2Ctx && gl2Ctx.prototype); } catch (e) {}
-    }
-
-    /* Run on every page (sensitive or not): minimal hardening. */
-    ensureChromeShape();
-    ensurePlugins();
-    ensureLanguages();
-    ensureUserAgentData();
-    patchPermissions();
-    ensureDeviceSignals();
-    patchWebGL();
-})();
-"""
+# The global Chrome-spoofing DocumentCreation script that used to live here
+# was removed: it rewrote navigator.webdriver / plugins / WebGL / userAgentData
+# on every page and in every subframe. See litebrowser/browser/engine_identity.py
+# and docs/audit/MEI_BROWSER_COMPATIBILITY_MATRIX.md. Never re-add a script that
+# fabricates a browser fingerprint; the engine reports the truth now.
+LEGACY_CHROME_SHIM_REMOVED = True
 
 
 _CHROME_COMPAT_SCRIPT_NAME = "litebrowser_chrome_compat"
@@ -693,53 +405,33 @@ def ensure_text_highlight_script(profile, enabled: bool, base_dir=None) -> None:
 
 
 def ensure_chrome_compat_script(profile, base_dir=None) -> None:
-    """Install or remove the Chrome-shape JS shim on a QWebEngineProfile based on user pref."""
+    """Uninstall the legacy Chrome-shape script from a profile.
+
+    Mei <= 1.0.1 installed a DocumentCreation script on every profile that
+    deleted ``navigator.webdriver``, replaced ``navigator.plugins``, invented
+    ``deviceMemory`` and rewrote WebGL's unmasked vendor/renderer strings. That
+    is fingerprint spoofing, not compatibility: it ran on every page and every
+    subframe, contradicted the engine's native values, and existed to make
+    anti-bot systems believe this was desktop Chrome.
+
+    The script is no longer installed anywhere. This function is kept as an
+    explicit *uninstall hook* (call sites in the main window and the personal
+    hub still invoke it) so a profile that was created earlier in the same
+    process cannot keep a stale script object alive. It never installs anything.
+    """
     try:
         scripts = profile.scripts()
     except Exception:
         return
-    if base_dir:
+    try:
+        legacy = scripts.findScript(_CHROME_COMPAT_SCRIPT_NAME)
+    except Exception:
+        legacy = None
+    if legacy is not None and not (hasattr(legacy, "isNull") and legacy.isNull()):
         try:
-            from litebrowser.core import prefs
-            enabled = prefs.get_chrome_compat_shim(base_dir)
+            scripts.remove(legacy)
         except Exception:
-            enabled = True
-    else:
-        enabled = True
-    existing = None
-    if hasattr(scripts, "findScript"):
-        try:
-            existing = scripts.findScript(_CHROME_COMPAT_SCRIPT_NAME)
-        except Exception:
-            existing = None
-    if existing is None or (hasattr(existing, "isNull") and existing.isNull()):
-        try:
-            iter_scripts = scripts.toList()
-        except Exception:
-            iter_scripts = []
-        for s in iter_scripts:
-            try:
-                if s.name() == _CHROME_COMPAT_SCRIPT_NAME:
-                    existing = s
-                    break
-            except Exception:
-                pass
-    if not enabled:
-        if existing is not None and not (hasattr(existing, "isNull") and existing.isNull()):
-            try:
-                scripts.remove(existing)
-            except Exception:
-                pass
-        return
-    if existing is not None and not (hasattr(existing, "isNull") and existing.isNull()):
-        return
-    script = QWebEngineScript()
-    script.setName(_CHROME_COMPAT_SCRIPT_NAME)
-    script.setSourceCode(_CHROME_STUB_JS)
-    script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-    script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
-    script.setRunsOnSubFrames(True)
-    scripts.insert(script)
+            pass
 
 
 class BrowserPage(QWebEnginePage):
@@ -750,12 +442,9 @@ class BrowserPage(QWebEnginePage):
         # a separate interaction host for popups, permissions, and new tabs.
         self._host = host or parent
         self._base_dir = base_dir or (getattr(self._host, "base_dir", None) if self._host else None)
-        # Install the chrome-compat shim on the *profile* once. Page-level
-        # script collections in Qt WebEngine are bound to the renderer only
-        # after the page <-> renderer wiring settles, which can race with the
-        # very first navigation issued during tab construction; profile-level
-        # scripts are bound at renderer process start and run reliably from
-        # the first DocumentCreation event onward (verified vs Chromium 122).
+        # Uninstall the legacy Chrome-shape script if a profile created by an
+        # older build still carries it. Nothing is installed: the engine now
+        # reports its real identity (browser/engine_identity.py).
         ensure_chrome_compat_script(profile, self._base_dir)
         if self._base_dir:
             try:
@@ -794,11 +483,24 @@ class BrowserPage(QWebEnginePage):
         return super().createWindow(_window_type)
 
     def _on_permission_requested(self, origin, feature):
-        if not self._base_dir:
+        # Deny-by-default: a feature this build does not have a name for is not
+        # one the user can meaningfully consent to. The old code prompted for
+        # anything (including "feature_9"), which trains users to click Yes.
+        known = self._known_feature(feature)
+        if known is None:
+            self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionDeniedByUser)
+            return
+        if not self._base_dir or not origin.isValid():
             self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionDeniedByUser)
             return
         origin_str = origin.toString()
-        feature_name = self._feature_name(feature)
+        feature_name = known
+        # Private browsing never inherits or persists a site permission. Ask
+        # per session, and never write the answer to the persistent profile.
+        try:
+            incognito = bool(self.profile().isOffTheRecord())
+        except Exception:
+            incognito = False
         saved = prefs.get_permission(self._base_dir, origin_str, feature_name)
         if saved == "allow":
             self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionGrantedByUser)
@@ -821,7 +523,7 @@ class BrowserPage(QWebEnginePage):
                 self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionGrantedByUser)
             else:
                 self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionDeniedByUser)
-            if remember:
+            if remember and not incognito:
                 try:
                     prefs.set_permission(self._base_dir, origin_str, feature_name, what)
                 except Exception:
@@ -835,6 +537,12 @@ class BrowserPage(QWebEnginePage):
         msg.show()
 
     def _feature_name(self, feature):
+        """Backwards-compatible name lookup; unknown features get a slug."""
+        known = self._known_feature(feature)
+        return known if known is not None else "feature_%s" % int(feature)
+
+    def _known_feature(self, feature):
+        """Name of a permission Mei can explain, or None (deny by default)."""
         names = {
             QWebEnginePage.Geolocation: "geolocation",
             QWebEnginePage.MediaAudioCapture: "microphone",
@@ -843,7 +551,7 @@ class BrowserPage(QWebEnginePage):
             QWebEnginePage.DesktopAudioVideoCapture: "desktop_capture",
             QWebEnginePage.Notifications: "notifications",
         }
-        return names.get(feature, "feature_%s" % int(feature))
+        return names.get(feature)
 
     def javaScriptConsoleMessage(self, level, message, line_number, source_id):
         lowered = (message or "").lower()

@@ -6,6 +6,7 @@ from unittest import mock
 
 from litebrowser.core import prefs
 from litebrowser.services import (
+    conflict_service,
     flashcard_service,
     life_service,
     personal_plan,
@@ -119,6 +120,31 @@ class TestSyncServiceSafety(unittest.TestCase):
         personal_plan.update_plan_settings(self.base, semester={"name": "HK1"})
         sync_service._apply_bundle(self.base, {"personal_plan": {"items": [], "semester": {"name": ""}}})
         self.assertEqual(personal_plan.load_plan(self.base)["semester"]["name"], "HK1")
+
+    def test_divergent_http_task_edit_is_archived_once(self):
+        local = life_service.add_task(self.base, "Local")
+        local["updated_at"] = 100
+        life_service.save_tasks(self.base, [local])
+        remote = dict(local, title="Remote", updated_at=200)
+        applied = sync_service._apply_bundle(self.base, {"tasks": [remote]})
+        self.assertEqual(applied["tasks"], 1)
+        self.assertEqual(life_service.load_tasks(self.base)[0]["title"], "Remote")
+        rows = conflict_service.list_conflicts(self.base)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["store"], "tasks")
+        self.assertEqual(rows[0]["local"]["title"], "Local")
+        self.assertEqual(rows[0]["remote"]["title"], "Remote")
+        sync_service._apply_bundle(self.base, {"tasks": [remote]})
+        self.assertEqual(len(conflict_service.list_conflicts(self.base)), 1)
+
+    def test_older_remote_http_edit_keeps_local_and_archives_remote(self):
+        local = life_service.add_task(self.base, "Local")
+        local["updated_at"] = 200
+        life_service.save_tasks(self.base, [local])
+        remote = dict(local, title="Older remote", updated_at=100)
+        sync_service._apply_bundle(self.base, {"tasks": [remote]})
+        self.assertEqual(life_service.load_tasks(self.base)[0]["title"], "Local")
+        self.assertEqual(conflict_service.list_conflicts(self.base)[0]["remote"]["title"], "Older remote")
 
 
 class TestNoteIdentity(unittest.TestCase):

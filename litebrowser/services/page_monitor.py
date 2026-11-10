@@ -34,9 +34,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from litebrowser.core import prefs
 from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import read_json, write_json
+from litebrowser.services import safe_http
 
 _log = get_logger("page_monitor")
 
@@ -144,11 +146,20 @@ def normalize_url(url: str) -> str:
     if _is_local_host(hostname):
         raise MonitorError("Local and private addresses cannot be watched.")
 
+    literal = None
     try:
-        ascii_host = hostname.encode("idna").decode("ascii").lower()
-    except UnicodeError as exc:
-        raise MonitorError("That URL's host name is not valid.") from exc
-    netloc = f"[{ascii_host}]" if ":" in ascii_host else ascii_host
+        literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        literal = None
+    if literal is None:
+        try:
+            ascii_host = hostname.encode("idna").decode("ascii").lower()
+        except UnicodeError as exc:
+            raise MonitorError("That URL's host name is not valid.") from exc
+        netloc = ascii_host
+    else:
+        ascii_host = str(literal)
+        netloc = f"[{ascii_host}]" if literal.version == 6 else ascii_host
     if port is not None and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
         netloc = f"{netloc}:{port}"
 
@@ -243,34 +254,62 @@ def remove_monitor(base_dir: str, monitor_id: str) -> bool:
     return True
 
 
-class _HttpOnlyRedirect(urllib.request.HTTPRedirectHandler):
-    """Follow redirects only when the destination is still a public http(s) URL."""
+def _open_url(
+    url: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = MAX_RESPONSE_BYTES,
+    resolver=None,
+    connection_factory=None,
+    cancelled=None,
+    proxy_config=None,
+    proxy_mode: str = "auto",
+):
+    """Fetch one page through the pinned-IP transport.
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        target = urllib.parse.urljoin(req.full_url, newurl)
-        try:
-            safe = normalize_url(target)
-        except MonitorError as exc:
-            raise MonitorFetchError("The page redirected to an unsupported or local address.") from exc
-        return super().redirect_request(req, fp, code, msg, headers, safe)
-
-
-def _open_url(url: str, timeout: float):
-    request = urllib.request.Request(
+    The hostname is resolved *here*, every answer is checked, and the socket is
+    opened to that validated IP. ``urllib`` is no longer used: it would resolve
+    the name a second time, which is the DNS-rebinding gap this replaced.
+    """
+    return safe_http.fetch(
         url,
+        timeout=timeout,
+        max_bytes=max_bytes,
         headers={
             "User-Agent": "Mei/7 page-monitor",
             "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1",
         },
+        resolver=resolver,
+        connection_factory=connection_factory,
+        cancelled=cancelled,
+        proxy_config=proxy_config,
+        proxy_mode=proxy_mode,
     )
-    opener = urllib.request.build_opener(_HttpOnlyRedirect())
-    return opener.open(request, timeout=timeout)
 
 
-def _fetch_page(url: str, timeout: float = DEFAULT_TIMEOUT_SECONDS, max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
+def _fetch_page(
+    url: str,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = MAX_RESPONSE_BYTES,
+    *,
+    resolver=None,
+    connection_factory=None,
+    cancelled=None,
+    proxy_config=None,
+    proxy_mode: str = "auto",
+) -> bytes:
     safe_url = normalize_url(url)
     try:
-        with _open_url(safe_url, timeout) as response:
+        with _open_url(
+            safe_url,
+            timeout=timeout,
+            max_bytes=max_bytes,
+            resolver=resolver,
+            connection_factory=connection_factory,
+            cancelled=cancelled,
+            proxy_config=proxy_config,
+            proxy_mode=proxy_mode,
+        ) as response:
             status = getattr(response, "status", None) or response.getcode()
             if status and int(status) >= 400:
                 raise MonitorFetchError(f"The server returned HTTP {int(status)}.")
@@ -284,6 +323,26 @@ def _fetch_page(url: str, timeout: float = DEFAULT_TIMEOUT_SECONDS, max_bytes: i
             body = response.read(max_bytes + 1)
     except MonitorFetchError:
         raise
+    except safe_http.FetchProxyUnsupported as exc:
+        # Never silently bypass a configured proxy.  The exception text names
+        # the policy source, not its value (which may contain credentials).
+        raise MonitorFetchError(
+            "A proxy is configured. Page Monitor cannot use it and did not bypass it. "
+            "Choose explicit direct access in Data Management or disable the proxy."
+        ) from exc
+    except safe_http.UnsafeDestination as exc:
+        # The message names the rule, never the attacker-controlled address.
+        raise MonitorFetchError("The page resolves to a local or private address. Refusing it.") from exc
+    except safe_http.TooLarge as exc:
+        raise MonitorFetchError("The page is too large to watch safely.") from exc
+    except safe_http.FetchTimeout as exc:
+        raise MonitorFetchError("The page timed out.") from exc
+    except safe_http.RedirectError as exc:
+        raise MonitorFetchError(str(exc)) from exc
+    except safe_http.FetchCancelled as exc:
+        raise MonitorFetchError("The check was cancelled.") from exc
+    except safe_http.SafeHttpError as exc:
+        raise MonitorFetchError(str(exc)) from exc
     except urllib.error.HTTPError as exc:
         raise MonitorFetchError(f"The server returned HTTP {exc.code}.") from exc
     except urllib.error.URLError as exc:
@@ -296,10 +355,21 @@ def _fetch_page(url: str, timeout: float = DEFAULT_TIMEOUT_SECONDS, max_bytes: i
     return body
 
 
-def fetch_and_hash(url: str, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> str | None:
+def fetch_and_hash(
+    url: str,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    *,
+    proxy_config=None,
+    proxy_mode: str = "auto",
+) -> str | None:
     """Raw HTML hash; ``None`` on failure (kept for existing callers/tests)."""
     try:
-        body = _fetch_page(url, timeout=timeout)
+        body = _fetch_page(
+            url,
+            timeout=timeout,
+            proxy_config=proxy_config,
+            proxy_mode=proxy_mode,
+        )
     except MonitorFetchError as exc:
         _log.debug("page monitor fetch failed for %s: %s", url, exc)
         return None
@@ -375,7 +445,13 @@ def check_monitor(
     if monitor is None:
         return {"status": "missing", "error": "That watched page no longer exists."}
     try:
-        body = _fetch_page(monitor["url"], timeout=timeout, max_bytes=max_bytes)
+        body = _fetch_page(
+            monitor["url"],
+            timeout=timeout,
+            max_bytes=max_bytes,
+            proxy_config=prefs.get_proxy_config(base_dir),
+            proxy_mode="direct" if prefs.get_page_monitor_direct(base_dir) else "auto",
+        )
     except MonitorFetchError as exc:
         record_failure(base_dir, monitor_id, str(exc))
         return {"status": "error", "error": str(exc)}

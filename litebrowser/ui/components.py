@@ -419,3 +419,130 @@ def badge(text: str, kind: str = "plain") -> QLabel:
     lbl = QLabel(text)
     lbl.setObjectName("BadgeAccent" if kind == "accent" else "Badge")
     return lbl
+
+
+class StorageHealthBanner(QFrame):
+    """One reusable warning for stores that are unavailable, not empty.
+
+    A page must not make a corrupt task or note store look like a deliberately
+    empty collection.  The banner names the affected stores, states that the
+    original bytes were preserved, and routes the user to the recovery surface.
+    Healthy profiles hide it entirely.
+    """
+
+    def __init__(self, shell, parent=None):
+        super().__init__(parent)
+        self.shell = shell
+        self.setObjectName("StorageHealthBanner")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(10)
+        self.label = QLabel("")
+        self.label.setWordWrap(True)
+        self.label.setObjectName("StorageHealthBannerText")
+        layout.addWidget(self.label, 1)
+        self.button = QPushButton("Open Data Management…")
+        self.button.setObjectName("QuietButton")
+        self.button.setToolTip("Review unavailable stores, quarantine copies and restore options")
+        self.button.clicked.connect(self._open_recovery)
+        layout.addWidget(self.button, 0)
+        self.hide()
+        self.refresh()
+
+    def refresh(self):
+        base_dir = str(getattr(self.shell, "profile_dir", "") or "")
+        if not base_dir:
+            self.hide()
+            return
+        try:
+            from litebrowser.core import storage_health
+
+            summary = storage_health.health_summary(base_dir)
+        except Exception:
+            self.hide()
+            return
+        unavailable = list(summary.get("unavailable") or [])
+        if not unavailable:
+            self.hide()
+            return
+        names = ", ".join(str(row.get("name") or "store") for row in unavailable[:4])
+        if len(unavailable) > 4:
+            names += f" and {len(unavailable) - 4} more"
+        self.label.setText(
+            f"Some saved data is unavailable ({names}). Mei has preserved the original "
+            "files instead of showing them as empty; open Data Management to inspect "
+            "the quarantine copies or restore a verified backup."
+        )
+        self.show()
+
+    def _open_recovery(self):
+        from litebrowser.ui import dialogs
+
+        try:
+            dialogs.show_data_management(self.shell)
+        finally:
+            self.refresh()
+
+
+class PageStoreNotice(QFrame):
+    """Page-local warning for stores whose empty state would otherwise mislead.
+
+    The shell banner is global; this compact notice keeps the distinction
+    visible inside the affected page, including when the page is embedded in a
+    layout where the shell banner is outside the user's current scroll area.
+    """
+
+    def __init__(self, shell, stores, parent=None):
+        super().__init__(parent)
+        self.shell = shell
+        self._stores = frozenset(stores)
+        self.setObjectName("StorageHealthBanner")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 7, 12, 7)
+        layout.setSpacing(10)
+        self.label = QLabel("")
+        self.label.setWordWrap(True)
+        self.label.setObjectName("StorageHealthBannerText")
+        layout.addWidget(self.label, 1)
+        button = QPushButton("Recovery")
+        button.setObjectName("QuietButton")
+        button.clicked.connect(self._open_recovery)
+        layout.addWidget(button, 0)
+        self.hide()
+        self.refresh()
+
+    def refresh(self):
+        base_dir = str(getattr(self.shell, "profile_dir", "") or "")
+        if not base_dir:
+            self.hide()
+            return
+        try:
+            from litebrowser.core import storage_health
+
+            rows = [
+                row
+                for row in storage_health.store_health(base_dir)
+                if not row.get("available") and row.get("name") in self._stores
+            ]
+        except Exception:
+            self.hide()
+            return
+        if not rows:
+            self.hide()
+            return
+        names = ", ".join(str(row.get("name") or "store") for row in rows[:4])
+        if len(rows) > 4:
+            names += f" and {len(rows) - 4} more"
+        self.label.setText(
+            f"This page cannot display {names}. The original files are preserved; "
+            "an empty list here is not a real empty result."
+        )
+        self.show()
+
+    def _open_recovery(self):
+        from litebrowser.ui import dialogs
+
+        try:
+            dialogs.show_data_management(self.shell)
+        finally:
+            self.refresh()

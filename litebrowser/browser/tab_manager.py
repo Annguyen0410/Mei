@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from litebrowser.browser import browser_page
+from litebrowser.browser import browser_page, hibernation_policy
 from litebrowser.browser.adblock import TrackingBlocker
 from litebrowser.core import app_version, prefs
 from litebrowser.services import workspace_manager
@@ -474,16 +474,100 @@ class TabManager:
                 timer.stop()
                 continue
             if not timer.isActive() or timer.interval() != interval_ms:
+                # Mark the start of the background idle window. The tab may
+                # still be playing audio or downloading when the timer fires;
+                # _hibernate_when_idle decides then.
+                browser.setProperty("last_active_at", time.monotonic())
                 timer.start(interval_ms)
+
+    def _has_active_download(self, browser) -> bool:
+        """True while a download this tab started is still running.
+
+        Two signals: a per-view counter (set by a future download handler) and
+        the window-wide counter kept by ``handle_download_request``. A global
+        counter is conservative — while any download runs, no tab hibernates —
+        which is the right side to err on.
+        """
+        try:
+            if int(browser.property("active_download_count") or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+        try:
+            return int(getattr(self.window, "_active_download_count", 0) or 0) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def _hibernate_state(self, browser, item, index, active_index=None):
+        """Collect the safety facts for one tab without touching the renderer."""
+        if active_index is None:
+            active_index = self.tab_list.currentRow()
+        metadata = self._metadata_for_item(item)
+        try:
+            audible = bool(browser.page().recentlyAudible())
+        except Exception:
+            audible = False
+        pending = browser.property("pending_url")
+        navigating = bool(isinstance(pending, QUrl) and pending.isValid() and not pending.isEmpty())
+        started = browser.property("last_active_at")
+        try:
+            elapsed_ms = int((time.monotonic() - float(started)) * 1000) if started is not None else -1
+        except (TypeError, ValueError):
+            elapsed_ms = -1
+        return hibernation_policy.TabState(
+            is_active=index == active_index,
+            is_pinned=bool(item.data(TAB_PINNED_ROLE)),
+            never_hibernate=bool(metadata.get("never_hibernate")),
+            is_incognito=bool(metadata.get("incognito")),
+            is_audible=audible,
+            is_navigating=navigating,
+            has_active_download=self._has_active_download(browser),
+            ms_since_last_active=elapsed_ms,
+            is_hibernated=bool(browser.property("hibernated")),
+        )
+
+    def _hibernate_when_idle(self, browser, item):
+        """Timer callback: hibernate only if the policy says it is safe.
+
+        When a blocker is present (audio, a download, a navigation) the timer
+        is re-armed instead of forcing the tab dormant, so the tab is
+        reconsidered after the next idle interval rather than never again.
+        """
+        row = self.tab_list.row(item)
+        if row < 0 or row >= len(self.browsers) or self.browsers[row] is not browser:
+            return
+        if self.hibernate_tab(browser, item):
+            return
+        sec = self.get_hibernate_seconds()
+        timer = browser.property("hibernate_timer")
+        if timer is not None and sec and sec > 0 and not browser.property("hibernated"):
+            timer.start(int(sec) * 1000)
+
+    def set_tab_never_hibernate(self, row: int, enabled: bool = True) -> None:
+        """Exempt a tab (e.g. a half-written message) from automatic hibernation."""
+        item = self.tab_list.item(row)
+        if item is None:
+            return
+        self._set_metadata(item, never_hibernate=bool(enabled))
+        if enabled and 0 <= row < len(self.browsers):
+            browser = self.browsers[row]
+            timer = browser.property("hibernate_timer") if browser is not None else None
+            if timer is not None:
+                timer.stop()
+        self._refresh_hibernate_timers()
 
     def _wire_browser(self, browser, item):
         """Attach the normal browser lifecycle to a freshly materialized view."""
         browser.setProperty("memory_hint_mb", 0.0)
         browser.setProperty("icon_url", "")
         browser.setProperty("hibernated", False)
+        # Idleness is measured from the moment the tab left the foreground; the
+        # timer firing does not itself prove the tab is safe to discard, so the
+        # policy is re-checked at fire time (see _hibernate_when_idle).
+        browser.setProperty("last_active_at", time.monotonic())
         hibernate_timer = QTimer(browser)
         hibernate_timer.setSingleShot(True)
-        hibernate_timer.timeout.connect(lambda b=browser, i=item: self.hibernate_tab(b, i))
+        hibernate_timer.timeout.connect(lambda b=browser, i=item: self._hibernate_when_idle(b, i))
         browser.setProperty("hibernate_timer", hibernate_timer)
         browser.urlChanged.connect(lambda q, b=browser: self.window.update_urlbar(q, b))
         browser.urlChanged.connect(lambda q, b=browser: self.window.record_history(q, b))
@@ -563,6 +647,12 @@ class TabManager:
         metadata = self._metadata_for_item(item)
         target_url = metadata.get("url") or "https://google.com"
         browser = self._build_browser(QUrl(target_url), is_incognito=bool(metadata.get("incognito")))
+        try:
+            zoom = float(metadata.get("zoom") or 1.0)
+            if zoom > 0 and abs(zoom - 1.0) > 0.001:
+                browser.setZoomFactor(zoom)
+        except (TypeError, ValueError):
+            pass
         self._wire_browser(browser, item)
         placeholder = self.stack.widget(index)
         if placeholder is not None:
@@ -860,15 +950,25 @@ class TabManager:
         if row >= 0:
             self._apply_group_visual(row)
 
-    def hibernate_tab(self, browser, item, refresh=True):
-        if (
-            not item
-            or browser is None
-            or browser == self.current_browser()
-            or browser.property("hibernated")
-            or item.data(TAB_PINNED_ROLE)
-        ):
-            return
+    def hibernate_tab(self, browser, item, refresh=True, force=False):
+        """Discard a renderer if (and only if) that cannot lose live work.
+
+        Returns True when the tab became dormant. ``force=True`` is only for an
+        explicit user action and must be confirmed by the caller: no browser can
+        restore an unsaved form, an in-memory SPA draft or an open dialog.
+        """
+        if not item or browser is None or browser.property("hibernated"):
+            return False
+        row_now = self.tab_list.row(item)
+        if not force:
+            reason = hibernation_policy.hibernate_block_reason(
+                self._hibernate_state(browser, item, row_now),
+                self.get_hibernate_seconds(),
+            )
+            if reason:
+                browser.setProperty("hibernate_blocked_reason", reason)
+                self._set_metadata(item, hibernate_blocked_reason=reason)
+                return False
         pending = browser.property("pending_url")
         current_url = pending.toString() if isinstance(pending, QUrl) and pending.isValid() else browser.url().toString()
         if current_url == "about:blank":
@@ -876,7 +976,7 @@ class TabManager:
             if logical_url == "about:newtab":
                 current_url = logical_url
         if current_url == "about:blank":
-            return
+            return False
         try:
             browser.stop()
         except Exception:
@@ -887,7 +987,18 @@ class TabManager:
         timer = browser.property("hibernate_timer")
         if timer:
             timer.stop()
-        self._set_metadata(item, url=current_url, hibernated=True)
+        try:
+            zoom = float(browser.zoomFactor())
+        except Exception:
+            zoom = 1.0
+        self._set_metadata(
+            item,
+            url=current_url,
+            title=self._metadata_for_item(item).get("title") or browser.title(),
+            zoom=zoom,
+            hibernated=True,
+            hibernate_blocked_reason="",
+        )
         dormant = self._make_dormant_view(
             self._metadata_for_item(item).get("title") or browser.title(),
             current_url,
@@ -899,6 +1010,7 @@ class TabManager:
         self._apply_hibernated_visual(item)
         if refresh:
             self.update_tab_count()
+        return True
 
     def _enforce_background_hibernation(self, active_index=None):
         if len(self.browsers) <= self.auto_hibernate_threshold:

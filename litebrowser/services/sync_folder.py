@@ -50,6 +50,7 @@ from datetime import datetime
 from typing import Any
 
 from litebrowser.core import prefs, storage_utils
+from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_transaction
 from litebrowser.services import (
     flashcard_service,
@@ -58,6 +59,8 @@ from litebrowser.services import (
     personal_plan,
     personal_service,
 )
+
+_log = get_logger("sync_folder")
 
 PAYLOAD_NAME = "mei-sync.json"
 STATE_NAME = "sync_folder_state.json"
@@ -529,6 +532,7 @@ def _merge_store(base_dir: str, adapter: StoreAdapter, payload: dict, baseline: 
 
     desired: dict[str, dict] = dict(local_by_id)
     changes: list[dict] = []
+    conflict_rows: list[tuple[str, dict, dict]] = []
     counts = {"added": 0, "updated": 0, "deleted": 0, "conflicts": 0, "kept": 0}
 
     for record_id in sorted(set(local_hashes) | set(remote_hashes) | set(old_baseline)):
@@ -550,6 +554,14 @@ def _merge_store(base_dir: str, adapter: StoreAdapter, payload: dict, baseline: 
         local_hash = local_hashes.get(record_id)
         remote_hash = remote_hashes.get(record_id)
         verdict = _decide(local_hash, remote_hash, old_baseline.get(record_id))
+        if verdict in ("conflict", "conflict_resurrect", "conflict_keep_local"):
+            conflict_rows.append(
+                (
+                    verdict,
+                    local_by_id.get(record_id) or {},
+                    remote_records.get(record_id) or {},
+                )
+            )
 
         if verdict == "nothing":
             continue
@@ -635,6 +647,30 @@ def _merge_store(base_dir: str, adapter: StoreAdapter, payload: dict, baseline: 
             changes.append(
                 _change(adapter, record_id, "conflict", remote_row or local_row, note="kept the copy on this machine")
             )
+
+    if conflict_rows:
+        # Both sides are preserved on disk, not only in this in-memory report.
+        # The archive deduplicates identical pairs, so repeated syncs do not
+        # grow a new conflict entry every time.
+        from litebrowser.services import conflict_service
+
+        for verdict, local_row, remote_row in conflict_rows:
+            try:
+                conflict_service.record_conflict(
+                    base_dir,
+                    store=adapter.key,
+                    record_id=str((remote_row or local_row).get("id") or ""),
+                    local=local_row,
+                    remote=remote_row,
+                    conflict_type="delete_edit"
+                    if verdict in ("conflict_resurrect", "conflict_keep_local")
+                    else "both_edited",
+                    source_device=str(payload.get("device") or ""),
+                )
+            except (OSError, ValueError) as exc:
+                # Archiving is additive; a failure must not roll back a merge
+                # that already preserved the copies in the stores themselves.
+                _log.warning("could not archive a %s conflict: %s", adapter.key, exc)
 
     rows = list(desired.values())
     return {

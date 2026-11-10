@@ -166,6 +166,8 @@ desk collapse immediately; it does not change animation or styling on websites.
 
 - **VPN / proxy** — Settings → VPN (or the shield card): status, auto-connect, PAC URLs, leak test.
 - **Adblock** — filter lists, subscriptions, https-only, third-party cookie blocking.
+  Subscription lists must be HTTPS; downloads connect only to a public address.
+  If an update fails, the last working list is kept and the attempt is reported.
 - **Password vault** — save passwords after logins; master-passcode protected.
 - **Permissions manager** — per-origin camera/mic/notifications decisions.
 - **Google account** (Settings) — device-code sign-in; Mei never sees your password, and
@@ -192,7 +194,9 @@ desk collapse immediately; it does not change animation or styling on websites.
 
 - **Snapshot** (top bar) — flush local state to disk.
 - **Routines** — schedule daily automations (`/routines`), e.g. a 07:30 daily plan note.
-- **Page monitor** — “Monitor this page” toasts when a watched page changes; the list and
+- **Page monitor** — “Monitor this page” toasts when a watched page changes; only public
+  http(s) destinations are fetched over a direct connection (proxies are not supported);
+  the list and
   removal live in Settings → **Watched pages**.
 - **Export center** `/export` — notes → Markdown zip or a themed static HTML site.
 - **The loop travels with your data** — planner items, courses, time blocks, flashcards and
@@ -225,3 +229,53 @@ desk collapse immediately; it does not change animation or styling on websites.
 
 *Mei is its own application; shortcut tiles in Personal → Sites may link out
 to separate web apps that Mei neither contains nor depends on.*
+## Data Management (backups, restore, integrity, conflicts)
+
+`Settings → Data Management` is the recovery surface:
+
+* **Backups** creates a ZIP with a SHA-256 manifest outside the profile. Secrets,
+  proxy configuration and Chromium data are excluded. A temporary archive is
+  verified before it is published; incomplete archives are not treated as
+  backups. **Create encrypted backup…** wraps the verified ZIP in an opt-in
+  AES-256-GCM/scrypt container. The password is never stored, so losing it
+  makes that encrypted backup unrecoverable. Scheduled backups are not
+  encrypted.
+* **Restore Center** previews changes and creates a pre-restore backup before
+  replacing selected categories. If a write fails, it rolls back.
+* **Integrity Check** is read-only. It reports corrupt stores, newer schemas,
+  duplicate ids, broken planner/research references and unfinished recovery
+  operations.
+* **Record Restore** recovers one task, event, board, page, flashcard, planner
+  item, note, bookmark, tab set or entity link. Bookmarks are identified by URL
+  and must be restored in place; they cannot be duplicated as new records.
+* **Sync Conflicts** archives both versions of a folder or HTTP sync conflict
+  and records keep-local / keep-remote / keep-both / defer decisions.
+
+Unencrypted backups are local and readable by anyone who can read the
+destination; protect it with your OS account and disk encryption. Encrypted
+backups protect the archive at rest, not an unlocked running Mei. See
+`docs/audit/MEI_DATA_MANAGEMENT_GUIDE.md` and
+`docs/audit/MEI_BACKUP_ENCRYPTION.md` for the full workflow and key-loss limits.
+## Data safety, recovery and proxy
+
+`Settings → Data Management` has dedicated tabs:
+
+* **Backups** — create and verify a profile archive; change destination;
+  apply retention.  A scheduled backup runs while Mei is open when due.
+* **Restore Center** — preview and restore all or selected categories.  A
+  pre-restore backup is created first; interruption never silently replays.
+* **Record Restore** — recover one task, event, board, saved page, flashcard,
+  planner item or note without replacing the whole category.
+* **Storage Health** — see how many stores are readable, which are unavailable,
+  and which migrations are journaled.
+* **Sync Conflicts** — review both versions from folder or HTTP sync and keep
+  local, keep remote, keep both where safe, or defer.
+* **Recovery** — inspect the last startup report and unresolved operations.
+* **Proxy** — see the safe-HTTP policy.  Page Monitor and filter downloads
+  refuse to bypass a configured proxy; direct access is an explicit choice.
+
+Backups exclude `secrets.dat`, proxy configuration, Chromium data, caches and
+temporary recovery files.  Conflict archives are the one explicit `Recovery`
+category and may contain full note/task content, so protect the backup
+destination. Encrypted backups are opt-in; scheduled backups remain unencrypted
+because Mei never stores the password.

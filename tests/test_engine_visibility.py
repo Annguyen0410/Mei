@@ -46,7 +46,8 @@ class TestClientHintsFollowTheEngine(unittest.TestCase):
             adblock.TrackingBlocker._apply_compat_headers(None, info, "accounts.google.com")
         self.assertEqual(info.headers[b"sec-ch-ua-full-version"], b'"140.0.7339.225"')
         self.assertIn(b'"Chromium";v="140"', info.headers[b"sec-ch-ua"])
-        self.assertIn(b'"Google Chrome";v="140"', info.headers[b"sec-ch-ua"])
+        self.assertIn(b'"Mei";v=', info.headers[b"sec-ch-ua"])
+        self.assertNotIn(b"Google Chrome", info.headers[b"sec-ch-ua"])
 
     def test_the_engine_probe_rejects_a_version_that_is_not_four_parts(self):
         with mock.patch("PyQt5.QtWebEngineCore.qWebEngineChromiumVersion", return_value="", create=True):

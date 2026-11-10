@@ -71,6 +71,18 @@ def get_proxy_config(base_dir) -> dict:
     return data
 
 
+def get_page_monitor_direct(base_dir) -> bool:
+    """Explicit opt-in for Page Monitor to connect directly under a proxy."""
+    return bool(load_prefs(base_dir).get("page_monitor_direct", False))
+
+
+@profile_transaction
+def set_page_monitor_direct(base_dir, value):
+    data = load_prefs(base_dir)
+    data["page_monitor_direct"] = bool(value)
+    save_prefs(base_dir, data)
+
+
 @profile_transaction
 def set_proxy_config(base_dir, cfg: dict):
     payload = dict(cfg) if isinstance(cfg, dict) else {"enabled": False}
@@ -961,13 +973,29 @@ def set_strip_client_hints(base_dir, value):
 
 
 def get_chrome_compat_shim(base_dir):
-    return bool(load_prefs(base_dir).get("chrome_compat_shim", True))
+    """Sign-in compatibility headers, scoped to allowlisted sign-in origins.
+
+    This used to gate a DocumentCreation script that impersonated Chrome on
+    every page (navigator.webdriver, plugins, WebGL, userAgentData). That
+    script is gone: it was fingerprint spoofing, not compatibility. The flag
+    now only enables real Client Hints on the narrow sign-in allowlist in
+    ``litebrowser/browser/engine_identity.py``.
+
+    Default is **off**: no fabricated headers leave the machine unless the user
+    turns this on. Profiles that still carry the old ``true`` keep header-only
+    compatibility (harmless and scoped); no profile can re-enable the script
+    because no code path installs it any more.
+    """
+    return bool(load_prefs(base_dir).get("chrome_compat_shim", False))
 
 
 @profile_transaction
 def set_chrome_compat_shim(base_dir, value):
     data = load_prefs(base_dir)
     data["chrome_compat_shim"] = bool(value)
+    # The old key described a script that no longer exists; drop it so a later
+    # build cannot mistake a stale value for an instruction to spoof again.
+    data.pop("chrome_compat_script", None)
     save_prefs(base_dir, data)
 
 

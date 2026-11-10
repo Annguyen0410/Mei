@@ -5,7 +5,15 @@ import tempfile
 import unittest
 
 from litebrowser.core import migrations, prefs
-from litebrowser.core.store import StoreWriteError, StoreSpec, read_store, store_path, stored_version, write_store
+from litebrowser.core.store import (
+    StoreReadError,
+    StoreWriteError,
+    StoreSpec,
+    read_store,
+    store_path,
+    stored_version,
+    write_store,
+)
 from litebrowser.services import personal_plan, tab_sets
 
 FAKE = StoreSpec(name="fake_store.json", version=1, default=lambda: {"rows": []})
@@ -150,14 +158,25 @@ class TestNewerBuildIsNotDowngraded(_Base):
         with open(path, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "{broken")
 
-    def test_corrupt_store_falls_back_without_deleting_it(self):
+    def test_corrupt_store_is_quarantined_not_treated_as_empty(self):
+        """Behaviour changed deliberately: corruption must not look like an
+        intentionally empty store.  Returning the default here let the next
+        save replace bytes that might still be recoverable; the store now
+        raises a typed error, keeps the original file, and records a quarantine
+        copy for recovery.
+        """
         spec = _spec()
         path = self._write_raw(spec, {"version": 1, "rows": ["x"]})
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("{not json")
-        self.assertEqual(read_store(self.base, spec), spec.default())
+        with self.assertRaises(StoreReadError) as caught:
+            read_store(self.base, spec)
+        self.assertEqual(caught.exception.status, "malformed_json")
+        self.assertTrue(caught.exception.quarantine.get("artifact"))
         with open(path, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "{not json")
+        quarantine = os.path.join(self.base, "Recovery", "quarantine")
+        self.assertTrue(any(name.endswith(".json") for name in os.listdir(quarantine)))
 
 
 class TestRealStores(_Base):

@@ -25,6 +25,7 @@ from typing import Any
 from litebrowser.core import prefs
 from litebrowser.core.profile_lock import profile_transaction
 from litebrowser.services import (
+    conflict_service,
     flashcard_service,
     life_service,
     link_service,
@@ -59,20 +60,88 @@ class SyncEntity:
 
 
 def _rows_entity(key: str, counter: str, load, save) -> SyncEntity:
-    """A plain row list merged by id (last writer wins per row)."""
+    """A row list merged by id, archiving both versions before a winner.
+
+    The old merge was last-writer-wins with no durable record of the losing
+    edit.  A remote snapshot still wins by timestamp, but a differing local
+    version is archived first and a failure to archive means the local record
+    is left alone rather than being silently replaced.
+    """
 
     def build(base_dir: str):
         return load(base_dir) or []
 
     def merge(base_dir: str, incoming) -> int:
         rows = _dict_rows(incoming)
-        existing = load(base_dir)
-        merged = _upsert(existing, rows)
-        if merged != existing:
-            save(base_dir, merged)
+        existing = list(load(base_dir) or [])
+        by_id = {
+            str(row.get("id")): index
+            for index, row in enumerate(existing)
+            if isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("id")
+        }
+        applied = 0
+        changed = False
+        for row in rows:
+            record_id = row.get("id")
+            if not isinstance(record_id, str) or not record_id:
+                continue
+            index = by_id.get(record_id)
+            if index is None:
+                existing.append(row)
+                by_id[record_id] = len(existing) - 1
+                changed = True
+                applied += 1
+                continue
+            local = existing[index]
+            if _row_fingerprint(local) == _row_fingerprint(row):
+                continue
+            if not _archive_http_conflict(base_dir, key, record_id, local, row):
+                # Preserve the local row when the archive itself is unavailable.
+                continue
+            if _timestamp(row) >= _timestamp(local):
+                existing[index] = row
+                changed = True
+            applied += 1
+        if changed:
+            save(base_dir, existing)
+        # Keep the historical "rows examined" counter: callers use it for the
+        # report, including a malformed row that the store normaliser drops.
         return len(rows)
 
     return SyncEntity(key, counter, build, merge)
+
+
+def _row_fingerprint(row) -> str:
+    """Compare user content, not the volatile timestamp a save stamps."""
+    if not isinstance(row, dict):
+        return ""
+    normalized = {
+        str(key): value
+        for key, value in row.items()
+        if key not in ("updated_at", "created_at")
+    }
+    return json.dumps(normalized, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _archive_http_conflict(base_dir: str, store: str, record_id: str, local, remote) -> bool:
+    try:
+        conflict_service.record_conflict(
+            base_dir,
+            store=store,
+            record_id=record_id,
+            local=local,
+            remote=remote,
+            conflict_type="http_sync",
+            source_device="remote snapshot",
+        )
+        return True
+    except (conflict_service.ConflictError, OSError, ValueError) as exc:
+        # Keep local data if the archive cannot be written.  A failed archive
+        # must never become a silent overwrite.
+        from litebrowser.core.log import get_logger
+
+        get_logger("sync_service").warning("could not archive HTTP conflict: %s", exc)
+        return False
 
 
 def _note_key(note_id) -> str:
@@ -143,6 +212,10 @@ def _merge_notes(base_dir: str, incoming) -> int:
                 continue
             if (existing.get("content") or "") == content:
                 continue
+            if not _archive_http_conflict(base_dir, "notes", note_id, existing, note):
+                # Keep the local note when the archive cannot be written.  A
+                # failed archive must not become a silent overwrite.
+                continue
             remote_time = _timestamp(note)
             local_time = _timestamp(existing)
             if remote_time and (not local_time or remote_time > local_time):
@@ -164,6 +237,13 @@ def _merge_notes(base_dir: str, incoming) -> int:
         if existing:
             if (existing.get("content") or "") == content:
                 continue
+            _archive_http_conflict(
+                base_dir,
+                "notes",
+                f"{title}/{category}",
+                existing,
+                note,
+            )
             _conflict_note(base_dir, title, category, content, local_notes)
             applied += 1
             continue
@@ -177,8 +257,13 @@ def _merge_notes(base_dir: str, incoming) -> int:
 
 
 def _merge_bookmarks(base_dir: str, incoming) -> int:
-    """Merge by URL. v6.4 replaced the local list wholesale, so pulling from a
-    device with sparse data silently deleted bookmarks saved on this machine."""
+    """Merge by URL, archiving a differing remote version before keeping local.
+
+    Bookmarks have no stable id in this store, so URL is the identity.  A
+    divergent bookmark is never replaced automatically; both versions are
+    archived and the local copy is kept.  This avoids losing a title/folder
+    edit when two devices have edited the same URL.
+    """
     remote_bookmarks = _dict_rows(incoming)
     if not remote_bookmarks:
         return 0
@@ -192,7 +277,12 @@ def _merge_bookmarks(base_dir: str, incoming) -> int:
     merged = list(local_bookmarks)
     for bm in remote_bookmarks:
         url = _text(bm.get("url"))
-        if not url or url in local_by_url:
+        if not url:
+            continue
+        if url in local_by_url:
+            local = local_by_url[url]
+            if _row_fingerprint(local) != _row_fingerprint(bm):
+                _archive_http_conflict(base_dir, "bookmarks", url, local, bm)
             continue
         merged.append(bm)
         local_by_url[url] = bm
@@ -202,7 +292,13 @@ def _merge_bookmarks(base_dir: str, incoming) -> int:
 
 
 def _merge_history(base_dir: str, incoming) -> int:
-    """Merge (timestamp, url) tuples, newest first, capped generously."""
+    """Merge append-only (timestamp, url) entries, newest first.
+
+    History is not a last-writer-wins record: two entries at the same second
+    are both valid history.  No local entry is deleted or replaced, so this
+    path has no destructive divergence to archive.  Duplicate exact tuples are
+    ignored so repeated pulls stay idempotent.
+    """
     remote_history = []
     items = incoming if isinstance(incoming, list) else []
     for item in items:
@@ -237,24 +333,87 @@ def _build_notes(base_dir: str):
 
 
 def _merge_plan(base_dir: str, incoming) -> int:
-    """Merge a planner snapshot: incoming rows win per id, like every other
-    collection. The semester header is only replaced when the remote actually
-    carries one, so a pull from a profile that never configured it cannot
-    blank a semester filled in on this machine."""
+    """Merge planner rows by id, archiving every divergent edit first.
+
+    The planner is three collections in one file.  A conflict record uses the
+    ``item:``/``course:``/``block:`` id shape the folder-sync adapter already
+    understands, so both HTTP and folder conflicts can be resolved by the same
+    service.  The semester header is only replaced when this profile has no
+    local semester; otherwise a differing remote header is archived and the
+    local one is kept rather than silently blanking user configuration.
+    """
     if not isinstance(incoming, dict):
         return 0
     plan = personal_plan.load_plan(base_dir)
     applied = 0
-    for key in ("items", "courses", "time_blocks"):
+    changed = False
+    for key, kind in (("items", "item"), ("courses", "course"), ("time_blocks", "block")):
         rows = _dict_rows(incoming.get(key))
-        plan[key] = _upsert(plan.get(key, []), rows)
-        applied += len(rows)
+        current = _dict_rows(plan.get(key, []))
+        by_id = {
+            str(row.get("id")): index
+            for index, row in enumerate(current)
+            if isinstance(row.get("id"), str) and row.get("id")
+        }
+        for row in rows:
+            record_id = row.get("id")
+            if not isinstance(record_id, str) or not record_id:
+                continue
+            index = by_id.get(record_id)
+            if index is None:
+                current.append(row)
+                by_id[record_id] = len(current) - 1
+                changed = True
+                applied += 1
+                continue
+            local = current[index]
+            local_canonical = _canonical_plan_row(kind, local)
+            remote_canonical = _canonical_plan_row(kind, row)
+            if _row_fingerprint(local_canonical) == _row_fingerprint(remote_canonical):
+                continue
+            archive_local = dict(local_canonical, id=f"{kind}:{record_id}", _kind=kind)
+            archive_remote = dict(remote_canonical, id=f"{kind}:{record_id}", _kind=kind)
+            if not _archive_http_conflict(
+                base_dir, "planner", f"{kind}:{record_id}", archive_local, archive_remote
+            ):
+                # Keep the local planner row when archival fails.
+                continue
+            if _timestamp(row) > _timestamp(local):
+                current[index] = row
+                changed = True
+            applied += 1
+        plan[key] = current
     semester = incoming.get("semester")
     if isinstance(semester, dict) and any(_text(value) for value in semester.values()):
-        plan["semester"] = semester
-    if plan != personal_plan.load_plan(base_dir):
+        local_semester = plan.get("semester") if isinstance(plan.get("semester"), dict) else {}
+        if local_semester != semester:
+            if not any(_text(value) for value in local_semester.values()):
+                plan["semester"] = semester
+                changed = True
+            else:
+                _archive_http_conflict(
+                    base_dir, "planner", "semester", local_semester, semester
+                )
+    if changed:
         personal_plan.save_plan(base_dir, plan)
     return applied
+
+
+def _canonical_plan_row(kind: str, row: dict) -> dict:
+    """Apply the planner's own normalizer before comparing or archiving.
+
+    A sparse remote row and a locally normalized row otherwise look different
+    only because the local writer filled optional fields.  That made the same
+    conflict reappear on every pull.  The store normalizer is the single source
+    of truth for what a planner record means.
+    """
+    normalizer = {
+        "item": personal_plan._normalize_item,
+        "course": personal_plan._normalize_course,
+        "block": personal_plan._normalize_block,
+    }[kind]
+    normalized = normalizer(dict(row))
+    return normalized if isinstance(normalized, dict) else dict(row)
 
 
 # Bundle key, report key, publish, merge — in the order the report shows.

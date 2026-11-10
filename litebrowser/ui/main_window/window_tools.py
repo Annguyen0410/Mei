@@ -235,6 +235,9 @@ class WindowToolsMixin:
             if path:
                 download.setPath(path)
                 download.accept()
+                # Tab hibernation is paused while any download runs: discarding
+                # a renderer mid-download can abort the transfer.
+                self._active_download_count = int(getattr(self, "_active_download_count", 0) or 0) + 1
                 try:
                     from litebrowser.services import download_mgr
                     download_id = download_mgr.add_download(self.base_dir, download.url().toString(), path, download.suggestedFileName(), "downloading")

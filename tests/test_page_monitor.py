@@ -114,6 +114,12 @@ class TestNormalizeUrl(unittest.TestCase):
                 with self.assertRaises(page_monitor.MonitorError):
                     page_monitor.normalize_url(value)
 
+    def test_public_ipv6_literal_is_canonicalised(self):
+        self.assertEqual(
+            page_monitor.normalize_url("https://[2606:4700:4700::1111]/a"),
+            "https://[2606:4700:4700::1111]/a",
+        )
+
     def test_credentials_and_spaces_are_refused(self):
         for value in (
             "https://user:pass@example.com/",
@@ -234,23 +240,51 @@ class TestChecks(_Base):
         self.assertEqual(result["status"], "error")
         self.assertIn("too large", result["error"])
 
-    def test_redirect_to_a_local_target_is_blocked(self):
-        request = urllib.request.Request("https://example.com/start")
-        handler = page_monitor._HttpOnlyRedirect()
-        with self.assertRaises(page_monitor.MonitorFetchError):
-            handler.redirect_request(request, None, 302, "Found", {}, "http://127.0.0.1/admin")
-
-    def test_redirect_to_https_is_followed(self):
-        request = urllib.request.Request("http://example.com/start")
-        handler = page_monitor._HttpOnlyRedirect()
-        with mock.patch.object(
-            urllib.request.HTTPRedirectHandler, "redirect_request", return_value="redirected"
-        ) as parent:
-            self.assertEqual(
-                handler.redirect_request(request, None, 301, "Moved", {}, "https://example.com/next"),
-                "redirected",
+    def test_a_page_resolving_to_a_private_address_is_refused(self):
+        with self.assertRaises(page_monitor.MonitorFetchError) as ctx:
+            page_monitor._fetch_page(
+                "https://public.example/page",
+                resolver=lambda host, port: ["127.0.0.1"],
             )
-        self.assertEqual(parent.call_args[0][5], "https://example.com/next")
+        self.assertIn("local or private", str(ctx.exception))
+
+    def test_a_redirect_to_a_private_destination_is_refused(self):
+        class _Redirect:
+            status = 302
+            headers = {}
+
+            def getheader(self, name, default=None):
+                return "https://internal.example/admin"
+
+            def getheaders(self):
+                return []
+
+            def read(self, size=-1):
+                return b""
+
+        class _Conn:
+            def request(self, *args, **kwargs):
+                return None
+
+            def getresponse(self):
+                return _Redirect()
+
+            def close(self):
+                return None
+
+        calls = []
+
+        def resolver(host, port):
+            calls.append(host)
+            return ["93.184.216.34"] if host == "public.example" else ["10.0.0.7"]
+
+        with self.assertRaises(page_monitor.MonitorFetchError):
+            page_monitor._fetch_page(
+                "https://public.example/",
+                resolver=resolver,
+                connection_factory=lambda *a, **k: _Conn(),
+            )
+        self.assertEqual(calls, ["public.example", "internal.example"])
 
     def test_missing_monitor_is_reported_not_silently_successful(self):
         self.assertEqual(page_monitor.check_monitor(self.base, "nope")["status"], "missing")

@@ -238,6 +238,16 @@ class TestUpdateKeyTool(unittest.TestCase):
         self.assertIn("cmd.exe", err)
         self.assertIn("did not expand", err)
 
+    def test_private_key_is_never_printed(self):
+        # A printed key lands in scrollback and in any log that gets pasted
+        # somewhere; that was a real leak path, so the default must be silent.
+        code, out, _err = self._run(["--key-id", "test-key", "--out", self.out])
+        self.assertEqual(code, 0)
+        secret = open(self.out, encoding="utf-8").read().strip()
+        self.assertTrue(secret, "the private key must still be written to the file")
+        self.assertNotIn(secret, out, "the private key must not be echoed")
+        self.assertIn("NOT printed", out)
+
     def test_refuses_to_overwrite_an_existing_key_file(self):
         self.assertEqual(self._run(["--key-id", "test-key", "--out", self.out])[0], 0)
         code, _out, err = self._run(["--key-id", "test-key", "--out", self.out])

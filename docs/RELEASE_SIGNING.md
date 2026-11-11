@@ -17,8 +17,16 @@ python tools/generate_update_key.py --key-id mei-release-2026 --out ~/mei-update
 
 * Writes the private half to `--out` with mode 0600.
 * Refuses to write inside the repository, refuses to overwrite an existing file,
-  and refuses to reuse a key id that is already pinned.
-* Prints the `TRUSTED_UPDATE_KEYS` block and the base64 value for the CI secret.
+  refuses to reuse a key id that is already pinned, and refuses a path whose
+  shell variable was not expanded (a PowerShell `$env:` pasted into `cmd.exe`).
+* Prints the `TRUSTED_UPDATE_KEYS` block only. The private half is **never
+  printed**: a key in terminal scrollback, a screenshot or a pasted log is a
+  leaked key. Read it from the file when you set the CI secret.
+
+> If a private key is ever printed or pasted anywhere, treat it as compromised:
+> delete the file, generate a new key with a **new key id**, and pin that one.
+> Do not "reuse but be careful" — the whole point of the pin is that only one
+> key can sign an update.
 
 ## 2. Pin the public half
 

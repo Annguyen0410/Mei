@@ -63,6 +63,14 @@ def main(argv=None) -> int:
     parser.add_argument("--key-id", required=True, help="key id to pin, e.g. mei-release-2027")
     parser.add_argument("--out", required=True, help="path for the private key (must be outside the repo)")
     parser.add_argument("--force", action="store_true", help="overwrite --out and any existing key id")
+    parser.add_argument(
+        "--print-private",
+        action="store_true",
+        help=(
+            "also print the private key — it then lives in terminal scrollback and in any "
+            "log or screenshot you share; only do this on a machine you control"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -138,8 +146,13 @@ def main(argv=None) -> int:
     print("   }")
     print("   CURRENT_UPDATE_KEY_ID = %r" % args.key_id)
     print()
-    print("3. Store the private half as the GitHub secret MEI_UPDATE_SIGNING_KEY:")
-    print("   %s" % private_b64)
+    # The private half is deliberately NOT printed. Printing it put a live
+    # signing key into a terminal scrollback, which is how it ends up in a pasted
+    # bug report — a leaked key is worse than an inconvenient one.
+    print("3. Store the private half as the GitHub secret MEI_UPDATE_SIGNING_KEY.")
+    print("   It is deliberately NOT printed: read it from %s" % args.out)
+    if args.print_private:
+        print("   --print-private was passed, so: %s" % private_b64)
     print()
     print("4. Also keep it in the maintainer password manager, then delete %s." % args.out)
     print("5. Verify the pin before publishing: python tools/publish_release.py --help")

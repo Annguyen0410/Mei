@@ -307,6 +307,78 @@ class TestPinWritesTheKeyFile(unittest.TestCase):
         with open(self.path, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "x = 1\n", "a refused pin must not rewrite the file")
 
+    def test_from_private_recovers_the_public_half_and_pins_it(self):
+        # The recovery path for a blocked run: the pair already exists, so derive
+        # the public key rather than asking the maintainer to regenerate or delete.
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        private = Ed25519PrivateKey.generate()
+        seed = private.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        seed_path = os.path.join(self._tmp.name, "seed.txt")
+        with open(seed_path, "w", encoding="utf-8") as handle:
+            handle.write(base64.b64encode(seed).decode("ascii"))
+        expected_public = base64.b64encode(
+            private.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+        ).decode("ascii")
+
+        code, stdout, _err = TestUpdateKeyTool._run_static(
+            ["--key-id", "recovered", "--from-private", seed_path, "--pin", "--module", self.path]
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn(
+            base64.b64encode(seed).decode("ascii"), stdout, "the seed must never be echoed"
+        )
+        self.assertEqual(self._load()["TRUSTED_UPDATE_KEYS"]["recovered"], expected_public)
+
+    def test_from_private_rejects_a_file_that_is_not_a_32_byte_seed(self):
+        bad = os.path.join(self._tmp.name, "bad.txt")
+        with open(bad, "w", encoding="utf-8") as handle:
+            handle.write(base64.b64encode(b"short").decode("ascii"))
+        code, _stdout, err = TestUpdateKeyTool._run_static(
+            ["--key-id", "k", "--from-private", bad, "--pin", "--module", self.path]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("Ed25519 seed is 32", err)
+
+    def test_leftover_key_file_is_named_as_a_leftover(self):
+        # The message used to talk about rotating a pinned key even when nothing
+        # was pinned, which sent the maintainer looking for a rotation to undo.
+        out = os.path.join(self._tmp.name, "key.txt")
+        open(out, "w", encoding="utf-8").close()
+        code, _stdout, err = TestUpdateKeyTool._run_static(
+            ["--key-id", "k", "--out", out, "--module", self.path]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("leftover", err)
+        self.assertNotIn("Rotating", err)
+
+    def test_existing_pin_gets_a_rotation_instruction(self):
+        out = os.path.join(self._tmp.name, "key.txt")
+        open(out, "w", encoding="utf-8").close()
+        generate_update_key.pin_public_key("old-key", self.public, self.path)
+        code, _stdout, err = TestUpdateKeyTool._run_static(
+            ["--key-id", "k", "--out", out, "--module", self.path]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("already pins old-key", err)
+
+    def test_force_overwrites_a_leftover_file(self):
+        out = os.path.join(self._tmp.name, "key.txt")
+        open(out, "w", encoding="utf-8").close()
+        code, _stdout, _err = TestUpdateKeyTool._run_static(
+            ["--key-id", "k", "--out", out, "--module", self.path, "--force", "--pin"]
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(open(out, encoding="utf-8").read().strip())
+
     def test_pin_flag_drives_the_whole_flow_from_the_command_line(self):
         out = os.path.join(self._tmp.name, "key.txt")
         code, stdout, _err = TestUpdateKeyTool._run_static(

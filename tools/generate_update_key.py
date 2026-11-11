@@ -82,6 +82,24 @@ def _literal_after_equals(block: str):
     return ast.literal_eval(block.split("=", 1)[1].strip())
 
 
+def pinned_ids(module_path: str) -> dict:
+    """Currently pinned ``{key_id: public_b64}``, or ``{}`` when unreadable.
+
+    Used only to tell a leftover key file apart from a real rotation, so a
+    failure never guesses: an unreadable module reports no pins.
+    """
+    try:
+        with open(module_path, encoding="utf-8") as handle:
+            source = handle.read()
+        span = _assignment_span(source, "TRUSTED_UPDATE_KEYS")
+        if span is None:
+            return {}
+        lines = source.splitlines()
+        return dict(_literal_after_equals("\n".join(lines[span[0] - 1 : span[1]])) or {})
+    except (OSError, SyntaxError, ValueError, TypeError):
+        return {}
+
+
 def pin_public_key(key_id: str, public_b64: str, module_path: str) -> str:
     """Pin ``key_id`` in ``TRUSTED_UPDATE_KEYS`` and make it the current key.
 
@@ -136,10 +154,70 @@ def pin_public_key(key_id: str, public_b64: str, module_path: str) -> str:
     return previous_current
 
 
+def _pin_existing_key(args) -> int:
+    """``--from-private``: derive the public half from a saved seed and pin it.
+
+    Recovering the public key from the file is what makes a blocked run
+    recoverable: the keypair already exists, so nothing has to be regenerated or
+    deleted. Only the public half is printed.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    try:
+        with open(args.from_private, encoding="utf-8") as handle:
+            raw_private = base64.b64decode(handle.read().strip(), validate=True)
+    except (OSError, ValueError) as exc:
+        print(
+            "error: %s is not a base64 raw key (%s)" % (args.from_private, type(exc).__name__),
+            file=sys.stderr,
+        )
+        return 2
+    if len(raw_private) != 32:
+        print(
+            "error: %s holds %d bytes; an Ed25519 seed is 32" % (args.from_private, len(raw_private)),
+            file=sys.stderr,
+        )
+        return 2
+
+    private = Ed25519PrivateKey.from_private_bytes(raw_private)
+    raw_public = private.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    public_b64 = base64.b64encode(raw_public).decode("ascii")
+
+    print("Public key for %r, derived from %s:" % (args.key_id, args.from_private))
+    print()
+    print("   TRUSTED_UPDATE_KEYS = {")
+    print("       %r: %r," % (args.key_id, public_b64))
+    print("   }")
+    print("   CURRENT_UPDATE_KEY_ID = %r" % args.key_id)
+    print()
+    if not args.pin:
+        print("Re-run with --pin to write this into update_keys.py.")
+        return 0
+
+    module = args.module or _module_path()
+    try:
+        previous = pin_public_key(args.key_id, public_b64, module)
+    except (OSError, ValueError) as exc:
+        print("error: could not pin the key: %s" % exc, file=sys.stderr)
+        return 2
+    print("Pinned %r in %s" % (args.key_id, module))
+    if previous and previous != args.key_id:
+        print("   %r stays pinned too" % previous)
+    print("   next: rebuild the exe (the key is part of the app) and run")
+    print("         python -m pytest tests/test_update_signature.py tests/test_release_hardening.py")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Generate Mei's Ed25519 update signing key.")
     parser.add_argument("--key-id", required=True, help="key id to pin, e.g. mei-release-2027")
-    parser.add_argument("--out", required=True, help="path for the private key (must be outside the repo)")
+    # Not argparse-required: --from-private pins an existing key and needs no
+    # output file. The generation path checks for it below.
+    parser.add_argument("--out", default="", help="path for the private key (must be outside the repo)")
     parser.add_argument("--force", action="store_true", help="overwrite --out and any existing key id")
     parser.add_argument(
         "--print-private",
@@ -150,6 +228,12 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument("--pin", action="store_true", help="write the public key into update_keys.py instead of printing the block")
+    parser.add_argument(
+        "--from-private",
+        default="",
+        metavar="FILE",
+        help="pin an existing base64 raw key instead of generating one (add --pin to write it)",
+    )
     parser.add_argument("--module", default="", help="path to update_keys.py (default: the one in this repository)")
     args = parser.parse_args(argv)
 
@@ -159,6 +243,9 @@ def main(argv=None) -> int:
     except ImportError:
         print("error: the 'cryptography' package is required (pip install cryptography>=40)", file=sys.stderr)
         return 2
+
+    if args.from_private:
+        return _pin_existing_key(args)
 
     if not args.out.strip():
         print("error: --out is required", file=sys.stderr)
@@ -184,10 +271,25 @@ def main(argv=None) -> int:
         )
         return 2
     if os.path.exists(args.out) and not args.force:
-        print(
-            "error: %s already exists; rotating a pinned key means editing update_keys.py by hand." % args.out,
-            file=sys.stderr,
-        )
+        module = args.module or _module_path()
+        pinned = pinned_ids(module)
+        if not pinned:
+            # The common case: an earlier run wrote the file, nothing was pinned,
+            # so this is a leftover rather than a rotation to protect.
+            print(
+                "error: %s already exists, but %s pins no key — it is a leftover from an\n"
+                "       earlier run. Delete it, or pass --force to overwrite it (nothing is\n"
+                "       pinned yet, so nothing is lost)." % (args.out, module),
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "error: %s already exists and %s already pins %s.\n"
+                "       To rotate: write the new key to a NEW --out file and pass --pin; the\n"
+                "       existing id stays pinned until you retire it."
+                % (args.out, module, ", ".join(sorted(pinned))),
+                file=sys.stderr,
+            )
         return 2
 
     from litebrowser.core import update_keys

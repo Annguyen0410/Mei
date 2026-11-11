@@ -180,6 +180,7 @@ def build_manifest(
     web_support_path: str = "",
     web_support_url: str = "",
     release_url: str = "",
+    require_signature: bool = False,
 ) -> dict:
     """The channel manifest — the single file the app polls.
 
@@ -208,6 +209,11 @@ def build_manifest(
 
     key_id = str(os.environ.get("MEI_UPDATE_KEY_ID") or "").strip()
     secret = str(os.environ.get("MEI_UPDATE_SIGNING_KEY") or "").strip()
+    if bool(key_id) != bool(secret):
+        raise ValueError(
+            "Set both MEI_UPDATE_KEY_ID and MEI_UPDATE_SIGNING_KEY, or neither; "
+            "half-configured update signing is refused."
+        )
     if key_id and secret:
         try:
             raw = _b64.b64decode(secret, validate=True)
@@ -216,9 +222,30 @@ def build_manifest(
             )
         except Exception as exc:  # noqa: BLE001 - fail loudly, never ship half-signed
             raise ValueError(f"Update signing failed: {type(exc).__name__}") from exc
+        if require_signature:
+            from litebrowser.core import update_keys
+
+            try:
+                update_signature.verify_manifest(
+                    manifest,
+                    update_keys.trusted_keys(),
+                    update_keys.REVOKED_UPDATE_KEY_IDS,
+                )
+            except update_signature.UpdateSignatureError as exc:
+                raise ValueError(
+                    "The generated manifest is not verifiable by this build's pinned "
+                    "update keys; stable publication is blocked."
+                ) from exc
     else:
+        if require_signature:
+            raise ValueError(
+                "Stable publication requires MEI_UPDATE_KEY_ID and "
+                "MEI_UPDATE_SIGNING_KEY; no manifest was uploaded."
+            )
         manifest["signature"] = ""
         manifest["key_id"] = ""
+        manifest["signature_status"] = "unsigned-dry-run"
+        manifest["development_only"] = True
     return manifest
 
 
@@ -433,6 +460,7 @@ def publish(
         web_support_path=site_zip,
         web_support_url=site_url,
         release_url=release_page_url(repo),
+        require_signature=bool(token) and not skip_upload,
     )
     out = os.path.dirname(os.path.abspath(exe))
     manifest_path = os.path.join(out, "update.json")
@@ -462,6 +490,12 @@ def publish(
 
     if not token:
         raise ValueError("Set GITHUB_TOKEN (fine-grained token with Contents: read and write) to publish.")
+
+    if not manifest.get("signature"):
+        raise ValueError(
+            "Stable publication requires a trusted, signed update manifest; "
+            "nothing was uploaded."
+        )
 
     release = _ensure_release(repo, tag, token, body, draft, prerelease)
     release_id = int(release.get("id") or 0)

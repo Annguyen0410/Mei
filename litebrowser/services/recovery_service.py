@@ -19,7 +19,7 @@ from litebrowser.core import migration_journal, storage_health
 from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import write_json
-from litebrowser.services import backup_service, restore_service
+from litebrowser.services import backup_service, encrypted_backup_service, restore_service
 
 _log = get_logger("recovery_service")
 
@@ -163,6 +163,8 @@ def recover_startup(base_dir: str, *, now: int | None = None) -> dict:
       never published.
     """
     now = int(now or time.time())
+    restore_reconciliation = restore_service.recover_interrupted(base_dir, now=now)
+    encrypted_temp_cleanup = encrypted_backup_service.cleanup_stale_temp(now=now)
     before = inspect_startup(base_dir, now=now)
     migrations = migration_journal.reconcile(base_dir)
     quarantined = []
@@ -180,17 +182,24 @@ def recover_startup(base_dir: str, *, now: int | None = None) -> dict:
             quarantined.append({"file": row["path"], "removed": removed, "artifact": record["artifact"]})
         except storage_health.StorageHealthError as exc:
             quarantined.append({"file": row["path"], "removed": False, "error": str(exc)})
+    restore_status = str(restore_reconciliation.get("status") or "")
+    restore_unresolved = restore_status not in ("none", "committed", "rolled_back", "failed")
     report = {
         "kind": "mei.startup_recovery",
         "version": 1,
         "generated_at": now,
         "inspection": before,
         "migration_reconciliation": [row.as_dict() for row in migrations],
+        "restore_reconciliation": restore_reconciliation,
+        "encrypted_temp_cleanup": encrypted_temp_cleanup,
         "stale_temp_quarantine": quarantined,
-        "restore_requires_review": before["restore_state"] not in ("", "COMMITTED", "FAILED"),
+        "restore_requires_review": restore_unresolved
+        or before["restore_state"] not in ("", "COMMITTED", "ROLLED_BACK", "FAILED"),
         "backup_requires_review": before["incomplete_backups"],
         "status": "review_required"
-        if before["pending_migrations"] or before["restore_state"] not in ("", "COMMITTED", "FAILED")
+        if before["pending_migrations"]
+        or restore_unresolved
+        or before["restore_state"] not in ("", "COMMITTED", "ROLLED_BACK", "FAILED")
         else "recovered",
     }
     with profile_locked(base_dir):

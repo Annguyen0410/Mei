@@ -343,3 +343,32 @@ conflict. See `MEI_DATA_INTEGRITY_CLOSURE.md` for the full evidence.
   are byte-guarded and backup-protected, not described as migration-managed.
 - Real GUI, two-device encrypted restore, disk-full/power-loss and packaged
   build remain **NOT TESTED**.
+
+## 2026-11 critical data-safety hardening
+
+Detailed evidence and remaining limitations are in
+`MEI_CRITICAL_REMEDIATION_2026-11.md`.
+
+- Quarantine failure is now fail-closed: a corrupt store cannot be overwritten
+  unless a byte- and SHA-256-verified preservation copy exists.  Regression tests
+  cover permission failure, read-before-write failure and source mutation.
+- HTTP merge results are typed; archive/write failures abort the pull, preserve
+  the baseline, and leave a durable push-block reason.  Tests cover tasks,
+  planner/bookmarks/notes paths and retry clearing.
+- Empty restore categories are rejected; `None` is the only all-categories
+  value.  Restore now uses a version-2 journal with per-file original/staged
+  hashes, verified rollback copies, locks around the pre-restore snapshot and
+  deterministic startup reconciliation.
+- Encrypted restores create an encrypted pre-restore backup or block; the
+  version-1 scrypt parameters are exact and parsed with strict types before KDF
+  work.  Decryption/encryption temporary files use a private Mei temp root and
+  startup stale cleanup.
+- Stable release publication requires a signed manifest verifiable by the
+  pinned trust store, and stable Authenticode requires a valid signer and
+  timestamp.  The workflow's control-character signtool path is fixed.
+- History now has a page-local store guard; Library and History do not render an
+  unavailable store as a normal empty collection.  Data Management preview,
+  verification and retention run through the existing Qt worker.
+- New focused verification: **123 passed, 5 subtests**.  Full-suite and CI
+  limitations are reported in `MEI_CRITICAL_REMEDIATION_2026-11.md`; no
+  historical test total is reused as a current result.

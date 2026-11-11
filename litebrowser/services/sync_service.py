@@ -59,6 +59,26 @@ class SyncEntity:
     merge: Callable[[str, Any], int]  # (profile, remote value) -> rows applied
 
 
+class SyncMergeError(RuntimeError):
+    """A merge could not safely complete; the pull must not be reported as OK."""
+
+    def __init__(self, status: str, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+@dataclass(frozen=True)
+class BundleMergeResult:
+    applied: dict[str, int]
+    status: str
+    error: str = ""
+    failed_store: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error and self.status in ("APPLIED", "UNCHANGED")
+
+
 def _rows_entity(key: str, counter: str, load, save) -> SyncEntity:
     """A row list merged by id, archiving both versions before a winner.
 
@@ -96,8 +116,10 @@ def _rows_entity(key: str, counter: str, load, save) -> SyncEntity:
             if _row_fingerprint(local) == _row_fingerprint(row):
                 continue
             if not _archive_http_conflict(base_dir, key, record_id, local, row):
-                # Preserve the local row when the archive itself is unavailable.
-                continue
+                raise SyncMergeError(
+                    "ARCHIVE_FAILED",
+                    f"Could not preserve the {key} conflict for {record_id}; the local row was kept.",
+                )
             if _timestamp(row) >= _timestamp(local):
                 existing[index] = row
                 changed = True
@@ -125,7 +147,7 @@ def _row_fingerprint(row) -> str:
 
 def _archive_http_conflict(base_dir: str, store: str, record_id: str, local, remote) -> bool:
     try:
-        conflict_service.record_conflict(
+        entry = conflict_service.record_conflict(
             base_dir,
             store=store,
             record_id=record_id,
@@ -134,7 +156,7 @@ def _archive_http_conflict(base_dir: str, store: str, record_id: str, local, rem
             conflict_type="http_sync",
             source_device="remote snapshot",
         )
-        return True
+        return bool(entry)
     except (conflict_service.ConflictError, OSError, ValueError) as exc:
         # Keep local data if the archive cannot be written.  A failed archive
         # must never become a silent overwrite.
@@ -213,9 +235,10 @@ def _merge_notes(base_dir: str, incoming) -> int:
             if (existing.get("content") or "") == content:
                 continue
             if not _archive_http_conflict(base_dir, "notes", note_id, existing, note):
-                # Keep the local note when the archive cannot be written.  A
-                # failed archive must not become a silent overwrite.
-                continue
+                raise SyncMergeError(
+                    "ARCHIVE_FAILED",
+                    f"Could not preserve the notes conflict for {note_id}; the local note was kept.",
+                )
             remote_time = _timestamp(note)
             local_time = _timestamp(existing)
             if remote_time and (not local_time or remote_time > local_time):
@@ -237,13 +260,17 @@ def _merge_notes(base_dir: str, incoming) -> int:
         if existing:
             if (existing.get("content") or "") == content:
                 continue
-            _archive_http_conflict(
+            if not _archive_http_conflict(
                 base_dir,
                 "notes",
                 f"{title}/{category}",
                 existing,
                 note,
-            )
+            ):
+                raise SyncMergeError(
+                    "ARCHIVE_FAILED",
+                    f"Could not preserve the notes conflict for {title}/{category}.",
+                )
             _conflict_note(base_dir, title, category, content, local_notes)
             applied += 1
             continue
@@ -282,7 +309,11 @@ def _merge_bookmarks(base_dir: str, incoming) -> int:
         if url in local_by_url:
             local = local_by_url[url]
             if _row_fingerprint(local) != _row_fingerprint(bm):
-                _archive_http_conflict(base_dir, "bookmarks", url, local, bm)
+                if not _archive_http_conflict(base_dir, "bookmarks", url, local, bm):
+                    raise SyncMergeError(
+                        "ARCHIVE_FAILED",
+                        f"Could not preserve the bookmark conflict for {url}.",
+                    )
             continue
         merged.append(bm)
         local_by_url[url] = bm
@@ -376,8 +407,10 @@ def _merge_plan(base_dir: str, incoming) -> int:
             if not _archive_http_conflict(
                 base_dir, "planner", f"{kind}:{record_id}", archive_local, archive_remote
             ):
-                # Keep the local planner row when archival fails.
-                continue
+                raise SyncMergeError(
+                    "ARCHIVE_FAILED",
+                    f"Could not preserve the planner conflict for {kind}:{record_id}.",
+                )
             if _timestamp(row) > _timestamp(local):
                 current[index] = row
                 changed = True
@@ -391,9 +424,13 @@ def _merge_plan(base_dir: str, incoming) -> int:
                 plan["semester"] = semester
                 changed = True
             else:
-                _archive_http_conflict(
+                if not _archive_http_conflict(
                     base_dir, "planner", "semester", local_semester, semester
-                )
+                ):
+                    raise SyncMergeError(
+                        "ARCHIVE_FAILED",
+                        "Could not preserve the semester conflict; the local semester was kept.",
+                    )
     if changed:
         personal_plan.save_plan(base_dir, plan)
     return applied
@@ -501,7 +538,7 @@ def _timestamp(row):
 
 
 @profile_transaction
-def _apply_bundle(base_dir: str, bundle: dict) -> dict:
+def _apply_bundle_result(base_dir: str, bundle: dict) -> BundleMergeResult:
     """Merge a remote snapshot into the local profile (last-writer-wins per item).
 
     Each collection is merged by the rule in its ``SYNC_ENTITIES`` entry, so a
@@ -510,11 +547,35 @@ def _apply_bundle(base_dir: str, bundle: dict) -> dict:
     """
     applied = {entity.counter: 0 for entity in SYNC_ENTITIES}
     if not isinstance(bundle, dict):
-        return applied
+        return BundleMergeResult(applied, "VALIDATION_FAILED", "Remote snapshot is not an object.")
+    changed = False
     for entity in SYNC_ENTITIES:
         if entity.key in bundle:
-            applied[entity.counter] = entity.merge(base_dir, bundle[entity.key])
-    return applied
+            try:
+                count = entity.merge(base_dir, bundle[entity.key])
+            except SyncMergeError as exc:
+                return BundleMergeResult(
+                    applied, exc.status, str(exc), entity.counter
+                )
+            except (OSError, ValueError, TypeError) as exc:
+                return BundleMergeResult(
+                    applied,
+                    "WRITE_FAILED",
+                    f"Could not apply {entity.counter}: {exc}",
+                    entity.counter,
+                )
+            applied[entity.counter] = count
+            changed = changed or bool(count)
+    return BundleMergeResult(applied, "APPLIED" if changed else "UNCHANGED")
+
+
+def _apply_bundle(base_dir: str, bundle: dict) -> dict:
+    """Compatibility wrapper returning applied counts.
+
+    Callers that must make a safety decision use ``_apply_bundle_result`` so an
+    archive/write failure cannot be mistaken for success.
+    """
+    return _apply_bundle_result(base_dir, bundle).applied
 
 
 def validate_endpoint(endpoint: str) -> tuple[str, str]:
@@ -627,6 +688,11 @@ def _request(url: str, token: str, method: str = "GET", payload=None) -> tuple[b
 
 
 def push(base_dir: str, endpoint: str, token: str) -> tuple[bool, str]:
+    state = life_service.load_sync_state(base_dir)
+    if state.get("push_blocked"):
+        return False, "Push blocked: a previous pull could not preserve a conflict. " + str(
+            state.get("push_blocked_reason") or "Resolve the conflict first."
+        )
     endpoint, error = validate_endpoint(endpoint)
     if error:
         return False, error
@@ -648,8 +714,17 @@ def pull(base_dir: str, endpoint: str, token: str) -> tuple[bool, str]:
         return False, "Remote did not return a snapshot."
     if not _bundle_within_limits(resp):
         return False, "Remote snapshot is malformed or too large. Nothing was changed."
-    applied = _apply_bundle(base_dir, resp)
-    _record_sync(base_dir, pulled_at=int(time.time()))
+    result = _apply_bundle_result(base_dir, resp)
+    if not result.ok:
+        _block_push(base_dir, result.error or "The remote snapshot could not be applied safely.")
+        return False, "Pull blocked: " + (result.error or "The remote snapshot could not be applied safely.")
+    try:
+        _record_sync(base_dir, pulled_at=int(time.time()))
+        _clear_push_block(base_dir)
+    except OSError as exc:
+        _block_push(base_dir, f"Could not record the pull baseline: {exc}")
+        return False, "Pull could not record its baseline; push was blocked."
+    applied = result.applied
     counts = " · ".join("%s=%s" % (k, v) for k, v in applied.items() if v)
     return True, "Pulled snapshot. (%s)" % (counts or "no changes")
 
@@ -672,6 +747,26 @@ def _record_sync(base_dir: str, pushed_at: int | None = None, pulled_at: int | N
     if pulled_at:
         data["last_pull_at"] = pulled_at
     data["last_sync_at"] = int(time.time())
+    life_service.save_sync_state(base_dir, data)
+
+
+@profile_transaction
+def _block_push(base_dir: str, reason: str) -> None:
+    data = life_service.load_sync_state(base_dir)
+    data["push_blocked"] = True
+    data["push_blocked_reason"] = str(reason)[:2000]
+    data["push_blocked_at"] = int(time.time())
+    life_service.save_sync_state(base_dir, data)
+
+
+@profile_transaction
+def _clear_push_block(base_dir: str) -> None:
+    data = life_service.load_sync_state(base_dir)
+    if not data.get("push_blocked"):
+        return
+    data.pop("push_blocked", None)
+    data.pop("push_blocked_reason", None)
+    data.pop("push_blocked_at", None)
     life_service.save_sync_state(base_dir, data)
 
 

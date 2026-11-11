@@ -184,3 +184,17 @@ conflict. See `MEI_DATA_INTEGRITY_CLOSURE.md` for the full evidence.
   are byte-guarded and backup-protected, not described as migration-managed.
 - Real GUI, two-device encrypted restore, disk-full/power-loss and packaged
   build remain **NOT TESTED**.
+
+## 2026-11 critical remediation addendum
+
+The critical data-safety pass is recorded in
+`MEI_CRITICAL_REMEDIATION_2026-11.md` and `MEI_REMEDIATION_CHANGELOG.md`.
+It changes corrupt-store writes to fail closed, adds typed HTTP sync merge
+outcomes and a persisted push gate, rejects empty restore selections, replaces
+the in-memory restore rollback with a version-2 per-file journal and startup
+reconciliation, requires encrypted pre-restore backups for encrypted sources,
+strictly validates the version-1 scrypt header before derivation, and blocks
+stable publication without a trusted update signature and valid Authenticode.
+The page guard now covers History in addition to Home, Library and Settings.
+Remaining limitations are listed in the detailed record; no historical test
+total is reused as a current result.

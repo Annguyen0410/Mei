@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import secrets
@@ -17,6 +18,13 @@ _WRITE_LOCK = threading.RLock()
 #: recoverable parse error into permanent data loss.  A successful read clears
 #: the mark (the user or a recovery tool repaired the file).
 _DAMAGED_PATHS: dict[str, str] = {}
+#: Damaged paths for which preservation itself failed.  These are separate from
+#: ``_DAMAGED_PATHS`` because an empty artifact name must never mean "safe".
+_DAMAGE_FAILURES: set[str] = set()
+
+
+class CorruptionWriteError(OSError):
+    """A damaged store could not be preserved, so a write is refused."""
 
 
 def _path_key(path: str) -> str:
@@ -24,21 +32,58 @@ def _path_key(path: str) -> str:
 
 
 def _preserve_corrupt_copy(path: str) -> str:
-    """Keep a private adjacent copy before the store can ever be overwritten."""
+    """Keep and verify a private adjacent copy before a store is overwritten.
+
+    The source is copied, never moved.  A copy is not considered preserved
+    until its byte count and SHA-256 match the bytes that were read and the
+    source metadata still matches the metadata observed before the copy.  This
+    closes the old ``artifact == ""`` path where a failed copy allowed the
+    caller to overwrite the only recoverable bytes.
+    """
     parent = os.path.dirname(os.path.abspath(path)) or os.getcwd()
     base = os.path.basename(path) or "store"
+    try:
+        before = os.stat(path)
+    except OSError as exc:
+        raise CorruptionWriteError(f"Could not stat the damaged store: {exc}") from exc
     name = f".{base}.corrupt-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{secrets.token_hex(4)}.bak"
     target = os.path.join(parent, name)
     fd, temporary = tempfile_mkstemp_same_dir(parent, base)
+    digest = hashlib.sha256()
+    copied = 0
     try:
         with os.fdopen(fd, "wb") as target_handle, open(path, "rb") as source:
             while True:
                 block = source.read(1024 * 1024)
                 if not block:
                     break
+                copied += len(block)
+                digest.update(block)
                 target_handle.write(block)
             target_handle.flush()
             os.fsync(target_handle.fileno())
+        if copied != before.st_size:
+            raise CorruptionWriteError(
+                f"Damaged store changed length while preserving it ({before.st_size} -> {copied})"
+            )
+        after = os.stat(path)
+        if (
+            after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+        ):
+            raise CorruptionWriteError(
+                "Damaged store changed while it was being preserved; refusing the write"
+            )
+        artifact_digest = hashlib.sha256()
+        with open(temporary, "rb") as artifact:
+            while True:
+                block = artifact.read(1024 * 1024)
+                if not block:
+                    break
+                artifact_digest.update(block)
+        if artifact_digest.hexdigest() != digest.hexdigest():
+            raise CorruptionWriteError("Quarantine copy checksum does not match the source")
+        os.chmod(temporary, 0o600)
         _atomic_replace(temporary, target)
     except Exception:
         try:
@@ -46,6 +91,18 @@ def _preserve_corrupt_copy(path: str) -> str:
         except OSError:
             pass
         raise
+    try:
+        check = hashlib.sha256()
+        with open(target, "rb") as artifact:
+            while True:
+                block = artifact.read(1024 * 1024)
+                if not block:
+                    break
+                check.update(block)
+        if check.hexdigest() != digest.hexdigest():
+            raise CorruptionWriteError("Quarantine copy could not be read back safely")
+    except OSError as exc:
+        raise CorruptionWriteError(f"Could not verify the quarantine copy: {exc}") from exc
     return target
 
 
@@ -81,6 +138,7 @@ def read_json(path: str, default: Any):
             with open(path, "r", encoding="utf-8-sig") as f:
                 value = json.load(f)
             _DAMAGED_PATHS.pop(_path_key(path), None)
+            _DAMAGE_FAILURES.discard(_path_key(path))
             return value
         except (OSError, ValueError, UnicodeError) as exc:
             artifact = ""
@@ -91,6 +149,8 @@ def read_json(path: str, default: Any):
             key = _path_key(path)
             if key not in _DAMAGED_PATHS:
                 _DAMAGED_PATHS[key] = artifact
+            if not artifact:
+                _DAMAGE_FAILURES.add(key)
             _log.warning(
                 "read_json failed for %s: %s; preserved at %s",
                 path,
@@ -99,6 +159,7 @@ def read_json(path: str, default: Any):
             )
     else:
         _DAMAGED_PATHS.pop(_path_key(path), None)
+        _DAMAGE_FAILURES.discard(_path_key(path))
     return default
 
 
@@ -192,24 +253,29 @@ def _write_json_unlocked(
     # A store that failed to parse is preserved and write-protected until a
     # successful read confirms it was repaired.  Do not turn a parse error into
     # permanent loss by writing a default payload over the only copy.
-    artifact = _DAMAGED_PATHS.get(_path_key(path))
+    key = _path_key(path)
+    if key in _DAMAGE_FAILURES and not allow_replace_corrupt:
+        raise CorruptionWriteError(
+            "Refusing to overwrite a damaged store: its bytes were not preserved. "
+            "Restore it from backup or repair it explicitly."
+        )
+    artifact = _DAMAGED_PATHS.get(key)
     if not artifact and not allow_replace_corrupt and _existing_json_is_damaged(path):
         try:
             artifact = _preserve_corrupt_copy(path)
         except OSError as exc:
-            artifact = ""
+            _DAMAGE_FAILURES.add(key)
             _log.warning("could not preserve damaged store %s: %s", path, exc)
-        key = _path_key(path)
-        if key not in _DAMAGED_PATHS:
-            _DAMAGED_PATHS[key] = artifact
-    if artifact:
-        raise OSError(
+            raise CorruptionWriteError(
+                "Refusing to overwrite a damaged store: quarantine could not be verified"
+            ) from exc
+        _DAMAGED_PATHS[key] = artifact
+    if artifact and not allow_replace_corrupt:
+        raise CorruptionWriteError(
             "Refusing to overwrite a damaged store; its bytes were preserved at "
             + artifact
             + ". Restore it from backup or repair it explicitly."
         )
-    if allow_replace_corrupt:
-        _DAMAGED_PATHS.pop(_path_key(path), None)
     # Encode before allocating a file descriptor: invalid payloads must not
     # leak handles or touch the previous on-disk value.
     serialized = _JSON_ENCODER.encode(data)
@@ -225,6 +291,9 @@ def _write_json_unlocked(
             f.flush()
             os.fsync(f.fileno())
         _atomic_replace(tmp_path, path)
+        if allow_replace_corrupt:
+            _DAMAGED_PATHS.pop(key, None)
+            _DAMAGE_FAILURES.discard(key)
     except Exception:
         try:
             os.unlink(tmp_path)

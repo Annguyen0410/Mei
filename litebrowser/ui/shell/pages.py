@@ -1605,6 +1605,7 @@ class LibraryPage(QWidget):
 
     def refresh(self, query: str | None = None):
         self.page_store_notice.refresh()
+        unavailable = self.page_store_notice.has_unavailable()
         q = query if isinstance(query, str) else self.ed_search.text().strip()
         self.ed_search.setText(q)
         items = []
@@ -1681,11 +1682,20 @@ class LibraryPage(QWidget):
             list_item.setData(Qt.UserRole, item)
             self.list_widget.addItem(list_item)
         if self.list_widget.count() == 0:
-            empty = QListWidgetItem("No items matched this view.\nTry another shelf or a shorter search.")
+            empty = QListWidgetItem(
+                "Library data is unavailable; this is not an empty shelf.\n"
+                "The original files are preserved; open Recovery."
+                if unavailable
+                else "No items matched this view.\nTry another shelf or a shorter search."
+            )
             empty.setFlags(Qt.NoItemFlags)
             empty.setSizeHint(QSize(0, 54))
             self.list_widget.addItem(empty)
-            self.lbl_summary.setText("No items matched this view.")
+            self.lbl_summary.setText(
+                "Library data is unavailable; the original files are preserved."
+                if unavailable
+                else "No items matched this view."
+            )
         else:
             scope = self.library_filter_buttons.get(self._library_filter).text().lower()
             self.lbl_summary.setText(f"{len(items)} {scope} ready to reopen")
@@ -3226,6 +3236,13 @@ class HistoryPage(QWidget):
         hero_layout.addLayout(backup_row)
         layout.addWidget(hero)
 
+        self.page_store_notice = components.PageStoreNotice(
+            self.shell,
+            (),
+            paths=("activity_history.json",),
+        )
+        layout.addWidget(self.page_store_notice)
+
         self.history_stats = {
             "all": components.stat_tile("0", "activity records"),
             "visits": components.stat_tile("0", "browser visits"),
@@ -3262,6 +3279,15 @@ class HistoryPage(QWidget):
         self.btn_clear_activity.clicked.connect(self.clear_activity)
 
     def clear_activity(self):
+        self.page_store_notice.refresh()
+        if self.page_store_notice.has_unavailable():
+            QMessageBox.warning(
+                self,
+                "History",
+                "Activity history is unavailable. Mei preserved the original file; "
+                "restoring or clearing it now would risk data loss.",
+            )
+            return
         if QMessageBox.question(
             self,
             "History",
@@ -3275,9 +3301,13 @@ class HistoryPage(QWidget):
         QMessageBox.information(self, "History", "Cleared %d activity records." % removed)
 
     def refresh(self):
+        self.page_store_notice.refresh()
+        unavailable = self.page_store_notice.has_unavailable()
         kind = self.cmb_kind.currentText()
         query = self.ed_search.text().strip()
         items = history_service.list_activity(self.shell.profile_dir, query=query, kind="" if kind == "all" else kind)
+        if unavailable:
+            items = []
         private_access = security.is_unlocked(self.shell.profile_dir) or bool(getattr(self.shell, "_unlocked_spaces", set()))
         if security.has_passcode(self.shell.profile_dir) and not private_access:
             # Activity descriptions can include note titles and AI answers.
@@ -3294,8 +3324,17 @@ class HistoryPage(QWidget):
             row.setData(Qt.UserRole, item)
             self.list_widget.addItem(row)
         if self.list_widget.count() == 0:
-            self.list_widget.addItem("No activity matched your search.")
-        self.lbl_summary.setText(f"{len(items)} activity records · Backups include your profile and notes.")
+            self.list_widget.addItem(
+                "Activity history is unavailable; this is not an empty history."
+                if unavailable
+                else "No activity matched your search."
+            )
+        self.lbl_summary.setText(
+            "Activity history is unavailable; Mei preserved the original file."
+            if unavailable
+            else f"{len(items)} activity records · Backups include your profile and notes."
+        )
+        self.btn_clear_activity.setEnabled(not unavailable)
         self.chk_zip_include_browser_data.setToolTip("Includes WebEngine cache and site storage. Larger and slower; restart after importing browser state.")
 
     def export_backup(self):

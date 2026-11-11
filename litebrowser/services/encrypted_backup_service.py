@@ -32,6 +32,7 @@ import struct
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 
 from cryptography.exceptions import InvalidTag
@@ -65,6 +66,8 @@ MAX_SCRYPT_R = 16
 MAX_SCRYPT_P = 4
 MAX_ENCRYPTED_BYTES = backup_service.MAX_TOTAL_BYTES + 32 * 1024 * 1024
 _LOCK = threading.Lock()
+PRIVATE_TEMP_DIR_NAME = "MeiSecureTemp"
+STALE_TEMP_SECONDS = 24 * 60 * 60
 
 
 class EncryptedBackupError(OSError):
@@ -86,7 +89,84 @@ def _password_bytes(password: str) -> bytes:
     return data
 
 
+def _strict_int(value) -> int:
+    """Header integers must be actual JSON integers, never coercible strings."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise EncryptedBackupError("Encrypted header parameters are invalid.", status="invalid_header")
+    return value
+
+
+def _strict_hex(value, length: int) -> bytes:
+    if not isinstance(value, str) or len(value) != length * 2:
+        raise EncryptedBackupError("Encrypted header parameters are invalid.", status="invalid_header")
+    try:
+        decoded = bytes.fromhex(value)
+    except ValueError as exc:
+        raise EncryptedBackupError("Encrypted header parameters are invalid.", status="invalid_header") from exc
+    if len(decoded) != length:
+        raise EncryptedBackupError("Encrypted header parameters are invalid.", status="invalid_header")
+    return decoded
+
+
+def _private_temp_root() -> str:
+    """A Mei-owned private directory, not the shared user temp directory."""
+    root = os.path.join(tempfile.gettempdir(), PRIVATE_TEMP_DIR_NAME)
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(root, 0o700)
+    except OSError:
+        pass
+    return root
+
+
+def _private_temp_dir(prefix: str) -> str:
+    path = os.path.join(_private_temp_root(), f"{prefix}{uuid.uuid4().hex}")
+    os.makedirs(path, mode=0o700, exist_ok=False)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+    return path
+
+
+def cleanup_stale_temp(*, now: int | None = None, max_age: int = STALE_TEMP_SECONDS) -> list[str]:
+    """Remove only abandoned Mei-owned plaintext temp files.
+
+    The caller may have crashed before ``finally`` ran.  Every candidate must be
+    directly under the private root, must not be a symlink, and must be older
+    than ``max_age``.  Unrelated files and recent in-flight work are untouched.
+    """
+    root = os.path.realpath(_private_temp_root())
+    cutoff = int(now if now is not None else time.time()) - max(0, int(max_age))
+    removed: list[str] = []
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return removed
+    for name in names:
+        path = os.path.join(root, name)
+        try:
+            if os.path.islink(path) or os.path.realpath(os.path.dirname(path)) != root:
+                continue
+            stat = os.lstat(path)
+            if stat.st_mtime > cutoff:
+                continue
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=False)
+            else:
+                os.unlink(path)
+            removed.append(path)
+        except OSError as exc:
+            _log.warning("could not clean stale encrypted-backup temp %s: %s", path, exc)
+    return removed
+
+
 def _derive_key(password: str, salt: bytes, n: int, r: int, p: int) -> bytes:
+    if (n, r, p) != (SCRYPT_N, SCRYPT_R, SCRYPT_P):
+        raise EncryptedBackupError(
+            "Encrypted backup requested an unsupported KDF configuration.",
+            status="invalid_kdf",
+        )
     data = _password_bytes(password)
     try:
         return Scrypt(salt=salt, length=KEY_BYTES, n=n, r=r, p=p).derive(data)
@@ -121,40 +201,43 @@ def _read_header(path: str) -> tuple[dict, int, bytes]:
         raise EncryptedBackupError(f"Could not read encrypted backup: {exc}", status="unreadable") from exc
     try:
         header = json.loads(raw_header.decode("utf-8"))
-    except (ValueError, UnicodeError) as exc:
+    except (ValueError, UnicodeError, RecursionError) as exc:
         raise EncryptedBackupError("Encrypted header is not valid JSON.", status="invalid_header") from exc
     if not isinstance(header, dict):
         raise EncryptedBackupError("Encrypted header is not an object.", status="invalid_header")
-    if header.get("format_version") != FORMAT_VERSION:
+    if _strict_int(header.get("format_version")) != FORMAT_VERSION:
         raise EncryptedBackupError("Unsupported encrypted backup format.", status="incompatible")
     if header.get("cipher") != CIPHER or header.get("kdf") != KDF:
         raise EncryptedBackupError("Unsupported encrypted backup algorithm.", status="incompatible")
-    try:
-        n = int(header.get("n"))
-        r = int(header.get("r"))
-        p = int(header.get("p"))
-        salt = bytes.fromhex(str(header.get("salt") or ""))
-        nonce = bytes.fromhex(str(header.get("nonce") or ""))
-        inner_size = int(header.get("inner_size"))
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise EncryptedBackupError("Encrypted header parameters are invalid.", status="invalid_header") from exc
+    n = _strict_int(header.get("n"))
+    r = _strict_int(header.get("r"))
+    p = _strict_int(header.get("p"))
+    _salt = _strict_hex(header.get("salt"), SALT_BYTES)
+    _nonce = _strict_hex(header.get("nonce"), NONCE_BYTES)
+    inner_size = _strict_int(header.get("inner_size"))
+    created_at = _strict_int(header.get("created_at"))
+    inner_sha = header.get("inner_sha256")
+    if not isinstance(inner_sha, str) or len(inner_sha) != 64:
+        raise EncryptedBackupError("Encrypted header checksum is invalid.", status="invalid_header")
+    if (n, r, p) != (SCRYPT_N, SCRYPT_R, SCRYPT_P):
+        # Version 1 has exactly one approved KDF configuration.  Reject before
+        # calling scrypt so a hostile header cannot request unbounded work.
+        raise EncryptedBackupError(
+            "Encrypted header requests an unsupported KDF configuration.",
+            status="invalid_kdf",
+        )
     if (
-        n < MIN_SCRYPT_N
-        or n > MAX_SCRYPT_N
-        or n & (n - 1)
-        or r < 1
-        or r > MAX_SCRYPT_R
-        or p < 1
-        or p > MAX_SCRYPT_P
-        or len(salt) != SALT_BYTES
-        or len(nonce) != NONCE_BYTES
+        created_at < 0
         or inner_size < 0
         or inner_size > backup_service.MAX_TOTAL_BYTES + backup_service.MAX_FILE_BYTES
     ):
         raise EncryptedBackupError("Encrypted header parameters are outside safe limits.", status="invalid_header")
     offset = len(MAGIC) + 4 + header_len
-    if size - offset <= TAG_BYTES:
+    ciphertext_size = size - offset - TAG_BYTES
+    if ciphertext_size <= 0:
         raise EncryptedBackupError("Encrypted payload is truncated.", status="truncated")
+    if ciphertext_size != inner_size:
+        raise EncryptedBackupError("Encrypted payload length does not match its header.", status="invalid_header")
     aad = MAGIC + struct.pack(">I", header_len) + raw_header
     return header, offset, aad
 
@@ -288,7 +371,11 @@ def decrypt_to_temp(path: str, password: str) -> tuple[str, dict]:
     ciphertext_size = size - offset - TAG_BYTES
     if ciphertext_size <= 0:
         raise EncryptedBackupError("Encrypted payload is truncated.", status="truncated")
-    fd, plain_path = tempfile.mkstemp(prefix="mei-decrypt-", suffix=".zip")
+    fd, plain_path = tempfile_mkstemp_same_dir(_private_temp_root(), "decrypted.zip")
+    try:
+        os.chmod(plain_path, 0o600)
+    except OSError:
+        pass
     try:
         digest = hashlib.sha256()
         with open(path, "rb") as source, os.fdopen(fd, "wb") as target:
@@ -414,7 +501,7 @@ def create_encrypted_backup(
         )
     if not _LOCK.acquire(blocking=False):
         return backup_service.BackupResult(ok=False, error="Another encrypted backup is already in progress.")
-    temporary_dir = tempfile.mkdtemp(prefix="mei-encrypt-")
+    temporary_dir = _private_temp_dir("encrypt-")
     try:
         policy = backup_service.load_policy(base_dir)
         target_dir = os.path.abspath(destination or policy.destination)
@@ -470,6 +557,7 @@ __all__ = [
     "MAGIC",
     "MIN_PASSWORD_CHARS",
     "create_encrypted_backup",
+    "cleanup_stale_temp",
     "decrypt_to_temp",
     "inspect",
     "is_encrypted",

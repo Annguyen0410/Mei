@@ -253,23 +253,35 @@ class DataManagementDialog(QDialog):
         password = self._password_for_backup(path)
         if password is None:
             return
-        if path.endswith(backup_service.ENCRYPTED_EXTENSION):
-            checked = encrypted_backup_service.verify_encrypted(path, password)
-        else:
-            checked = backup_service.verify_backup(path)
-        if checked["ok"]:
-            QMessageBox.information(self, "Backup", "Manifest, paths, sizes and checksums are valid.")
-        else:
-            QMessageBox.warning(self, "Backup", "\n".join(checked["errors"]) or "Backup is invalid.")
+        self.btn_verify_backup.setEnabled(False)
+
+        def check():
+            if path.endswith(backup_service.ENCRYPTED_EXTENSION):
+                return encrypted_backup_service.verify_encrypted(path, password)
+            return backup_service.verify_backup(path)
+
+        def done(checked):
+            self.btn_verify_backup.setEnabled(True)
+            if checked["ok"]:
+                QMessageBox.information(self, "Backup", "Manifest, paths, sizes and checksums are valid.")
+            else:
+                QMessageBox.warning(self, "Backup", "\n".join(checked["errors"]) or "Backup is invalid.")
+
+        self._run(check, done)
 
     def apply_retention(self):
-        deleted = backup_service.apply_retention(self.policy.destination, self.policy)
-        QMessageBox.information(
-            self,
-            "Retention",
-            f"Removed {len(deleted)} old verified backup(s); the newest verified backup was kept.",
-        )
-        self.refresh_backups()
+        self.btn_retention.setEnabled(False)
+
+        def done(deleted):
+            self.btn_retention.setEnabled(True)
+            QMessageBox.information(
+                self,
+                "Retention",
+                f"Removed {len(deleted)} old verified backup(s); the newest verified backup was kept.",
+            )
+            self.refresh_backups()
+
+        self._run(lambda: backup_service.apply_retention(self.policy.destination, self.policy), done)
 
     def change_destination(self):
         chosen = QFileDialog.getExistingDirectory(self, "Backup destination", self.policy.destination)
@@ -317,11 +329,24 @@ class DataManagementDialog(QDialog):
         layout.addLayout(row)
         self.btn_preview.clicked.connect(self.preview_restore)
         self.btn_restore.clicked.connect(self.do_restore)
+        for box in self.category_boxes:
+            box.toggled.connect(self._sync_restore_controls)
+        self._sync_restore_controls()
         self.tabs.addTab(tab, "Restore Center")
 
     def _restore_categories(self):
-        selected = [box.text().replace(" ", "_") for box in self.category_boxes if box.isChecked()]
-        return selected or None
+        # A deliberate empty list is never converted to None (all categories).
+        return [box.text().replace(" ", "_") for box in self.category_boxes if box.isChecked()]
+
+    def _sync_restore_controls(self, *_args):
+        selected = bool(self._restore_categories())
+        self.btn_preview.setEnabled(selected)
+        self.btn_restore.setEnabled(selected)
+        self.btn_restore.setToolTip(
+            "Restore only the checked categories."
+            if selected
+            else "Select at least one category first."
+        )
 
     def _selected_restore_backup(self) -> str:
         item = self.list_restore.currentItem()
@@ -340,6 +365,9 @@ class DataManagementDialog(QDialog):
             self.list_restore.addItem(item)
 
     def preview_restore(self):
+        if not self._restore_categories():
+            QMessageBox.warning(self, "Restore", "Select at least one category.")
+            return
         path = self._selected_restore_backup()
         if not path:
             QMessageBox.information(self, "Restore", "Select a verified backup first.")
@@ -347,9 +375,21 @@ class DataManagementDialog(QDialog):
         password = self._password_for_backup(path)
         if password is None:
             return
-        plan = restore_service.preview(
-            self.base_dir, path, categories=self._restore_categories(), password=password
+        self.btn_preview.setEnabled(False)
+        categories = self._restore_categories()
+
+        def show(plan):
+            self._show_restore_plan(plan)
+
+        self._run(
+            lambda: restore_service.preview(
+                self.base_dir, path, categories=categories, password=password
+            ),
+            show,
         )
+
+    def _show_restore_plan(self, plan):
+        self._sync_restore_controls()
         if not plan.get("ok"):
             QMessageBox.warning(self, "Restore", plan.get("error", "Invalid backup."))
             return
@@ -373,8 +413,21 @@ class DataManagementDialog(QDialog):
             QMessageBox.information(self, "Restore", "Select a verified backup first.")
             return
         categories = self._restore_categories()
+        if not categories:
+            QMessageBox.warning(self, "Restore", "Select at least one category.")
+            return
         password = self._password_for_backup(path)
         if password is None:
+            return
+        encrypted = path.endswith(backup_service.ENCRYPTED_EXTENSION)
+        if encrypted and QMessageBox.Yes != QMessageBox.question(
+            self,
+            "Encrypted restore",
+            "This restore will create an encrypted pre-restore snapshot with the "
+            "same password. It will not create a plaintext backup. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        ):
             return
         if QMessageBox.Yes != QMessageBox.question(
             self,
@@ -400,7 +453,13 @@ class DataManagementDialog(QDialog):
 
         self._run(
             lambda: restore_service.restore(
-                self.base_dir, path, categories=categories, confirm=True, password=password
+                self.base_dir,
+                path,
+                categories=categories,
+                confirm=True,
+                password=password,
+                pre_restore_encrypted=encrypted,
+                pre_restore_password=password if encrypted else None,
             ),
             done,
         )
@@ -764,7 +823,7 @@ class DataManagementDialog(QDialog):
                     f"- {entry.get('store')}: {entry.get('state')} "
                     f"({entry.get('error') or 'needs review'})"
                 )
-        if inspection["restore_state"] not in ("", "COMMITTED", "FAILED"):
+        if inspection["restore_state"] not in ("", "COMMITTED", "ROLLED_BACK", "FAILED"):
             lines.append(
                 "\nAn interrupted restore needs review. The pre-restore backup and rollback "
                 "copies are preserved; it is never replayed automatically."

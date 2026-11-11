@@ -88,7 +88,12 @@ def _restore_needs_review(base_dir: str) -> bool:
     result = storage_health.read_json_checked(restore_service.journal_path(base_dir), dict)
     if not result.ok:
         return result.status != "missing"
-    return str(result.value.get("state") or "") not in ("", "COMMITTED", "FAILED")
+    return str(result.value.get("state") or "") not in (
+        "",
+        "COMMITTED",
+        "ROLLED_BACK",
+        "FAILED",
+    )
 
 
 def _migration_needs_review(base_dir: str) -> bool:

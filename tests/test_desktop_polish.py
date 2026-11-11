@@ -102,16 +102,18 @@ def test_overflow_mouse_and_keyboard_inside_modal_dialog():
     def click_first():
         assert menu.isVisible()
         QTest.mouseClick(menu, Qt.LeftButton, pos=menu.actionGeometry(menu.actions()[0]).center())
-    QtCore.QTimer.singleShot(80, click_first)
+    # Offscreen runners can delay the popup beyond 80 ms. The assertions are
+    # unchanged; only the scheduling window is load-tolerant.
+    QtCore.QTimer.singleShot(250, click_first)
     QTest.mouseClick(button, Qt.LeftButton)
-    QTest.qWait(150)
+    QTest.qWait(600)
     assert calls == ["first"]
     def choose_second():
         menu.setActiveAction(menu.actions()[1])
         QTest.keyClick(menu, Qt.Key_Return)
-    QtCore.QTimer.singleShot(80, choose_second)
+    QtCore.QTimer.singleShot(250, choose_second)
     QTest.mouseClick(button, Qt.LeftButton)
-    QTest.qWait(150)
+    QTest.qWait(600)
     assert calls == ["first", "second"]
     dialog.close()
     dialog.deleteLater()

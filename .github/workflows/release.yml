@@ -90,7 +90,8 @@ jobs:
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP "mei-signing.pfx"
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:MEI_SIGNING_PFX_BASE64))
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kitsin\*d\signtool.exe" |
+          $kits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+          $signtool = Get-ChildItem -Path $kits -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) { throw "signtool.exe not found; cannot sign the release" }
           & $signtool.FullName sign /fd SHA256 /td SHA256 /tr "$env:MEI_TIMESTAMP_URL" `
@@ -107,6 +108,19 @@ jobs:
           $signed = $null -ne (Get-AuthenticodeSignature "dist/Mei.exe").SignerCertificate
           if ($signed) { $state = "signed" } else { $state = "UNSIGNED (no signing certificate configured)" }
           "Authenticode status: $state" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      # A stable release must never be published unsigned. Pre-releases may be
+      # unsigned so maintainers can test the pipeline without a certificate;
+      # ordinary releases are blocked before the publish step instead.
+      - name: Require Authenticode for stable release
+        if: ${{ !contains(github.ref_name, '-') }}
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature "dist/Mei.exe"
+          if (-not $sig.SignerCertificate) { throw "Stable release has no Authenticode signer" }
+          if ($sig.Status -ne "Valid") { throw "Authenticode signature is not valid: $($sig.Status)" }
+          if (-not $sig.TimeStamperCertificate) { throw "Stable release is not timestamped" }
+          "Authenticode: stable signing verified" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Record packaged artifact hash
         shell: pwsh
@@ -141,6 +155,8 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MEI_UPDATE_KEY_ID: ${{ secrets.MEI_UPDATE_KEY_ID }}
+          MEI_UPDATE_SIGNING_KEY: ${{ secrets.MEI_UPDATE_SIGNING_KEY }}
         run: |
           $releaseArgs = @(
             "tools/publish_release.py",

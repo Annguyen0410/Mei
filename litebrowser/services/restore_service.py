@@ -1,16 +1,19 @@
-"""Staged profile restore with a pre-restore snapshot and rollback.
+"""Staged profile restore with a durable, crash-recoverable transaction.
 
 Restore is a filesystem operation across several stores, so it is not one atomic
-transaction.  The journal records the intended files and the rollback copies
-before anything is replaced.  On failure the previous bytes are written back;
-if rollback itself cannot complete, the result says ``RECOVERY_REQUIRED``
-instead of pretending the profile is intact.
+transaction.  The journal records every target, its original hash, the staged
+hash and a verified rollback copy *before* anything is replaced.  Recovery on
+the next startup compares the live bytes with those hashes: an unambiguously
+complete transaction is committed, an unambiguously untouched or partially
+applied transaction is rolled back from verified originals, and anything else
+is left in ``RECOVERY_REQUIRED`` without deleting evidence.
 
 Credentials are never in a backup (``backup_service`` excludes them), so a
 restore cannot roll back a newly signed-in secret to an older value.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -30,10 +33,12 @@ _log = get_logger("restore_service")
 
 JOURNAL_RELPATH = os.path.join("Recovery", "restore_journal.json")
 STAGING_RELPATH = os.path.join("Recovery", "restore_staging")
+JOURNAL_VERSION = 2
 MAX_MEMBER_BYTES = backup_service.MAX_FILE_BYTES
 MAX_TOTAL_BYTES = backup_service.MAX_TOTAL_BYTES
 NOTES_PREFIX = "SafeVault/notes/"
 ALL_GROUPS = tuple(sorted(set(RESTORE_GROUPS) | {"notes"}))
+RESOLVED_STATES = frozenset({"COMMITTED", "ROLLED_BACK", "FAILED"})
 
 
 class RestoreError(OSError):
@@ -50,6 +55,7 @@ class RestoreResult:
     pre_restore_backup: str = ""
     journal_path: str = ""
     rollback: str = ""
+    pre_restore_protection: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -61,11 +67,31 @@ class RestoreResult:
             "pre_restore_backup": self.pre_restore_backup,
             "journal_path": self.journal_path,
             "rollback": self.rollback,
+            "pre_restore_protection": self.pre_restore_protection,
         }
 
 
 def journal_path(base_dir: str) -> str:
     return os.path.join(base_dir, JOURNAL_RELPATH)
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _sha256_file(path: str) -> str:
+    """Stream a file hash; missing and unreadable files have no hash."""
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            while True:
+                block = handle.read(1024 * 1024)
+                if not block:
+                    break
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError:
+        return ""
 
 
 def _write_bytes_atomic(path: str, data: bytes) -> None:
@@ -94,15 +120,29 @@ def _row_group(path: str, category: str) -> str:
 
 
 def _selected(categories) -> set[str] | None:
+    """Resolve restore categories without collapsing empty into "all".
+
+    ``None`` is the one explicit all-categories value.  An empty list/tuple/set
+    is an invalid selection and is rejected by the service, independently of
+    the UI.  Duplicate categories are normalised, unknown categories fail.
+    """
     if categories is None:
         return None
     if isinstance(categories, str):
         categories = [categories]
-    result = {str(item) for item in categories if str(item).strip()}
+    if not isinstance(categories, (list, tuple, set, frozenset)):
+        raise RestoreError("Restore categories must be a list, tuple, set or None.")
+    result = {
+        str(item).strip()
+        for item in categories
+        if isinstance(item, str) and str(item).strip()
+    }
+    if not result:
+        raise RestoreError("No restore categories were selected; nothing was restored.")
     unknown = result - set(ALL_GROUPS)
     if unknown:
         raise RestoreError("Unknown restore category: " + ", ".join(sorted(unknown)))
-    return result or None
+    return result
 
 
 def _record_count(path: str, payload) -> int | None:
@@ -200,7 +240,12 @@ def _preview_plain(base_dir: str, backup_path: str, *, categories=None) -> dict:
                 expected = integrity_service.EXPECTED_VERSIONS.get(path)
             if expected and isinstance(payload, dict):
                 try:
-                    version = int(payload.get("schema_version" if path == "prefs.json" else "version", 1) or 1)
+                    version = int(
+                        payload.get(
+                            "schema_version" if path == "prefs.json" else "version", 1
+                        )
+                        or 1
+                    )
                     if version > expected:
                         warnings.append(
                             f"{path} uses schema {version}; this build supports {expected}"
@@ -225,8 +270,11 @@ def preview(base_dir: str, backup_path: str, *, categories=None, password: str |
     """Preview a plain or encrypted backup without modifying the profile."""
     from litebrowser.services import encrypted_backup_service
 
-    if not encrypted_backup_service.is_encrypted(backup_path):
-        return _preview_plain(base_dir, backup_path, categories=categories)
+    try:
+        if not encrypted_backup_service.is_encrypted(backup_path):
+            return _preview_plain(base_dir, backup_path, categories=categories)
+    except RestoreError as exc:
+        return {"ok": False, "status": "invalid_selection", "error": str(exc), "files": []}
     if not password:
         return {
             "ok": False,
@@ -240,6 +288,8 @@ def preview(base_dir: str, backup_path: str, *, categories=None, password: str |
         plan["backup"] = backup_path
         plan["encrypted"] = True
         return plan
+    except RestoreError as exc:
+        return {"ok": False, "status": "invalid_selection", "error": str(exc), "files": []}
     except encrypted_backup_service.EncryptedBackupError as exc:
         return {
             "ok": False,
@@ -253,9 +303,13 @@ def _extract_selected(backup_path: str, staging: str, files: list[dict]) -> dict
     extracted: dict[str, str] = {}
     total = 0
     with zipfile.ZipFile(backup_path, "r") as archive:
+        total_written = 0
         for row in files:
             arcname = str(row["path"])
-            member = archive.getinfo(arcname)
+            try:
+                member = archive.getinfo(arcname)
+            except KeyError as exc:
+                raise RestoreError(f"Backup does not contain {arcname}.") from exc
             if member.file_size > MAX_MEMBER_BYTES:
                 raise RestoreError(f"Backup member is too large: {arcname}")
             total += member.file_size
@@ -266,7 +320,23 @@ def _extract_selected(backup_path: str, staging: str, files: list[dict]) -> dict
                 raise RestoreError(f"Unsafe restore path: {arcname}")
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with archive.open(member) as source, open(target, "wb") as handle:
-                shutil.copyfileobj(source, handle, 1024 * 1024)
+                while True:
+                    block = source.read(1024 * 1024)
+                    if not block:
+                        break
+                    total_written += len(block)
+                    if total_written > MAX_MEMBER_BYTES or total_written > MAX_TOTAL_BYTES:
+                        raise RestoreError(f"Backup member expands beyond the limit: {arcname}")
+                    handle.write(block)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.chmod(target, 0o600)
+            except OSError:
+                pass
+            expected = str(row.get("sha256") or "")
+            if expected and _sha256_file(target) != expected:
+                raise RestoreError(f"Backup content changed or is corrupt: {arcname}")
             extracted[arcname] = target
     return extracted
 
@@ -288,10 +358,18 @@ def _validate_payload(path: str, data: bytes) -> None:
     expected = None
     if path == "prefs.json":
         expected = app_paths.APP_SCHEMA_VERSION
-        version = int(payload.get("schema_version", app_paths.APP_SCHEMA_VERSION) or 0) if isinstance(payload, dict) else 0
+        version = (
+            int(payload.get("schema_version", app_paths.APP_SCHEMA_VERSION) or 0)
+            if isinstance(payload, dict)
+            else 0
+        )
     elif path == "profile_meta.json":
         expected = app_paths.APP_SCHEMA_VERSION
-        version = int(payload.get("schema_version", app_paths.APP_SCHEMA_VERSION) or 0) if isinstance(payload, dict) else 0
+        version = (
+            int(payload.get("schema_version", app_paths.APP_SCHEMA_VERSION) or 0)
+            if isinstance(payload, dict)
+            else 0
+        )
     else:
         from litebrowser.services import integrity_service
 
@@ -333,8 +411,227 @@ def _prepare_restore_data(base_dir: str, path: str, data: bytes) -> bytes:
 
 def _journal(base_dir: str, data: dict) -> str:
     path = journal_path(base_dir)
+    data["updated_at"] = int(time.time())
     write_json(path, data)
     return path
+
+
+def _create_pre_restore(
+    base_dir: str,
+    *,
+    now: int | None,
+    encrypted: bool,
+    password: str | None,
+    allow_plaintext: bool,
+) -> tuple[backup_service.BackupResult, str]:
+    """Create the pre-restore protection without silently downgrading it."""
+    from litebrowser.services import encrypted_backup_service
+
+    if encrypted:
+        if not password:
+            return (
+                backup_service.BackupResult(
+                    ok=False,
+                    error="An encrypted pre-restore backup needs the backup password; restore was blocked.",
+                ),
+                "encrypted",
+            )
+        result = encrypted_backup_service.create_encrypted_backup(
+            base_dir, password, kind="pre-restore", now=now
+        )
+        return result, "encrypted"
+    if not allow_plaintext:
+        return (
+            backup_service.BackupResult(
+                ok=False,
+                error="An encrypted source cannot create a plaintext pre-restore snapshot. "
+                "Use the encrypted pre-restore option or explicitly allow the downgrade.",
+            ),
+            "plaintext",
+        )
+    return backup_service.create_backup(base_dir, kind="pre-restore", now=now), "plaintext"
+
+
+def _entries_from_journal(journal: dict) -> list[dict]:
+    values = journal.get("files")
+    return [dict(row) for row in values] if isinstance(values, list) else []
+
+
+def _safe_target(base_dir: str, entry: dict) -> str:
+    path = entry.get("path")
+    target = safe_child_path(base_dir, str(path or ""))
+    if not target:
+        raise RestoreError(f"Unsafe restore target in journal: {path!r}")
+    return target
+
+
+def _safe_staged(staging: str, entry: dict) -> str:
+    path = entry.get("staged")
+    target = safe_child_path(staging, str(path or ""))
+    if not target:
+        raise RestoreError(f"Unsafe staged path in journal: {path!r}")
+    return target
+
+
+def _safe_rollback(staging: str, entry: dict) -> str:
+    path = entry.get("rollback")
+    target = safe_child_path(staging, str(path or ""))
+    if not target:
+        raise RestoreError(f"Unsafe rollback path in journal: {path!r}")
+    return target
+
+
+def _rollback_entries(base_dir: str, journal: dict) -> list[str]:
+    """Restore each target from its verified rollback copy.
+
+    A target whose bytes match neither the recorded original nor the recorded
+    staged version is left untouched: another writer may have produced it, and
+    guessing would destroy data.  The caller then enters RECOVERY_REQUIRED.
+    """
+    operation_id = str(journal.get("operation_id") or "")
+    if not operation_id:
+        return ["journal has no operation id"]
+    staging = os.path.join(base_dir, STAGING_RELPATH, operation_id)
+    errors: list[str] = []
+    for entry in reversed(_entries_from_journal(journal)):
+        try:
+            target = _safe_target(base_dir, entry)
+            original_exists = bool(entry.get("original_exists"))
+            original_sha = str(entry.get("original_sha") or "")
+            staged_sha = str(entry.get("staged_sha") or "")
+            current_sha = _sha256_file(target) if os.path.isfile(target) else ""
+            if original_exists:
+                if current_sha == original_sha:
+                    continue
+                rollback = _safe_rollback(staging, entry)
+                if not os.path.isfile(rollback):
+                    errors.append(f"rollback copy is missing for {entry.get('path')}")
+                    continue
+                if _sha256_file(rollback) != original_sha:
+                    errors.append(f"rollback copy is corrupt for {entry.get('path')}")
+                    continue
+                with open(rollback, "rb") as handle:
+                    data = handle.read()
+                _write_bytes_atomic(target, data)
+                if _sha256_file(target) != original_sha:
+                    errors.append(f"rollback verification failed for {entry.get('path')}")
+            else:
+                if not current_sha:
+                    continue
+                if current_sha != staged_sha:
+                    errors.append(
+                        f"refusing to delete changed target {entry.get('path')} during rollback"
+                    )
+                    continue
+                os.remove(target)
+                if os.path.exists(target):
+                    errors.append(f"could not remove restored file {entry.get('path')}")
+        except Exception as exc:  # each file is independent; report, never guess
+            errors.append(f"{entry.get('path')}: {exc}")
+    return errors
+
+
+def recover_interrupted(base_dir: str, *, now: int | None = None) -> dict:
+    """Deterministically finish or roll back an interrupted restore.
+
+    Only an unambiguously complete transaction is committed.  If every target
+    already equals its staged hash and the pre-restore snapshot exists, the
+    commit is safe.  If every target is untouched, the journal is closed without
+    touching data.  A partial transaction is rolled back from verified copies;
+    anything else is preserved as RECOVERY_REQUIRED.
+    """
+    _ = now
+    journal_file = journal_path(base_dir)
+    checked = storage_health.read_json_checked(journal_file, dict)
+    if not checked.ok:
+        return {
+            "status": "none" if checked.status == "missing" else "unreadable",
+            "journal_path": journal_file,
+            "detail": getattr(checked, "detail", "") or "journal is not readable",
+        }
+    journal = dict(checked.value)
+    if journal.get("version") != JOURNAL_VERSION:
+        return {
+            "status": "recovery_required",
+            "journal_path": journal_file,
+            "detail": "legacy restore journal cannot be replayed safely",
+        }
+    state = str(journal.get("state") or "")
+    if state in RESOLVED_STATES:
+        return {"status": state.lower(), "journal_path": journal_file, "detail": ""}
+    entries = _entries_from_journal(journal)
+    try:
+        with profile_locked(base_dir):
+            if not entries:
+                journal["state"] = "FAILED"
+                journal["finished_at"] = int(time.time())
+                journal["rollback"] = "not_started"
+                _journal(base_dir, journal)
+                return {"status": "failed", "journal_path": journal_file, "detail": "no files"}
+            statuses = []
+            for entry in entries:
+                target = _safe_target(base_dir, entry)
+                current = _sha256_file(target) if os.path.isfile(target) else ""
+                original_exists = bool(entry.get("original_exists"))
+                original_sha = str(entry.get("original_sha") or "")
+                staged_sha = str(entry.get("staged_sha") or "")
+                if original_exists:
+                    if current == original_sha:
+                        statuses.append("original")
+                    elif current == staged_sha:
+                        statuses.append("staged")
+                    else:
+                        statuses.append("unknown")
+                else:
+                    if not current:
+                        statuses.append("original")
+                    elif current == staged_sha:
+                        statuses.append("staged")
+                    else:
+                        statuses.append("unknown")
+            pre = str(journal.get("pre_restore_backup") or "")
+            all_staged = all(value == "staged" for value in statuses)
+            all_original = all(value == "original" for value in statuses)
+            if state in ("APPLYING", "PARTIALLY_APPLIED", "VERIFYING") and all_staged:
+                if not pre or not os.path.isfile(pre):
+                    raise RestoreError("pre-restore snapshot is missing; refusing to commit")
+                journal["state"] = "COMMITTED"
+                journal["finished_at"] = int(time.time())
+                journal["commit_recovered"] = True
+                _journal(base_dir, journal)
+                return {"status": "committed", "journal_path": journal_file, "detail": ""}
+            if all_original:
+                journal["state"] = "ROLLED_BACK"
+                journal["finished_at"] = int(time.time())
+                journal["rollback"] = "complete"
+                _journal(base_dir, journal)
+                return {"status": "rolled_back", "journal_path": journal_file, "detail": ""}
+            journal["state"] = "ROLLING_BACK"
+            _journal(base_dir, journal)
+            errors = _rollback_entries(base_dir, journal)
+            journal["state"] = "ROLLED_BACK" if not errors else "RECOVERY_REQUIRED"
+            journal["finished_at"] = int(time.time())
+            journal["rollback"] = "complete" if not errors else "failed: " + "; ".join(errors)[:2000]
+            journal["error"] = "; ".join(errors)[:2000]
+            _journal(base_dir, journal)
+            return {
+                "status": journal["state"].lower(),
+                "journal_path": journal_file,
+                "detail": journal["rollback"],
+            }
+    except Exception as exc:
+        _log.warning("restore recovery failed: %s", exc)
+        try:
+            journal["state"] = "RECOVERY_REQUIRED"
+            journal["error"] = str(exc)[:2000]
+            _journal(base_dir, journal)
+        except Exception:
+            pass
+        return {
+            "status": "recovery_required",
+            "journal_path": journal_file,
+            "detail": str(exc),
+        }
 
 
 def _restore_plain(
@@ -345,87 +642,175 @@ def _restore_plain(
     confirm: bool = False,
     now: int | None = None,
     journal_backup: str | None = None,
+    pre_restore_encrypted: bool = False,
+    pre_restore_password: str | None = None,
+    allow_plaintext_pre_restore: bool = False,
 ) -> RestoreResult:
-    """Restore selected categories, preserving the pre-restore state."""
+    """Restore selected categories with durable per-file rollback artifacts."""
     if not confirm:
         raise RestoreError("Restore requires explicit confirmation.")
-    selected = _selected(categories)
-    plan = _preview_plain(base_dir, backup_path, categories=selected)
-    if not plan["ok"]:
-        return RestoreResult(ok=False, status="rejected", error=plan.get("error", "invalid backup"))
-    rows = [row for row in plan["files"] if row.get("changed")]
-    if not rows:
-        return RestoreResult(ok=False, status="unchanged", error="Nothing in this backup differs from the profile.")
-
-    pre = backup_service.create_backup(base_dir, kind="pre-restore", now=now)
-    if not pre.ok:
-        return RestoreResult(
-            ok=False,
-            status="blocked",
-            error=f"Could not create the pre-restore snapshot: {pre.error}",
-        )
-
+    try:
+        selected = _selected(categories)
+    except RestoreError as exc:
+        return RestoreResult(ok=False, status="invalid_selection", error=str(exc))
+    backup_source = os.path.abspath(journal_backup or backup_path)
+    backup_sha = _sha256_file(backup_source)
+    if not backup_sha:
+        return RestoreResult(ok=False, status="rejected", error="The backup could not be read.")
     operation_id = uuid.uuid4().hex
     staging = os.path.join(base_dir, STAGING_RELPATH, operation_id)
-    rollback_dir = os.path.join(staging, "rollback")
-    os.makedirs(rollback_dir, exist_ok=True)
     journal = {
         "kind": "mei.restore_journal",
-        "version": 1,
+        "version": JOURNAL_VERSION,
         "operation_id": operation_id,
-        "backup": os.path.abspath(journal_backup or backup_path),
-        "pre_restore_backup": pre.path,
-        "started_at": int(now or time.time()),
+        "backup": backup_source,
+        "backup_sha256": backup_sha,
+        "selected": sorted(selected) if selected is not None else list(ALL_GROUPS),
+        "pre_restore_backup": "",
+        "pre_restore_protection": "encrypted" if pre_restore_encrypted else "plaintext",
+        "started_at": int(now if now is not None else time.time()),
         "finished_at": 0,
         "state": "PREPARING",
         "files": [],
         "error": "",
         "rollback": "",
     }
-    journal_file = _journal(base_dir, journal)
-    originals: dict[str, bytes | None] = {}
-    written: list[str] = []
+    journal_file = ""
     try:
         with profile_locked(base_dir):
-            extracted = _extract_selected(backup_path, staging, rows)
-            for row in rows:
-                arcname = str(row["path"])
-                with open(extracted[arcname], "rb") as handle:
-                    data = handle.read()
-                _validate_payload(arcname, data)
-                data = _prepare_restore_data(base_dir, arcname, data)
-                with open(extracted[arcname], "wb") as handle:
-                    handle.write(data)
-            journal["state"] = "APPLYING"
-            journal["files"] = [row["path"] for row in rows]
+            plan = _preview_plain(base_dir, backup_path, categories=selected)
+            if not plan["ok"]:
+                return RestoreResult(
+                    ok=False, status="rejected", error=plan.get("error", "invalid backup")
+                )
+            if _sha256_file(backup_source) != backup_sha:
+                return RestoreResult(
+                    ok=False,
+                    status="rejected",
+                    error="The backup changed after it was selected; nothing was restored.",
+                )
+            rows = [row for row in plan["files"] if row.get("changed")]
+            if not rows:
+                return RestoreResult(
+                    ok=False,
+                    status="unchanged",
+                    error="Nothing in this backup differs from the profile.",
+                )
+            journal_file = _journal(base_dir, journal)
+            pre, protection = _create_pre_restore(
+                base_dir,
+                now=now,
+                encrypted=pre_restore_encrypted,
+                password=pre_restore_password,
+                allow_plaintext=allow_plaintext_pre_restore,
+            )
+            if not pre.ok:
+                journal["state"] = "FAILED"
+                journal["finished_at"] = int(time.time())
+                journal["error"] = pre.error or "pre-restore snapshot failed"
+                journal["rollback"] = "not_started"
+                _journal(base_dir, journal)
+                return RestoreResult(
+                    ok=False,
+                    status="blocked",
+                    error=f"Could not create the pre-restore snapshot: {pre.error}",
+                    journal_path=journal_file,
+                    pre_restore_protection=protection,
+                )
+            journal["pre_restore_backup"] = pre.path
+            journal["pre_restore_protection"] = protection
+            journal["state"] = "SNAPSHOT_CREATED"
             _journal(base_dir, journal)
+            staged_root = os.path.join(staging, "staged")
+            rollback_root = os.path.join(staging, "rollback")
+            os.makedirs(staged_root, mode=0o700, exist_ok=True)
+            os.makedirs(rollback_root, mode=0o700, exist_ok=True)
+            try:
+                os.chmod(staging, 0o700)
+            except OSError:
+                pass
+            extracted = _extract_selected(backup_path, staged_root, rows)
+            entries: list[dict] = []
             for row in rows:
                 arcname = str(row["path"])
                 target = safe_child_path(base_dir, arcname)
                 if not target:
                     raise RestoreError(f"Unsafe restore path: {arcname}")
-                original = None
-                if os.path.isfile(target):
-                    with open(target, "rb") as handle:
-                        original = handle.read()
-                originals[target] = original
-                if original is not None:
-                    copy_path = safe_child_path(rollback_dir, arcname)
-                    if not copy_path:
-                        raise RestoreError("Could not stage a rollback copy.")
-                    os.makedirs(os.path.dirname(copy_path), exist_ok=True)
-                    _write_bytes_atomic(copy_path, original)
                 with open(extracted[arcname], "rb") as handle:
                     data = handle.read()
-                _write_bytes_atomic(target, data)
-                written.append(target)
-            for row in rows:
-                if str(row["path"]).endswith(".json"):
-                    target = safe_child_path(base_dir, str(row["path"]))
+                _validate_payload(arcname, data)
+                data = _prepare_restore_data(base_dir, arcname, data)
+                staged_path = extracted[arcname]
+                _write_bytes_atomic(staged_path, data)
+                staged_sha = _sha256_file(staged_path)
+                if not staged_sha:
+                    raise RestoreError(f"Could not hash staged file {arcname}")
+                original_exists = os.path.isfile(target)
+                original_sha = _sha256_file(target) if original_exists else ""
+                rollback_rel = ""
+                if original_exists:
+                    rollback_path = safe_child_path(rollback_root, arcname)
+                    if not rollback_path:
+                        raise RestoreError("Could not stage a rollback copy.")
                     with open(target, "rb") as handle:
-                        _validate_payload(str(row["path"]), handle.read())
+                        original = handle.read()
+                    _write_bytes_atomic(rollback_path, original)
+                    if _sha256_file(rollback_path) != original_sha:
+                        raise RestoreError(f"Rollback copy verification failed for {arcname}")
+                    rollback_rel = "rollback/" + arcname.replace("\\", "/")
+                entries.append(
+                    {
+                        "path": arcname,
+                        "staged": "staged/" + arcname.replace("\\", "/"),
+                        "rollback": rollback_rel,
+                        "original_exists": original_exists,
+                        "original_sha": original_sha,
+                        "staged_sha": staged_sha,
+                        "status": "STAGED",
+                    }
+                )
+            journal["files"] = entries
+            journal["state"] = "STAGED"
+            _journal(base_dir, journal)
+            journal["state"] = "APPLYING"
+            _journal(base_dir, journal)
+            for entry in entries:
+                target = _safe_target(base_dir, entry)
+                original_exists = bool(entry["original_exists"])
+                original_sha = str(entry["original_sha"])
+                current_sha = _sha256_file(target) if os.path.isfile(target) else ""
+                if original_exists:
+                    if current_sha != original_sha:
+                        raise RestoreError(
+                            f"{entry['path']} changed while the restore was being prepared; refusing to overwrite it."
+                        )
+                elif current_sha:
+                    raise RestoreError(
+                        f"{entry['path']} appeared while the restore was being prepared; refusing to overwrite it."
+                    )
+                staged_path = _safe_staged(staging, entry)
+                if _sha256_file(staged_path) != entry["staged_sha"]:
+                    raise RestoreError(f"Staged bytes changed for {entry['path']}")
+                entry["status"] = "APPLYING"
+                _journal(base_dir, journal)
+                with open(staged_path, "rb") as handle:
+                    data = handle.read()
+                _write_bytes_atomic(target, data)
+                entry["status"] = "APPLIED"
+                entry["applied_sha"] = _sha256_file(target)
+                _journal(base_dir, journal)
+            journal["state"] = "VERIFYING"
+            _journal(base_dir, journal)
+            for entry in entries:
+                target = _safe_target(base_dir, entry)
+                if _sha256_file(target) != entry["staged_sha"]:
+                    raise RestoreError(f"Post-restore verification failed for {entry['path']}")
+                if str(entry["path"]).endswith(".json"):
+                    with open(target, "rb") as handle:
+                        _validate_payload(str(entry["path"]), handle.read())
             journal["state"] = "COMMITTED"
             journal["finished_at"] = int(time.time())
+            journal["rollback"] = ""
             _journal(base_dir, journal)
         shutil.rmtree(staging, ignore_errors=True)
         return RestoreResult(
@@ -436,35 +821,41 @@ def _restore_plain(
             pre_restore_backup=pre.path,
             journal_path=journal_file,
             rollback="",
+            pre_restore_protection=protection,
         )
     except Exception as exc:
         rollback_error = ""
         try:
-            for target in reversed(written):
-                original = originals.get(target)
-                if original is None:
-                    if os.path.exists(target):
-                        os.remove(target)
-                else:
-                    _write_bytes_atomic(target, original)
+            journal["state"] = "ROLLING_BACK"
+            if journal_file:
+                _journal(base_dir, journal)
+            errors = _rollback_entries(base_dir, journal)
+            rollback_error = "; ".join(errors)
+            journal["state"] = "RECOVERY_REQUIRED" if errors else "ROLLED_BACK"
+            journal["finished_at"] = int(time.time())
+            journal["error"] = str(exc)[:2000]
+            journal["rollback"] = "complete" if not errors else f"failed: {rollback_error[:1000]}"
+            if journal_file:
+                _journal(base_dir, journal)
         except Exception as rollback_exc:
             rollback_error = str(rollback_exc)
-        journal["state"] = "RECOVERY_REQUIRED" if rollback_error else "FAILED"
-        journal["finished_at"] = int(time.time())
-        journal["error"] = str(exc)[:2000]
-        journal["rollback"] = "complete" if not rollback_error else f"failed: {rollback_error[:1000]}"
-        try:
-            _journal(base_dir, journal)
-        except Exception:
-            pass
+            try:
+                journal["state"] = "RECOVERY_REQUIRED"
+                journal["error"] = str(exc)[:2000]
+                journal["rollback"] = f"failed: {rollback_error[:1000]}"
+                if journal_file:
+                    _journal(base_dir, journal)
+            except Exception:
+                pass
         _log.warning("restore %s failed: %s", operation_id, exc)
         return RestoreResult(
             ok=False,
             status="recovery_required" if rollback_error else "failed",
             error=str(exc),
-            pre_restore_backup=pre.path,
+            pre_restore_backup=str(journal.get("pre_restore_backup") or ""),
             journal_path=journal_file,
-            rollback=journal["rollback"],
+            rollback=journal.get("rollback", ""),
+            pre_restore_protection=str(journal.get("pre_restore_protection") or ""),
         )
 
 
@@ -476,19 +867,34 @@ def restore(
     confirm: bool = False,
     now: int | None = None,
     password: str | None = None,
+    pre_restore_encrypted: bool = True,
+    pre_restore_password: str | None = None,
+    allow_plaintext_pre_restore: bool = False,
 ) -> RestoreResult:
-    """Restore a plain or encrypted backup, preserving the pre-restore state."""
+    """Restore a plain or encrypted backup without a confidentiality downgrade."""
     from litebrowser.services import encrypted_backup_service
 
     if not encrypted_backup_service.is_encrypted(backup_path):
         return _restore_plain(
-            base_dir, backup_path, categories=categories, confirm=confirm, now=now
+            base_dir,
+            backup_path,
+            categories=categories,
+            confirm=confirm,
+            now=now,
+            pre_restore_encrypted=False,
+            allow_plaintext_pre_restore=True,
         )
     if not password:
         return RestoreResult(
             ok=False,
             status="password_required",
             error="This backup is encrypted; enter its password.",
+        )
+    if not pre_restore_encrypted and not allow_plaintext_pre_restore:
+        return RestoreResult(
+            ok=False,
+            status="blocked",
+            error="This encrypted backup cannot silently create a plaintext pre-restore snapshot.",
         )
     try:
         with encrypted_backup_service.materialized(backup_path, password) as plain:
@@ -499,6 +905,9 @@ def restore(
                 confirm=confirm,
                 now=now,
                 journal_backup=backup_path,
+                pre_restore_encrypted=pre_restore_encrypted,
+                pre_restore_password=pre_restore_password or password,
+                allow_plaintext_pre_restore=allow_plaintext_pre_restore,
             )
     except encrypted_backup_service.EncryptedBackupError as exc:
         return RestoreResult(ok=False, status=exc.status, error=str(exc))
@@ -511,10 +920,12 @@ def inventory(destination: str) -> list[dict]:
 __all__ = [
     "ALL_GROUPS",
     "JOURNAL_RELPATH",
+    "JOURNAL_VERSION",
     "RestoreError",
     "RestoreResult",
     "inventory",
     "journal_path",
     "preview",
+    "recover_interrupted",
     "restore",
 ]

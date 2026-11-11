@@ -492,10 +492,12 @@ class PageStoreNotice(QFrame):
     layout where the shell banner is outside the user's current scroll area.
     """
 
-    def __init__(self, shell, stores, parent=None):
+    def __init__(self, shell, stores, parent=None, paths=()):
         super().__init__(parent)
         self.shell = shell
         self._stores = frozenset(stores)
+        self._paths = tuple(str(path) for path in paths)
+        self._rows: list[dict] = []
         self.setObjectName("StorageHealthBanner")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 7, 12, 7)
@@ -514,6 +516,7 @@ class PageStoreNotice(QFrame):
     def refresh(self):
         base_dir = str(getattr(self.shell, "profile_dir", "") or "")
         if not base_dir:
+            self._rows = []
             self.hide()
             return
         try:
@@ -524,9 +527,25 @@ class PageStoreNotice(QFrame):
                 for row in storage_health.store_health(base_dir)
                 if not row.get("available") and row.get("name") in self._stores
             ]
+            import os
+
+            for relative in self._paths:
+                checked = storage_health.read_json_checked(
+                    os.path.join(base_dir, relative), (dict, list)
+                )
+                if not checked.ok and checked.status != "missing":
+                    rows.append(
+                        {
+                            "name": relative,
+                            "status": checked.status,
+                            "detail": checked.detail,
+                        }
+                    )
         except Exception:
+            self._rows = []
             self.hide()
             return
+        self._rows = rows
         if not rows:
             self.hide()
             return
@@ -538,6 +557,10 @@ class PageStoreNotice(QFrame):
             "an empty list here is not a real empty result."
         )
         self.show()
+
+    def has_unavailable(self) -> bool:
+        """True when this page must not present an empty collection as real."""
+        return bool(self._rows)
 
     def _open_recovery(self):
         from litebrowser.ui import dialogs

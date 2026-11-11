@@ -178,3 +178,16 @@ stable publication without a trusted update signature and valid Authenticode.
 The page guard now covers History in addition to Home, Library and Settings.
 Remaining limitations are listed in the detailed record; no historical test
 total is reused as a current result.
+
+## 2026-11 follow-up — recovery state contract
+
+| Artifact | Unresolved states | Safe automatic action | Blocks |
+| --- | --- | --- | --- |
+| `Recovery/restore_journal.json` | `PREPARING`, `SNAPSHOT_CREATED`, `STAGED`, `APPLYING`, `VERIFYING`, `ROLLING_BACK`, `RECOVERY_REQUIRED` | commit only when every target is staged and the pre-restore snapshot exists; roll back only from verified originals; otherwise preserve and report | scheduled backup; restore retry is explicit |
+| `Recovery/sync_operation_journal.json` | `PREPARING_PULL`, `FETCHED`, `APPLYING`, `ARCHIVE_PENDING`, `PUSH_BLOCKED`, `APPLIED`, `RECOVERY_REQUIRED` | a verified pull may reconcile; corrupt/unreadable journal requires explicit repair or restore | every push, manual or background |
+| `sync_state.json` | `EMPTY`, `CORRUPT`, `UNREADABLE`, `INVALID_SCHEMA` | none; a checked read reports the damage | every push |
+| Quarantine artifact | any | copy is byte-identical and write-protected; recovery is explicit | the damaged store's writes |
+
+Startup recovery is idempotent. Unknown or unreadable live bytes are never
+classified as missing, and no recovery path deletes evidence to make a status
+look clean.

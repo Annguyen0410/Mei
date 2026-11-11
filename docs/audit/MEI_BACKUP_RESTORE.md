@@ -224,3 +224,20 @@ stable publication without a trusted update signature and valid Authenticode.
 The page guard now covers History in addition to Home, Library and Settings.
 Remaining limitations are listed in the detailed record; no historical test
 total is reused as a current result.
+
+## 2026-11 follow-up — verified rollback classification
+
+Restore recovery no longer treats "not original" as "safe to overwrite". The
+journal target states are now explicit: `ORIGINAL`, `STAGED`, `MISSING`, `UNKNOWN`,
+`UNREADABLE`. Rollback accepts only `STAGED` (or an explicitly policy-approved
+missing original) and requires a readable rollback copy whose SHA-256 equals the
+journal's original hash. It writes the journal state before and after each atomic
+replacement and verifies the read-back. `UNKNOWN` and `UNREADABLE` targets are
+preserved and the journal becomes `RECOVERY_REQUIRED`.
+
+The critical regression constructs original A, stages B, crashes, writes an
+independent C, then runs recovery: C remains byte-for-byte unchanged and A/B
+artifacts are retained. See `tests/test_followup_safety.py::TestRestoreRollbackClassification`.
+
+Remaining limitation: real process termination and disk-full/power-loss were not
+available; interruption is injected deterministically in-process.

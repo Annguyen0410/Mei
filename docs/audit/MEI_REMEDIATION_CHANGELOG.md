@@ -372,3 +372,20 @@ Detailed evidence and remaining limitations are in
 - New focused verification: **123 passed, 5 subtests**.  Full-suite and CI
   limitations are reported in `MEI_CRITICAL_REMEDIATION_2026-11.md`; no
   historical test total is reused as a current result.
+
+## 2026-11 follow-up
+
+- `restore_service`: typed target probing and fail-safe rollback; journaled
+  per-entry rollback states; missing/unreadable distinction; apply preflight uses
+  classified states.
+- `life_service`: checked sync-state API with schema and damage statuses.
+- `sync_service`: independent sync operation journal, staged remote bundle, typed
+  pull outcomes, fail-closed push gate, `SyncMergeError` from `_apply_bundle`.
+- `encrypted_backup_service`: user-specific temp root, operation ownership
+  manifests, live-process/PID-reuse protection, strict cleanup ownership.
+- `backup_service` / `backup_scheduler`: explicit scheduled protection policy;
+  explicit plaintext consent; requested machine-bound encryption is blocked.
+- `personal_window` / Data Management: page-local storage notice and persistent
+  protection warning.
+- Tests: new follow-up suite plus canonical Windows path assertions and deterministic
+  crash-hook activation counts.

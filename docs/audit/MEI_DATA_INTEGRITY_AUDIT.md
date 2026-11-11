@@ -181,3 +181,26 @@ stable publication without a trusted update signature and valid Authenticode.
 The page guard now covers History in addition to Home, Library and Settings.
 Remaining limitations are listed in the detailed record; no historical test
 total is reused as a current result.
+
+## 2026-11 follow-up — honest storage lifecycle coverage
+
+`storage_catalog.STORES` contains 26 persistent JSON entries plus the
+`SafeVault/notes` file store. Coverage is classified, not inflated:
+
+- **3 journaled versioned transforms:** `personal_plan.json`, `tab_sets.json`,
+  `entity_links.json` (durable snapshot + migration journal).
+- **22 legacy/stable JSON stores:** validated root shape, byte-quarantined on
+  corruption, write-guarded after damage, included in verified backups and record
+  restore where an adapter exists. They have no active versioned transform because
+  their shape has not required one.
+- **1 explicit conflict archive** (`Recovery/conflicts.json`): merge-only import,
+  idempotent by conflict signature, never replaced by an older backup.
+- **Notes:** markdown file store with atomic per-file writes, no JSON schema.
+
+Unknown future versions are read-only: restore/import validation refuses a version
+above the current schema. No historical schema was invented, and no store is called
+migration-managed merely because it carries a version field. `migration_coverage()`
+returns this classification so documentation and tests cannot drift.
+
+Remaining limitation: coverage is an honest lifecycle contract, not 26 versioned
+migrations. Real historical fixtures exist only for stores whose formats changed.

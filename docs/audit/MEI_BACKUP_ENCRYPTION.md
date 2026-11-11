@@ -140,3 +140,33 @@ stable publication without a trusted update signature and valid Authenticode.
 The page guard now covers History in addition to Home, Library and Settings.
 Remaining limitations are listed in the detailed record; no historical test
 total is reused as a current result.
+
+## 2026-11 follow-up — encrypted temporary operations
+
+- **Finding.** The previous private temp root used `%TEMP%\MeiSecureTemp`, age-only
+  cleanup and best-effort `chmod(0o700)`. A long-running operation older than the
+  age limit could be deleted, and chmod does not create a Windows DACL.
+- **Fix.** On Windows the root is `%LOCALAPPDATA%\Mei\Temp\MeiSecureTemp`, whose
+  inherited DACL belongs to the signed-in user; the module now states that this,
+  not chmod, is the Windows privacy mechanism. On POSIX the root is uid-specific
+  and mode 0700. Every plaintext operation lives in an `op-<id>/` directory with an
+  `owner.json` written before any payload; it records operation id, kind, PID,
+  process creation identity, creation time and a lease. Cleanup never removes a
+  directory whose process is alive, however old it is, and uses the process
+  creation identity to reject a reused PID. Ownerless directories are preserved
+  for seven days. Only known Mei file prefixes and `op-*` directories are touched;
+  symlinks are not followed and unrelated entries are untouched.
+- **GCM lifecycle.** Decryption still streams into the private operation directory
+  before `finalize_with_tag()`. Wrong passwords, invalid tags, header failures and
+  interrupted decryptions release the operation directory; a crash leaves a
+  manifest that the next startup can classify. The inner ZIP is verified before a
+  restore sees it. No secure-erasure claim is made for SSDs or copy-on-write
+  filesystems.
+- **Regression.** `TestTempOperationOwnership` and the updated
+  `test_stale_private_temp_is_cleaned_without_touching_unrelated_files` cover the
+  user-specific root, manifest ordering, live operations older than a day, stale
+  abandoned operations, wrong-password cleanup and materialized cleanup.
+- **Remaining limitation.** The inherited Windows ACL is not independently
+  inspected with an ACL API in this task. A real two-profile concurrent process
+  test and a PID-reuse test with a genuinely reused PID were not run; liveness and
+  identity logic are unit-tested.

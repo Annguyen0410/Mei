@@ -185,3 +185,22 @@ stable publication without a trusted update signature and valid Authenticode.
 The page guard now covers History in addition to Home, Library and Settings.
 Remaining limitations are listed in the detailed record; no historical test
 total is reused as a current result.
+
+## 2026-11 follow-up — stable publication remains BLOCKED
+
+The trust anchor is still intentionally empty. A stable update manifest requires a
+real Ed25519 key pair whose public half is pinned in `update_keys.py`; the private
+half must remain outside the repository. No key or certificate was generated or
+embedded by this task.
+
+Added regression checks:
+
+- an unpinned public key makes stable manifest verification fail;
+- a manifest whose signature cannot be verified is refused before
+  `_ensure_release()` or `_upload_asset()` is called;
+- the release workflow still requires Authenticode, a valid timestamp and the
+  update signing secrets, and contains no control characters.
+
+Stable publication is therefore blocked until external signing material is
+provisioned. Pre-releases may be unsigned only by the documented workflow path;
+they are not a stable release.

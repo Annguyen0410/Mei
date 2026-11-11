@@ -167,3 +167,24 @@ stable publication without a trusted update signature and valid Authenticode.
 The page guard now covers History in addition to Home, Library and Settings.
 Remaining limitations are listed in the detailed record; no historical test
 total is reused as a current result.
+
+## 2026-11 follow-up — durable sync gate
+
+The HTTP sync path now has an independent operation journal at
+`Recovery/sync_operation_journal.json`. The remote snapshot is staged under
+`Recovery/sync_staging/<operation>.json` before any entity merge. Archive and
+write failures set `ARCHIVE_PENDING` or `RECOVERY_REQUIRED`, keep the local row,
+keep the baseline unchanged, and block push. A successful retry carries the prior
+operation in `previous`, commits `BASELINE_COMMITTED`, and only then clears the
+state-level block. Push refuses on an unresolved or damaged journal, and on any
+non-healthy `sync_state.json`.
+
+Pull returns typed outcomes; only an explicit `NO_REMOTE_SNAPSHOT` status may lead
+to an initial push. A generic error whose text happens to contain "No snapshot
+yet" is `NETWORK_ERROR` and cannot authorise a push. `_apply_bundle()` now raises
+`SyncMergeError` instead of returning partial counts after a failed archive.
+
+Remaining limitation: multi-store merges are not one atomic transaction. Earlier
+stores may already be merged when a later store fails; the journal records applied
+counts and the failed store, the conflict archive preserves both versions, and
+retry is idempotent. There is no deterministic per-store resume checkpoint yet.

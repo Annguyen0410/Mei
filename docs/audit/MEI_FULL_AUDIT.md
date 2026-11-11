@@ -364,3 +364,23 @@ stable publication without a trusted update signature and valid Authenticode.
 The page guard now covers History in addition to Home, Library and Settings.
 Remaining limitations are listed in the detailed record; no historical test
 total is reused as a current result.
+
+## 2026-11 follow-up status
+
+Confirmed fixed in source and regression-covered:
+
+- Restore rollback never overwrites an `UNKNOWN` or `UNREADABLE` live target.
+- Restore interruption is recoverable from verified artifacts and is idempotent.
+- Corrupt, empty, invalid-schema or unreadable `sync_state.json` blocks push.
+- An unresolved or damaged sync journal blocks every push path.
+- Archive and baseline failures keep push blocked; `NO_REMOTE_SNAPSHOT` is typed.
+- Windows crash/temp tests use canonical path identity and assert the crash hook
+  actually fired.
+- Encrypted temp operations are owner-tracked and live-process protected.
+- Scheduled backup protection is explicit; encryption is blocked, not faked.
+
+Still blocked by external material: stable release publication (no pinned Ed25519
+update public key, no Authenticode certificate), real second-device sync, real
+power-loss/disk-full testing, ACL inspection with a non-admin Windows account, and
+GUI verification on a real display session. PyQt5/PyQt6 CI jobs were not re-run
+here; the local full suite was run under the installed binding.

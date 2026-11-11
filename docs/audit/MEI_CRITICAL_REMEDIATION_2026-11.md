@@ -93,3 +93,62 @@ cannot be accepted as stable update manifests.
   after commit is not retained.
 - The page-level guard is not a substitute for a full read-result migration of
   every service used by every page.
+
+## 2026-11 follow-up — rollback integrity and fail-closed sync
+
+### P0-1: rollback could overwrite bytes written after an interrupted restore
+
+- **Finding.** `restore_service._rollback_entries()` restored the recorded original
+  whenever the live hash differed from it. It never proved the live target was the
+  staged version. `_sha256_file()` also returned `""` for both a missing file and a
+  read failure, so an unreadable target was indistinguishable from an absent one.
+- **Root cause.** An empty hash was used as the error sentinel, and the rollback
+  decision had only two states (original / not original).
+- **Fix.** `TargetProbe` and `_classify_target()` now report `ORIGINAL`, `STAGED`,
+  `MISSING`, `UNKNOWN` and `UNREADABLE`. Rollback restores only from a verified
+  original copy; `UNKNOWN` and `UNREADABLE` targets are preserved byte-for-byte and
+  recorded as `RECOVERY_REQUIRED`. A missing target is restored only when the
+  journal proves the original existed and the explicit recovery policy allows it.
+  Each rollback step is journaled before and after the atomic write, then read back
+  and verified. Apply preflight and post-restore verification use the same probe.
+- **Regression.** `tests/test_followup_safety.py::TestRestoreRollbackClassification`
+  covers untouched, staged, missing, unknown, unreadable, corrupt/missing rollback
+  copies, mixed states, crash during rollback and repeated recovery. The critical
+  A → staged B → independent C test asserts C is byte-identical afterwards, the
+  journal is `RECOVERY_REQUIRED`, and both A and B artifacts remain.
+- **Verification.** Focused suite passes; see the final hand-off for the full-suite
+  total. The test fails against the previous two-state rollback.
+- **Remaining limitation.** Unreadable-file simulation uses a directory because a
+  non-admin Windows account is required to create a genuinely ACL-denied file.
+  Crash injection is in-process, not real power loss.
+
+### P0-2: corrupt `sync_state.json` removed the push gate
+
+- **Finding.** `life_service.load_sync_state()` returned a default object for a
+  malformed or unreadable file. `sync_service.push()` trusted it, so the persisted
+  `push_blocked` flag could disappear.
+- **Root cause.** A convenience loader was used for a safety decision, and the gate
+  lived in only one mutable settings file.
+- **Fix.** `load_sync_state_checked()` distinguishes `HEALTHY`, `MISSING`, `EMPTY`,
+  `CORRUPT`, `UNREADABLE` and `INVALID_SCHEMA`. Push refuses on any non-healthy
+  state. The independent `Recovery/sync_operation_journal.json` records
+  `PREPARING_PULL`, `FETCHED`, `APPLYING`, `ARCHIVE_PENDING`, `PUSH_BLOCKED`,
+  `APPLIED`, `BASELINE_COMMITTED` and `RECOVERY_REQUIRED`; push refuses while any
+  unresolved state or a damaged journal exists. The remote bundle is staged under
+  `Recovery/sync_staging/` before a store is touched. A process-local fail-closed
+  latch covers the case where neither copy can be written.
+- **Typed outcomes.** `pull_typed()` returns `SUCCESS`, `NO_REMOTE_SNAPSHOT`,
+  `NETWORK_ERROR`, `AUTH_ERROR`, `INVALID_BUNDLE`, `ARCHIVE_FAILED`,
+  `WRITE_FAILED`, `BASELINE_FAILED`, `JOURNAL_FAILED` or `RECOVERY_REQUIRED`.
+  `sync_now()` no longer matches `"No snapshot yet"` inside an error string.
+  `_apply_bundle()` raises `SyncMergeError` instead of returning counts after a
+  failed merge.
+- **Regression.** `TestSyncSafetyJournal` and `TestCheckedSyncState` cover corrupt,
+  missing, empty, invalid-schema and unreadable state; journal write failure;
+  corrupt journal; 404 vs network error vs a lookalike error string; apply-before-
+  journal ordering; archive failure; baseline failure; retry evidence; staging
+  removal; and both manual and background push (both call `push()`).
+- **Remaining limitation.** A partial merge inside a multi-write store (notes,
+  bookmarks) is retried idempotently, not rolled back. The journal preserves the
+  previous operation and a staged bundle as evidence. A true second device and a
+  real power cut were not available.

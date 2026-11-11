@@ -1,19 +1,23 @@
-"""The Chromium security version behind the pinned WebEngine, and the floor.
+"""The Chromium security version behind the WebEngine runtime, and the floor.
 
 Two numbers matter for a browser, and only one of them is visible in a version
 string:
 
 * the **Chromium base** (140 for the whole Qt 6.11 WebEngine line), and
 * the **security version** — how much of Qt's backported patch stream is in the
-  build. Qt ships 6.11.0 with security version 146, 6.11.1 with 148, 6.11.2 with
-  151 and 6.11.3 with 155, all on Chromium base 140.
+  build.
 
-PyQt wheels do not follow those patch numbers: PyPI publishes ``6.11.0`` for
-this line and then jumps to ``6.140.0`` (and publishes no 6.11.1/6.11.2/6.11.3
-at all), so "just bump the pin to 6.11.3" is not an installable instruction.
-This module records what each *installable* pin is known to carry, so CI can
-state the number out loud and fail when a build drops below a declared floor
-instead of quietly shipping a stale patch stream.
+Keys here are Qt WebEngine **runtime** versions, not PyPI package versions.
+Those differ: this project pins ``PyQt6-WebEngine==6.11.0``, whose wheel imports
+Qt 6.11.1, and it is Qt's patch stream (not the wheel label) that decides the
+security version. Reading the package version therefore *under*-reports the
+patch level, which is why ``tools/check_engine_security.py`` reads the runtime
+and why the diagnostics page passes the runtime version too.
+
+Qt ships 6.11.0 at 146, 6.11.1 at 148, 6.11.2 at 151 and 6.11.3 at 155, all on
+Chromium base 140. PyPI publishes no 6.11.1/6.11.2/6.11.3 *wheels*, so "bump the
+pin to 6.11.3" is not an installable instruction; a version missing from this
+table reports ``UNKNOWN`` instead of a guess.
 
 Pure module: no Qt import, so it is testable on any interpreter.
 """
@@ -24,8 +28,8 @@ __all__ = [
     "MIN_SECURITY_VERSION",
     "UNKNOWN",
     "known_engine",
-    "security_version_for",
     "meets_floor",
+    "security_version_for",
 ]
 
 UNKNOWN = None
@@ -35,29 +39,32 @@ CHROMIUM_BASE = 140
 
 #: Oldest security version this project is willing to ship.
 #:
-#: Qt 6.11.0 = 146, and no newer WebEngine patch release is installable from
-#: PyPI for this line, so 146 is the floor Mei can actually meet today. Raising
-#: this constant is the release decision: check the Qt table for the binding
-#: that ships, then raise it — CI fails until the pin really carries it.
+#: Qt 6.11.0 is the oldest runtime the pinned wheel can resolve to, so 146 is the
+#: floor Mei can actually meet today. Raising this constant is the release
+#: decision: check Qt's published table for the runtime that ships, then raise
+#: it — CI fails until the runtime really carries it.
 MIN_SECURITY_VERSION = 146
 
-#: PyQt WebEngine version -> (Chromium base, security version).
+#: Qt WebEngine runtime version -> (Chromium base, security version).
 #:
-#: Only values that were read from Qt's published Chromium-version table are
-#: listed. A version that is not here reports ``UNKNOWN`` rather than a guess.
+#: Only values read from Qt's published Chromium-version table are listed. A
+#: version that is not here reports ``UNKNOWN`` rather than a guess.
 _KNOWN: dict[str, tuple[int, int]] = {
     "6.11.0": (140, 146),
+    "6.11.1": (140, 148),
+    "6.11.2": (140, 151),
+    "6.11.3": (140, 155),
 }
 
 
-def known_engine(webengine_version: str) -> tuple[int, int] | None:
-    """``(chromium_base, security_version)`` for a PyQt WebEngine version."""
-    return _KNOWN.get(str(webengine_version or "").strip())
+def known_engine(qt_webengine_version: str) -> tuple[int, int] | None:
+    """``(chromium_base, security_version)`` for a Qt WebEngine runtime version."""
+    return _KNOWN.get(str(qt_webengine_version or "").strip())
 
 
-def security_version_for(webengine_version: str) -> int | None:
-    """Security version for ``webengine_version``, or ``None`` when unknown."""
-    entry = known_engine(webengine_version)
+def security_version_for(qt_webengine_version: str) -> int | None:
+    """Security version for the runtime, or ``None`` when it is not known."""
+    entry = known_engine(qt_webengine_version)
     return entry[1] if entry else UNKNOWN
 
 

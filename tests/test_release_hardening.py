@@ -100,11 +100,17 @@ class TestWebEngineSettingsPinned(unittest.TestCase):
 
 
 class TestEngineSecurityFloor(unittest.TestCase):
-    def test_pinned_release_is_known_and_meets_its_own_floor(self):
-        entry = engine_security.known_engine("6.11.0")
-        self.assertIsNotNone(entry)
-        self.assertEqual(entry[0], engine_security.CHROMIUM_BASE)
-        self.assertTrue(engine_security.meets_floor(entry[1]))
+    def test_the_whole_611_line_is_known_and_meets_the_current_floor(self):
+        # Keys are Qt runtime versions: the pinned 6.11.0 wheel imports Qt 6.11.1,
+        # so the package label would under-report the patch level.
+        expected = {"6.11.0": 146, "6.11.1": 148, "6.11.2": 151, "6.11.3": 155}
+        for version, security in expected.items():
+            with self.subTest(version=version):
+                entry = engine_security.known_engine(version)
+                self.assertIsNotNone(entry)
+                self.assertEqual(entry[0], engine_security.CHROMIUM_BASE)
+                self.assertEqual(entry[1], security)
+                self.assertTrue(engine_security.meets_floor(security))
 
     def test_unknown_version_does_not_meet_the_floor(self):
         self.assertIsNone(engine_security.security_version_for("9.9.9"))

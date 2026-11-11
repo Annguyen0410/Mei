@@ -31,6 +31,12 @@ def _signed(metadata):
     return update_signature.sign_manifest(dict(metadata), _TEST_PRIVATE_KEY, _TEST_KEY_ID)
 
 
+#: The real pins, restored in tearDownModule. These tests swap in a throwaway
+#: key, and clearing without restoring wiped a genuinely pinned key for every
+#: test that ran afterwards.
+_ORIGINAL_TRUST = dict(update_keys.TRUSTED_UPDATE_KEYS)
+
+
 def _install_test_trust():
     update_keys.TRUSTED_UPDATE_KEYS.clear()
     update_keys.TRUSTED_UPDATE_KEYS[_TEST_KEY_ID] = update_signature.public_key_b64(_TEST_PRIVATE_KEY)
@@ -42,6 +48,7 @@ def setUpModule():
 
 def tearDownModule():
     update_keys.TRUSTED_UPDATE_KEYS.clear()
+    update_keys.TRUSTED_UPDATE_KEYS.update(_ORIGINAL_TRUST)
 
 
 def _newer_than_current() -> str:

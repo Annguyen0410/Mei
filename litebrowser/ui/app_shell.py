@@ -1916,7 +1916,7 @@ class AppShell(QMainWindow):
                 "Pour started — %d min «%s».\nUse /status to check remaining time." % (minutes, session.get("label", "")),
             )
             return
-        if text.startswith("http://") or text.startswith("https://") or (" " not in text and "." in text):
+        if text.startswith(("http://", "https://", "file://")) or (" " not in text and "." in text):
             self.switch_workspace("browser")
             self.browser_page.url_bar.setText(text)
             self.browser_page.navigate()

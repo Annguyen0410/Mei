@@ -17,6 +17,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # The shim has to be active before the binding is imported.
 import litebrowser  # noqa: F401 - activates the Qt compatibility shim
 
+from PyQt5.QtCore import Qt
+from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QWidget
 
 from litebrowser.core import prefs
@@ -71,6 +73,30 @@ class TestDeckFileMenu(unittest.TestCase):
             self.assertTrue(win.btn_deck_file.isEnabled())
             self.assertEqual(len(verbs), 2)
         finally:
+            win.deleteLater()
+
+    def test_clicking_the_card_text_reveals_the_answer_and_space_hides_it(self):
+        flashcard_service.add_card(self.base, "What is 2 + 2?", "4")
+        win = self._window()
+        try:
+            win.show()
+            self._app.processEvents()
+            win._switch_page("review")
+            self._app.processEvents()
+            self.assertTrue(win.review_card.isVisible())
+            for label in (win.lbl_card_front, win.lbl_card_hint, win.lbl_card_back):
+                self.assertTrue(label.testAttribute(Qt.WA_TransparentForMouseEvents))
+            point = win.lbl_card_front.mapTo(
+                win.review_card, win.lbl_card_front.rect().center()
+            )
+            QTest.mouseClick(win.review_card, Qt.LeftButton, pos=point)
+            self.assertFalse(win.lbl_card_back.isHidden())
+            self.assertTrue(win.btn_card_good.isEnabled())
+            QTest.keyClick(win.review_card, Qt.Key_Space)
+            self._app.processEvents()
+            self.assertTrue(win.lbl_card_back.isHidden())
+        finally:
+            win.close()
             win.deleteLater()
 
     def test_importing_from_the_menu_adds_the_cards(self):

@@ -34,6 +34,56 @@ class TestOmnibarCommandContracts(unittest.TestCase):
         self.assertIn("_run_sync_now", src)
         self.assertNotIn('switch_workspace("settings")  # sync button', src)
 
+    def test_file_urls_reach_the_browser_instead_of_library_search(self):
+        from litebrowser.ui.app_shell import AppShell
+
+        class _UrlBar:
+            text = ""
+
+            def setText(self, value):
+                self.text = value
+
+        class _BrowserPage:
+            def __init__(self):
+                self.url_bar = _UrlBar()
+                self.navigated = 0
+
+            def navigate(self):
+                self.navigated += 1
+
+        class _LibraryPage:
+            def __init__(self):
+                self.queries = []
+
+            def refresh(self, query):
+                self.queries.append(query)
+
+        class _Shell:
+            def __init__(self):
+                self.profile_dir = ""
+                self.browser_page = _BrowserPage()
+                self.library_page = _LibraryPage()
+                self.workspaces = []
+
+            def _normalize_omnibar_cmd(self, value):
+                return value.lower().strip()
+
+            def _match_cmd(self, _lowered, _command):
+                return False
+
+            def switch_workspace(self, name):
+                self.workspaces.append(name)
+                return True
+
+        shell = _Shell()
+        target = "file:///C:/Users/example/notes.html"
+        AppShell._handle_omnibar_text(shell, target)
+
+        self.assertEqual(shell.workspaces, ["browser"])
+        self.assertEqual(shell.browser_page.url_bar.text, target)
+        self.assertEqual(shell.browser_page.navigated, 1)
+        self.assertEqual(shell.library_page.queries, [])
+
     def test_shell_defines_unique_page_map_keys(self):
         import inspect
 

@@ -2814,6 +2814,11 @@ class PersonalWindow(QMainWindow):
         self.lbl_card_back.hide()
         card_layout.addWidget(self.lbl_card_back)
         card_layout.addStretch(1)
+        # The labels cover almost the whole card. Without this, a click on the
+        # question text lands on a QLabel and never reaches the card's flip
+        # handler — the card looks clickable but only its margins work.
+        for _label in (self.lbl_card_front, self.lbl_card_hint, self.lbl_card_back):
+            _label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.review_card.setFocusPolicy(Qt.StrongFocus)
         self.review_card.setAccessibleName("Flashcard — Space to reveal; 1 to 4 to grade")
         self.review_card.setCursor(Qt.PointingHandCursor)
@@ -2989,6 +2994,7 @@ class PersonalWindow(QMainWindow):
     def _flip_review_card(self):
         if not getattr(self, "_deck", None):
             return
+        self.review_card.setFocus(Qt.MouseFocusReason)
         if self.lbl_card_back.isHidden():
             self.lbl_card_back.show()
             self.lbl_card_hint.setText("How well did you remember?")
@@ -3799,6 +3805,10 @@ class PersonalWindow(QMainWindow):
             life_service.remove_task(self.base_dir, item.data(Qt.UserRole))
             self._refresh_tasks()
             self._refresh_overview()
+
+    def _dialog_stylesheet(self):
+        """Themed QSS for dialogs opened from the Personal workspace."""
+        return theme.dialog_qss(prefs.resolved_auto_theme(self.base_dir), prefs.get_accent(self.base_dir))
 
     def _build_calendar_page(self):
         w = QWidget()

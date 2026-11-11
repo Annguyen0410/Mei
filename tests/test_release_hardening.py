@@ -11,6 +11,7 @@ import inspect
 import json
 import os
 import pathlib
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -205,14 +206,17 @@ class TestUpdateKeyTool(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _run(self, argv):
+    @staticmethod
+    def _run_static(argv):
         out = []
         err = []
-        code = 0
         with mock.patch("sys.stdout", new_callable=lambda: _Sink(out)), \
              mock.patch("sys.stderr", new_callable=lambda: _Sink(err)):
             code = generate_update_key.main(argv)
         return code, "".join(out), "".join(err)
+
+    def _run(self, argv):
+        return self._run_static(argv)
 
     def test_generates_a_32_byte_public_key_and_prints_the_pin(self):
         code, out, _err = self._run(["--key-id", "test-key", "--out", self.out])
@@ -253,6 +257,64 @@ class TestUpdateKeyTool(unittest.TestCase):
         code, _out, err = self._run(["--key-id", "test-key", "--out", self.out])
         self.assertEqual(code, 2)
         self.assertIn("already exists", err)
+
+
+class TestPinWritesTheKeyFile(unittest.TestCase):
+    """``--pin`` must update update_keys.py without hand editing.
+
+    The file is loaded and executed afterwards, so the test proves the written
+    source is valid Python that still exposes both constants.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self._tmp.name, "update_keys.py")
+        shutil.copyfile(ROOT / "litebrowser" / "core" / "update_keys.py", self.path)
+        self.public = base64.b64encode(b"x" * 32).decode("ascii")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _load(self):
+        namespace = {}
+        with open(self.path, encoding="utf-8") as handle:
+            exec(compile(handle.read(), self.path, "exec"), namespace)  # noqa: S102 - test fixture
+        return namespace
+
+    def test_pinning_writes_the_id_and_the_current_pointer(self):
+        previous = generate_update_key.pin_public_key("test-key", self.public, self.path)
+        self.assertEqual(previous, "")
+        namespace = self._load()
+        self.assertEqual(namespace["TRUSTED_UPDATE_KEYS"], {"test-key": self.public})
+        self.assertEqual(namespace["CURRENT_UPDATE_KEY_ID"], "test-key")
+        self.assertTrue(namespace["signing_configured"]())
+
+    def test_rotation_keeps_the_previous_key_pinned(self):
+        generate_update_key.pin_public_key("old-key", self.public, self.path)
+        other = base64.b64encode(b"y" * 32).decode("ascii")
+        previous = generate_update_key.pin_public_key("new-key", other, self.path)
+        self.assertEqual(previous, "old-key")
+        namespace = self._load()
+        self.assertEqual(set(namespace["TRUSTED_UPDATE_KEYS"]), {"old-key", "new-key"})
+        self.assertEqual(namespace["TRUSTED_UPDATE_KEYS"]["new-key"], other)
+        self.assertEqual(namespace["CURRENT_UPDATE_KEY_ID"], "new-key")
+
+    def test_it_refuses_a_file_that_is_not_the_pin_module(self):
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write("x = 1\n")
+        with self.assertRaises(ValueError):
+            generate_update_key.pin_public_key("k", self.public, self.path)
+        with open(self.path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "x = 1\n", "a refused pin must not rewrite the file")
+
+    def test_pin_flag_drives_the_whole_flow_from_the_command_line(self):
+        out = os.path.join(self._tmp.name, "key.txt")
+        code, stdout, _err = TestUpdateKeyTool._run_static(
+            ["--key-id", "cli-key", "--out", out, "--pin", "--module", self.path]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Pinned", stdout)
+        self.assertEqual(self._load()["CURRENT_UPDATE_KEY_ID"], "cli-key")
 
 
 class TestInstallerIsAttachedToReleases(unittest.TestCase):

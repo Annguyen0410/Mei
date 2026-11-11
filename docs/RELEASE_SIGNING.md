@@ -30,7 +30,9 @@ python tools/generate_update_key.py --key-id mei-release-2026 --out ~/mei-update
 
 ## 2. Pin the public half
 
-Edit `litebrowser/core/update_keys.py`:
+Add `--pin` to the command in step 1 and the tool writes both constants for you,
+keeping any id that was already pinned (that is the rotation order). Without
+`--pin`, edit `litebrowser/core/update_keys.py`:
 
 ```python
 TRUSTED_UPDATE_KEYS = {

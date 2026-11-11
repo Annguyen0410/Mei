@@ -23,6 +23,7 @@ Nothing here touches the network.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import os
 import stat
@@ -58,6 +59,83 @@ def _write_private(path: str, secret_b64: str) -> None:
         f.write(secret_b64)
 
 
+def _module_path() -> str:
+    return os.path.join(REPO_ROOT, "litebrowser", "core", "update_keys.py")
+
+
+def _assignment_span(source: str, name: str):
+    """1-based (first, last) line of the assignment to ``name``, or ``None``."""
+    tree = ast.parse(source)
+    for node in tree.body:
+        target = None
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+        if getattr(target, "id", "") == name and getattr(node, "end_lineno", None):
+            return node.lineno, node.end_lineno
+    return None
+
+
+def _literal_after_equals(block: str):
+    """Value of an ``X = <literal>`` / ``X: T = <literal>`` source block."""
+    return ast.literal_eval(block.split("=", 1)[1].strip())
+
+
+def pin_public_key(key_id: str, public_b64: str, module_path: str) -> str:
+    """Pin ``key_id`` in ``TRUSTED_UPDATE_KEYS`` and make it the current key.
+
+    Returns the previous ``CURRENT_UPDATE_KEY_ID`` (``""`` when none). A rotation
+    keeps every existing pin, because an installed build must still be able to
+    verify a release signed by the key it already trusts.
+
+    Raises ``ValueError`` when the file does not look like the pin module, so a
+    wrong path cannot be rewritten, and when the existing pins are not literals
+    (they would be lost by a textual rewrite).
+    """
+    with open(module_path, encoding="utf-8") as handle:
+        source = handle.read()
+    lines = source.splitlines()
+
+    keys_span = _assignment_span(source, "TRUSTED_UPDATE_KEYS")
+    if keys_span is None:
+        raise ValueError("%s has no TRUSTED_UPDATE_KEYS assignment" % module_path)
+    current_span = _assignment_span(source, "CURRENT_UPDATE_KEY_ID")
+    if current_span is None:
+        raise ValueError("%s has no CURRENT_UPDATE_KEY_ID assignment" % module_path)
+
+    try:
+        existing = dict(_literal_after_equals("\n".join(lines[keys_span[0] - 1 : keys_span[1]])) or {})
+    except (SyntaxError, ValueError, TypeError) as exc:
+        raise ValueError("existing pins in %s are not a plain dict: %s" % (module_path, exc)) from exc
+    try:
+        previous_current = str(
+            _literal_after_equals("\n".join(lines[current_span[0] - 1 : current_span[1]])) or ""
+        )
+    except (SyntaxError, ValueError, TypeError):
+        previous_current = ""
+
+    pins = dict(existing)
+    pins[key_id] = public_b64
+    new_keys = ["TRUSTED_UPDATE_KEYS: dict[str, str] = {"]
+    new_keys += ["    %r: %r," % (k, v) for k, v in pins.items()]
+    new_keys.append("}")
+    new_current = ["CURRENT_UPDATE_KEY_ID = %r" % key_id]
+
+    # Replace the later block first so the earlier line numbers stay valid.
+    for span, replacement in sorted(((current_span, new_current), (keys_span, new_keys)),
+                                    key=lambda item: item[0][0], reverse=True):
+        lines[span[0] - 1 : span[1]] = replacement
+    updated = "\n".join(lines) + "\n"
+
+    # Atomic replace: a half-written update_keys.py would break every import.
+    temporary = module_path + ".tmp"
+    with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(updated)
+    os.replace(temporary, module_path)
+    return previous_current
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Generate Mei's Ed25519 update signing key.")
     parser.add_argument("--key-id", required=True, help="key id to pin, e.g. mei-release-2027")
@@ -71,6 +149,8 @@ def main(argv=None) -> int:
             "log or screenshot you share; only do this on a machine you control"
         ),
     )
+    parser.add_argument("--pin", action="store_true", help="write the public key into update_keys.py instead of printing the block")
+    parser.add_argument("--module", default="", help="path to update_keys.py (default: the one in this repository)")
     args = parser.parse_args(argv)
 
     try:
@@ -138,13 +218,33 @@ def main(argv=None) -> int:
         _write_private(args.out, private_b64)
     print("Generated Ed25519 release key %r." % args.key_id)
     print()
+
+    if args.pin:
+        try:
+            previous = pin_public_key(args.key_id, public_b64, args.module or _module_path())
+        except (OSError, ValueError) as exc:
+            print("error: could not pin the key: %s" % exc, file=sys.stderr)
+            return 2
+        print("Pinned %r in %s" % (args.key_id, args.module or _module_path()))
+        if previous and previous != args.key_id:
+            print("   %r stays pinned too (keep it until every shipped build can verify the new key)" % previous)
+        else:
+            print("   CURRENT_UPDATE_KEY_ID now points at it")
+        print("   next: rebuild the exe (the key is part of the app) and run")
+        print("         python -m pytest tests/test_update_signature.py tests/test_release_hardening.py")
+        print()
     print("1. Private key written to: %s  (mode 0600)" % args.out)
-    print("2. Paste this into litebrowser/core/update_keys.py:")
-    print()
-    print("   TRUSTED_UPDATE_KEYS = {")
-    print("       %r: %r," % (args.key_id, public_b64))
-    print("   }")
-    print("   CURRENT_UPDATE_KEY_ID = %r" % args.key_id)
+    if args.pin:
+        print("2. update_keys.py already carries %r (done by --pin)." % args.key_id)
+    else:
+        print("2. Paste this into litebrowser/core/update_keys.py:")
+        print()
+        print("   TRUSTED_UPDATE_KEYS = {")
+        print("       %r: %r," % (args.key_id, public_b64))
+        print("   }")
+        print("   CURRENT_UPDATE_KEY_ID = %r" % args.key_id)
+        print()
+        print("   (or re-run with --pin and this file is updated for you)")
     print()
     # The private half is deliberately NOT printed. Printing it put a live
     # signing key into a terminal scrollback, which is how it ends up in a pasted

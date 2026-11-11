@@ -586,7 +586,7 @@ def main(argv=None) -> int:
         if not token and not dry_run:
             print(
                 "No token found. Either set GITHUB_TOKEN, or attach the three files by hand in\n"
-                f"the release UI ({release_page_url(repo)} → Releases → Draft a new release)."
+                f"the release UI ({release_page_url(repo)}, then Draft a new release)."
             )
         return 1
     except urllib.error.HTTPError as exc:
@@ -596,6 +596,24 @@ def main(argv=None) -> int:
     if not dry_run:
         print("Done. The channel is live at", product.DEFAULT_UPDATE_CHANNEL_URL)
     return 0
+
+
+def _tolerate_narrow_console() -> None:
+    """A cp1252 console must not turn a warning into a UnicodeEncodeError.
+
+    Piping the output (or a non-UTF-8 code page) made printing an arrow raise,
+    so the helpful "set GITHUB_TOKEN" advice was replaced by a traceback.
+    """
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+_tolerate_narrow_console()
 
 
 if __name__ == "__main__":

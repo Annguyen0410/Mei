@@ -259,6 +259,23 @@ class TestUpdateKeyTool(unittest.TestCase):
         self.assertIn("already exists", err)
 
 
+_EMPTY_PIN_MODULE = '''"""Test double for litebrowser/core/update_keys.py."""
+from __future__ import annotations
+
+TRUSTED_UPDATE_KEYS: dict[str, str] = {}
+REVOKED_UPDATE_KEY_IDS: frozenset[str] = frozenset()
+CURRENT_UPDATE_KEY_ID = ""
+
+
+def trusted_keys():
+    return dict(TRUSTED_UPDATE_KEYS)
+
+
+def signing_configured() -> bool:
+    return bool(TRUSTED_UPDATE_KEYS) and bool(CURRENT_UPDATE_KEY_ID)
+'''
+
+
 class TestPinWritesTheKeyFile(unittest.TestCase):
     """``--pin`` must update update_keys.py without hand editing.
 
@@ -269,7 +286,11 @@ class TestPinWritesTheKeyFile(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.path = os.path.join(self._tmp.name, "update_keys.py")
-        shutil.copyfile(ROOT / "litebrowser" / "core" / "update_keys.py", self.path)
+        # A clean fixture, NOT a copy of the live module. The repository pins a
+        # real key now, and reading today's repo state made four of these tests
+        # fail the moment it was provisioned.
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write(_EMPTY_PIN_MODULE)
         self.public = base64.b64encode(b"x" * 32).decode("ascii")
 
     def tearDown(self):
@@ -280,6 +301,24 @@ class TestPinWritesTheKeyFile(unittest.TestCase):
         with open(self.path, encoding="utf-8") as handle:
             exec(compile(handle.read(), self.path, "exec"), namespace)  # noqa: S102 - test fixture
         return namespace
+
+    def test_pinning_a_real_module_keeps_existing_pins_and_stays_importable(self):
+        live = os.path.join(self._tmp.name, "live_update_keys.py")
+        shutil.copyfile(ROOT / "litebrowser" / "core" / "update_keys.py", live)
+        namespace = {}
+        with open(live, encoding="utf-8") as handle:
+            exec(compile(handle.read(), live, "exec"), namespace)  # noqa: S102
+        before = dict(namespace["TRUSTED_UPDATE_KEYS"])
+
+        generate_update_key.pin_public_key("zz-test-only", self.public, live)
+
+        after = {}
+        with open(live, encoding="utf-8") as handle:
+            exec(compile(handle.read(), live, "exec"), after)  # noqa: S102
+        self.assertEqual(after["TRUSTED_UPDATE_KEYS"]["zz-test-only"], self.public)
+        for key_id, value in before.items():
+            self.assertEqual(after["TRUSTED_UPDATE_KEYS"].get(key_id), value, "a pin was dropped")
+        self.assertEqual(after["CURRENT_UPDATE_KEY_ID"], "zz-test-only")
 
     def test_pinning_writes_the_id_and_the_current_pointer(self):
         previous = generate_update_key.pin_public_key("test-key", self.public, self.path)

@@ -28,13 +28,15 @@ must publish a new id rather than reuse the compromised one.
 from __future__ import annotations
 
 #: key_id -> base64 raw Ed25519 public key (32 bytes). Empty = fail closed.
-TRUSTED_UPDATE_KEYS: dict[str, str] = {}
+TRUSTED_UPDATE_KEYS: dict[str, str] = {
+    'mei-release-2026b': 'wzF8s2ZH/LhUx6SwNpAEC+6wc6et1j485YSIhljgUXc=',
+}
 
 #: key ids refused even if present above (compromise response).
 REVOKED_UPDATE_KEY_IDS: frozenset[str] = frozenset()
 
 #: The id new releases should sign with; empty while no key is provisioned.
-CURRENT_UPDATE_KEY_ID = ""
+CURRENT_UPDATE_KEY_ID = 'mei-release-2026b'
 
 
 def trusted_keys() -> dict[str, str]:

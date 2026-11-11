@@ -17,7 +17,7 @@ import os
 import platform
 import sys
 
-from litebrowser.core import product
+from litebrowser.core import engine_security, product
 
 UNKNOWN = "Unknown"
 
@@ -75,6 +75,10 @@ def collect(ui: dict | None = None, environ=None) -> dict:
     facts = dict(ui or {})
     chromium = _clean(facts.get("chromium"))
     major = chromium_major(chromium)
+    # The Chromium base is not the patch level: Qt ships 6.11.0 with security
+    # version 146 and 6.11.3 with 155, both on base 140 (core/engine_security.py).
+    webengine = _clean(facts.get("qtwebengine"))
+    security = engine_security.security_version_for(webengine)
     version = product.APP_VERSION
     report = {
         "Mei version": version,
@@ -87,6 +91,7 @@ def collect(ui: dict | None = None, environ=None) -> dict:
         "Chromium": chromium,
         "Chromium major": str(major) if major else UNKNOWN,
         "Chromium security patch": chromium if major and chromium.count(".") >= 3 else UNKNOWN,
+        "Chromium security version": str(security) if security else UNKNOWN,
         "GPU backend": _clean(facts.get("gpu_backend")),
         "Hardware acceleration": hardware_acceleration_status(environ),
         "Sandbox": sandbox_status(environ),
@@ -105,6 +110,17 @@ def collect(ui: dict | None = None, environ=None) -> dict:
             "Modern sign-in, WebAuthn and many JavaScript APIs will refuse it. "
             "Install PyQt6-WebEngine 6.11 (Chromium 140)."
         )
+    if str(report["PyQt binding"]).startswith("PyQt6"):
+        if security is None:
+            warnings.append(
+                f"The security patch level of QtWebEngine {webengine} is unknown. "
+                "Add it to core/engine_security.py before treating this build as patched."
+            )
+        elif not engine_security.meets_floor(security):
+            warnings.append(
+                f"This engine carries security version {security}, below the required "
+                f"floor ({engine_security.MIN_SECURITY_VERSION}). Update the WebEngine pin."
+            )
     if str(report["PyQt binding"]).startswith("PyQt5"):
         warnings.append(
             "This is the LEGACY PyQt5 engine path (Qt 5.15 / Chromium 87). It is not "

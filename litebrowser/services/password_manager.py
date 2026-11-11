@@ -189,7 +189,22 @@ def load_passwords(base_dir, master_password):
     return entries
 
 
-def load_passwords_status(base_dir, master_password):
+def _migrate_legacy_vault(base_dir, entries, master_password):
+    """Re-encrypt a legacy (static-key) vault into the PBKDF2 envelope.
+
+    The legacy format derives its Fernet key from a fixed salt and one SHA-256
+    round, so a stolen vault file is cheap to attack offline. Reading it stays
+    supported, but the first successful unlock rewrites it as v2 instead of
+    leaving the weak file on disk for the life of the profile.
+    """
+    try:
+        return bool(save_passwords(base_dir, entries, master_password))
+    except Exception as exc:  # noqa: BLE001 - migration never fails the read
+        _log.warning("legacy vault migration failed: %s", type(exc).__name__)
+        return False
+
+
+def load_passwords_status(base_dir, master_password, _migrate=True):
     """Returns (status, entries); status is one of:
     - "ok":      vault read and decrypted (may be empty)
     - "missing": no vault file yet
@@ -211,14 +226,22 @@ def load_passwords_status(base_dir, master_password):
             return ("locked" if entries is None else "ok"), (entries or [])
         raw = cipher.decrypt(blob).decode("utf-8")
         data = json.loads(raw)
-        return "ok", _decrypt_entries(data, cipher)
+        entries = _decrypt_entries(data, cipher)
     except Exception:  # noqa: BLE001  wrong password/corrupt vault must stay locked
         return "locked", []
+    # Legacy format reached: rewrite it as v2. Done after the read lock is
+    # released, and skipped by callers that are about to save anyway.
+    if _migrate:
+        _migrate_legacy_vault(base_dir, entries, master_password)
+    return "ok", entries
 
 
 @profile_transaction
 def add_password(base_dir, url, username, password, master_password):
-    status, entries = load_passwords_status(base_dir, master_password)
+    # _migrate=False: this call is already inside a profile transaction and
+    # saves the vault below, so re-encrypting on read would be a redundant write
+    # from inside the caller's lock.
+    status, entries = load_passwords_status(base_dir, master_password, _migrate=False)
     if status == "locked":
         # The vault exists but this master password cannot decrypt it. Saving
         # now would replace every stored credential with just this one entry —

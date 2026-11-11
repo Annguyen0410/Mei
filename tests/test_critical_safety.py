@@ -427,12 +427,28 @@ class TestReleasePreflight(_Base):
         self.assertEqual(manifest["key_id"], "release-2026")
         self.assertTrue(manifest["signature"])
 
-    def test_workflow_has_no_control_characters_and_uses_a_valid_signtool_path(self):
+    def test_workflow_has_no_control_characters_and_signs_through_a_cloud_provider(self):
+        """A backtick-eaten ``\\b`` once shipped a control character into this YAML.
+
+        The signing step no longer shells out to signtool with a PFX: since the
+        2026 CA/B rules a code-signing key must live in FIPS hardware and no CA
+        issues exportable .pfx files any more. What is pinned here is that the
+        file stays control-character free and that signing goes through the
+        cloud-HSM action gated by a *variable* — a `secrets` expression in a step
+        `if:` is not evaluated by GitHub, which is how the old step silently
+        never ran even when a PFX was configured.
+        """
         path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".github", "workflows", "release.yml")
         raw = open(path, "rb").read()
         self.assertNotIn(b"\x08", raw)
-        self.assertIn(b"Windows Kits\\10\\bin", raw)
-        self.assertIn(b"signtool.exe", raw)
+        self.assertFalse(
+            any(byte < 0x09 for byte in raw),
+            "a control character means a backtick escape was eaten",
+        )
+        text = raw.decode("utf-8")
+        self.assertIn("azure/trusted-signing-action", text)
+        self.assertIn("vars.MEI_SIGNING_PROVIDER", text)
+        self.assertNotIn("secrets.MEI_SIGNING_PFX_BASE64", text)
 
 
 if __name__ == "__main__":

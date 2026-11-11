@@ -75,39 +75,69 @@ jobs:
             --exclude-module PyQt5 --clean browser.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
+      # The app ships as Mei.exe; people should not have to know that, extract a
+      # companion archive and place it themselves. installer.iss already describes
+      # the layout, and Inno Setup is free — the missing piece was a build step.
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y | Out-Null
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found; cannot build MeiSetup.exe" }
+          & $iscc installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path "dist/MeiSetup.exe")) { throw "installer.iss produced no dist/MeiSetup.exe" }
+          "Built dist/MeiSetup.exe"
+
       # Authenticode is not a substitute for the update-manifest signature: it
       # proves the publisher to Windows, while the Ed25519 manifest signature
-      # proves it to Mei. Both are needed. This step is a no-op until a real
-      # code-signing certificate is stored as a repository secret — Mei never
-      # generates or embeds a fake certificate to look trusted.
-      - name: Sign the executable (Authenticode)
-        if: ${{ secrets.MEI_SIGNING_PFX_BASE64 != '' }}
-        shell: pwsh
-        env:
-          MEI_SIGNING_PFX_BASE64: ${{ secrets.MEI_SIGNING_PFX_BASE64 }}
-          MEI_SIGNING_PFX_PASSWORD: ${{ secrets.MEI_SIGNING_PFX_PASSWORD }}
-          MEI_TIMESTAMP_URL: ${{ vars.MEI_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
-        run: |
-          $pfx = Join-Path $env:RUNNER_TEMP "mei-signing.pfx"
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:MEI_SIGNING_PFX_BASE64))
-          $kits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
-          $signtool = Get-ChildItem -Path $kits -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $signtool) { throw "signtool.exe not found; cannot sign the release" }
-          & $signtool.FullName sign /fd SHA256 /td SHA256 /tr "$env:MEI_TIMESTAMP_URL" `
-            /f $pfx /p $env:MEI_SIGNING_PFX_PASSWORD dist/Mei.exe
-          if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with $LASTEXITCODE" }
-          & $signtool.FullName verify /pa /v dist/Mei.exe
-          if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed" }
-          Remove-Item -LiteralPath $pfx -Force
-          "Authenticode: signed and timestamped" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+      # proves it to Mei. Both are needed.
+      #
+      # Since the 2026 CA/B Forum baseline requirements a code-signing private key
+      # must live in FIPS hardware and a certificate is valid for at most ~459
+      # days, so CAs no longer issue exportable .pfx files. The previous step
+      # wrote a PFX from a secret and passed /f /p to signtool: that cannot be
+      # provisioned any more, and because `secrets` is not available in a step
+      # `if:`, it silently never ran even when a PFX was configured.
+      #
+      # Configure a cloud-HSM provider instead (vars.MEI_SIGNING_PROVIDER):
+      #   secrets AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+      #   vars    MEI_TS_ENDPOINT / MEI_TS_ACCOUNT / MEI_TS_PROFILE
+      # With no provider the step says so and the stable-release gate below still
+      # refuses to publish. Mei never generates a fake certificate to look signed.
+      - name: Sign the executables (Authenticode, cloud HSM)
+        if: ${{ vars.MEI_SIGNING_PROVIDER == 'azure-trusted-signing' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.MEI_TS_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.MEI_TS_ACCOUNT }}
+          certificate-profile-name: ${{ vars.MEI_TS_PROFILE }}
+          files-folder: dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Record signing status
         shell: pwsh
+        env:
+          MEI_SIGNING_PROVIDER: ${{ vars.MEI_SIGNING_PROVIDER }}
         run: |
-          $signed = $null -ne (Get-AuthenticodeSignature "dist/Mei.exe").SignerCertificate
-          if ($signed) { $state = "signed" } else { $state = "UNSIGNED (no signing certificate configured)" }
-          "Authenticode status: $state" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          if ($env:MEI_SIGNING_PROVIDER -ne "azure-trusted-signing") {
+            "Authenticode: no signing provider configured (unsigned build)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          } else {
+            foreach ($file in @("dist/Mei.exe", "dist/MeiSetup.exe")) {
+              if (-not (Test-Path $file)) { throw "$file is missing" }
+              $sig = Get-AuthenticodeSignature $file
+              if (-not $sig.SignerCertificate) { throw "$file has no Authenticode signer" }
+              if ($sig.Status -ne "Valid") { throw "$file signature is not valid: $($sig.Status)" }
+              if (-not $sig.TimeStamperCertificate) { throw "$file is not timestamped" }
+              "Authenticode: $file signed and timestamped" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            }
+          }
 
       # A stable release must never be published unsigned. Pre-releases may be
       # unsigned so maintainers can test the pipeline without a certificate;
@@ -116,11 +146,13 @@ jobs:
         if: ${{ !contains(github.ref_name, '-') }}
         shell: pwsh
         run: |
-          $sig = Get-AuthenticodeSignature "dist/Mei.exe"
-          if (-not $sig.SignerCertificate) { throw "Stable release has no Authenticode signer" }
-          if ($sig.Status -ne "Valid") { throw "Authenticode signature is not valid: $($sig.Status)" }
-          if (-not $sig.TimeStamperCertificate) { throw "Stable release is not timestamped" }
-          "Authenticode: stable signing verified" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          foreach ($file in @("dist/Mei.exe", "dist/MeiSetup.exe")) {
+            $sig = Get-AuthenticodeSignature $file
+            if (-not $sig.SignerCertificate) { throw "Stable release has no Authenticode signer for $file" }
+            if ($sig.Status -ne "Valid") { throw "$file signature is not valid: $($sig.Status)" }
+            if (-not $sig.TimeStamperCertificate) { throw "Stable release is not timestamped ($file)" }
+          }
+          "Authenticode: stable signing verified for Mei.exe and MeiSetup.exe" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Record packaged artifact hash
         shell: pwsh
@@ -128,6 +160,9 @@ jobs:
           $hash = (Get-FileHash "dist/Mei.exe" -Algorithm SHA256).Hash.ToLower()
           $size = (Get-Item "dist/Mei.exe").Length
           "Mei.exe: $size bytes, sha256 $hash" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $setupHash = (Get-FileHash "dist/MeiSetup.exe" -Algorithm SHA256).Hash.ToLower()
+          $setupSize = (Get-Item "dist/MeiSetup.exe").Length
+          "MeiSetup.exe: $setupSize bytes, sha256 $setupHash" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Smoke-test the packaged application
         shell: pwsh
@@ -162,6 +197,7 @@ jobs:
             "tools/publish_release.py",
             "--tag", $env:GITHUB_REF_NAME,
             "--exe", "dist/Mei.exe",
+            "--installer", "dist/MeiSetup.exe",
             "--web-support", "web_support"
           )
           if ($env:GITHUB_REF_NAME -match "-") { $releaseArgs += "--prerelease" }

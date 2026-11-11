@@ -1159,6 +1159,37 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         slot = (getattr(self, "_window_slot_hint", "") or "").strip()
         return slot if slot in ("primary", "secondary") else "shared"
 
+    def on_local_content_blocked(self, url):
+        """A ``file://`` page outside Mei's trusted folders was refused.
+
+        The browsing profile leaves network access on for local content because
+        the bundled chain apps need it, so an arbitrary downloaded page must not
+        load by default. The user can still open it, explicitly and once.
+        """
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Local file blocked")
+        msg.setText(
+            "%s\n\nThis local file is outside Mei's own web_support folder. Local "
+            "pages can reach the network, so Mei does not open untrusted ones "
+            "by default." % url
+        )
+        msg.setInformativeText("Allow untrusted local files from now on?")
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+
+        def _open(_checked=False):
+            prefs.set_allow_untrusted_local_files(self.base_dir, True)
+            try:
+                self.tab_manager.add_tab(QUrl(url), "Local file", is_active=True)
+            except Exception:
+                pass
+
+        msg.button(QMessageBox.Yes).clicked.connect(_open)
+        # Non-modal: an exec_() here would block the renderer IPC same as the
+        # permission prompt did in v6.4.
+        msg.setModal(False)
+        msg.show()
+
     def _configure_web_profile(self, profile, off_the_record=False):
         data_path = app_paths.browser_data_path(self.base_dir)
         slot = self._shell_slot()
@@ -1173,7 +1204,10 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         except Exception:
             pass
         if hasattr(profile, "setHttpAcceptLanguage"):
-            profile.setHttpAcceptLanguage("en-US,en;q=0.9")
+            # A hard-coded header made Mei claim en-US to every site no matter
+            # who was using it. The stored value is validated before it reaches
+            # the header (prefs._clean_accept_language), so it cannot inject one.
+            profile.setHttpAcceptLanguage(prefs.get_accept_language(self.base_dir))
         if off_the_record:
             profile.setPersistentCookiesPolicy(QWebEngineProfile.NoPersistentCookies)
             if hasattr(profile, "setHttpCacheType"):
@@ -1193,6 +1227,11 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         settings = profile.settings()
         settings.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.JavascriptCanOpenWindows, True)
+        # Needed by the bundled chain apps, which are real file:// pages calling
+        # their deployed APIs, and Qt cannot scope the switch to one origin. The
+        # defence is the door, not the switch: BrowserPage.acceptNavigationRequest
+        # refuses untrusted local documents before they load (see
+        # browser/local_content_policy.py). Never widen FileUrls as well.
         settings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
         settings.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, False)
         settings.setAttribute(QWebEngineSettings.XSSAuditingEnabled, False)

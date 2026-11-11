@@ -9,6 +9,7 @@ The test keypair is generated at runtime. No private key is in this repository.
 """
 import base64
 import unittest
+from unittest import mock
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -164,18 +165,31 @@ class TestKeyRotation(unittest.TestCase):
 
 class TestShippedTrustStore(unittest.TestCase):
     def test_no_private_key_is_committed(self):
-        # The module may document the env var name, but it must not carry a key.
-        self.assertEqual(update_keys.TRUSTED_UPDATE_KEYS, {})
-        self.assertFalse(update_keys.signing_configured())
+        """The store may be empty, but whatever is pinned must be a public key.
+
+        This used to require an empty dict, which made pinning the real key look
+        like a test failure. What actually matters is that every value is a raw
+        32-byte Ed25519 *public* key; 64 bytes would mean a private seed was
+        committed. Empty stays valid: an unprovisioned build fails closed.
+        """
+        for key_id, value in update_keys.TRUSTED_UPDATE_KEYS.items():
+            with self.subTest(key_id=key_id):
+                raw = base64.b64decode(value, validate=True)
+                self.assertEqual(len(raw), 32, "a pinned key must be a raw Ed25519 public key")
+        if update_keys.CURRENT_UPDATE_KEY_ID:
+            self.assertIn(
+                update_keys.CURRENT_UPDATE_KEY_ID,
+                update_keys.TRUSTED_UPDATE_KEYS,
+                "CURRENT_UPDATE_KEY_ID must name a pinned key",
+            )
 
     def test_trusted_keys_returns_a_copy(self):
-        update_keys.TRUSTED_UPDATE_KEYS["x"] = "y"
-        try:
+        # patch.dict, not mutate-then-clear: clearing here would wipe a real
+        # pinned key for every test that runs afterwards.
+        with mock.patch.dict(update_keys.TRUSTED_UPDATE_KEYS, {"x": "y"}, clear=True):
             snapshot = update_keys.trusted_keys()
             snapshot.clear()
             self.assertEqual(update_keys.TRUSTED_UPDATE_KEYS, {"x": "y"})
-        finally:
-            update_keys.TRUSTED_UPDATE_KEYS.clear()
 
 
 if __name__ == "__main__":

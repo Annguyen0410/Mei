@@ -1,7 +1,7 @@
 # Mei - Custom QWebEnginePage for permissions (notifications, geolocation)
 import os
 
-from PyQt5.QtCore import QUrl
+from PyQt5.QtCore import QUrl, pyqtSignal
 from PyQt5.QtWebEngineWidgets import QWebEnginePage
 from PyQt5.QtWidgets import QMessageBox
 
@@ -435,6 +435,9 @@ def ensure_chrome_compat_script(profile, base_dir=None) -> None:
 
 
 class BrowserPage(QWebEnginePage):
+    #: Emitted when a ``file://`` document outside the trusted roots was refused.
+    localContentBlocked = pyqtSignal(str)
+
     def __init__(self, profile, parent, base_dir=None, host=None):
         super().__init__(profile, parent)
         # The page is owned by its QWebEngineView so discarding a hibernated
@@ -454,6 +457,14 @@ class BrowserPage(QWebEnginePage):
             except Exception:
                 pass
         self.featurePermissionRequested.connect(self._on_permission_requested)
+        # A refused local document is the user's to resolve, so tell the host
+        # window instead of letting the navigation fail with no explanation.
+        try:
+            handler = getattr(self._host, "on_local_content_blocked", None)
+            if callable(handler):
+                self.localContentBlocked.connect(handler)
+        except Exception:
+            pass
         # Seamless proxy authentication: Chromium asks the page for proxy
         # credentials at connection time; answer from the saved VPN config
         # instead of failing every request silently (v6.5 gap — SOCKS/HTTP
@@ -501,7 +512,11 @@ class BrowserPage(QWebEnginePage):
             incognito = bool(self.profile().isOffTheRecord())
         except Exception:
             incognito = False
-        saved = prefs.get_permission(self._base_dir, origin_str, feature_name)
+        # Private browsing does not read the persistent profile's answers either:
+        # a site the user once allowed the microphone in the normal profile must
+        # be asked again here. Reading it was how a private tab inherited a grant
+        # the user never made in this session, contradicting the comment above.
+        saved = None if incognito else prefs.get_permission(self._base_dir, origin_str, feature_name)
         if saved == "allow":
             self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionGrantedByUser)
             return
@@ -535,6 +550,58 @@ class BrowserPage(QWebEnginePage):
         msg.button(QMessageBox.No).clicked.connect(lambda: _decide("deny", False))
         msg.setModal(False)
         msg.show()
+
+    def _trusted_local_roots(self):
+        """Folders whose ``file://`` pages Mei ships or owns.
+
+        A host that owns extra roots can expose them as ``trusted_local_roots``;
+        a host without that attribute contributes none.
+        """
+        try:
+            extra = tuple(getattr(self._host, "trusted_local_roots", None) or ())
+        except (TypeError, AttributeError):
+            extra = ()
+        cache = getattr(self, "_local_roots_cache", None)
+        if cache is not None and cache[0] == extra:
+            return cache[1]
+        from litebrowser.browser import local_content_policy as policy
+
+        try:
+            roots = policy.trusted_local_roots(self._base_dir, extra)
+        except Exception:  # noqa: BLE001 - no roots means nothing is trusted
+            roots = ()
+        self._local_roots_cache = (extra, roots)
+        return roots
+
+    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+        """Refuse untrusted ``file://`` documents before they can load.
+
+        The profile keeps ``LocalContentCanAccessRemoteUrls`` on because the
+        bundled chain apps are real local pages calling their deployed APIs, and
+        Qt cannot scope that switch to one origin. The gate is therefore here:
+        a local document outside Mei's own folders never runs, so a downloaded
+        ``.html`` cannot use the switch at all. Other schemes are untouched.
+        """
+        if is_main_frame:
+            try:
+                from litebrowser.browser import local_content_policy as policy
+
+                target = url.toString() if hasattr(url, "toString") else str(url)
+                allow_untrusted = bool(
+                    self._base_dir and prefs.get_allow_untrusted_local_files(self._base_dir)
+                )
+                decision = policy.navigation_decision(target, self._trusted_local_roots(), allow_untrusted)
+                if decision == policy.BLOCK:
+                    try:
+                        self.localContentBlocked.emit(target)
+                    except Exception:
+                        pass
+                    return False
+            except Exception:
+                # A policy failure must not brick navigation; the engine's own
+                # rules still apply and the stored setting stays closed.
+                pass
+        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
     def _feature_name(self, feature):
         """Backwards-compatible name lookup; unknown features get a slug."""

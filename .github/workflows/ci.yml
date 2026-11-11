@@ -70,6 +70,13 @@ jobs:
         # log of a green run cannot tell Chromium 87 from 140.
         run: python tools/engine_report.py
 
+      - name: Engine security version
+        # Chromium base alone says nothing about Qt's backported patch stream
+        # (6.11.0 = 146, 6.11.3 = 155, both base 140). Fails when the shipped pin
+        # falls below litebrowser/core/engine_security.MIN_SECURITY_VERSION.
+        if: matrix.binding == 'PyQt6'
+        run: python tools/check_engine_security.py
+
       - name: Lint (unused imports, shadowed names, dead locals)
         run: python -m ruff check --select F401,F811,F841,F821 litebrowser tests tools
 

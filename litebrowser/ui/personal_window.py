@@ -4924,7 +4924,12 @@ class PersonalWindow(QMainWindow):
                 pass
         settings = view.settings()
         try:
-            settings.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
+            # This view shares the main browsing profile, so these two lines used
+            # to rewrite the *browser's* policy (Qt settings live on the profile,
+            # not the view). Match the browser instead: local files may not read
+            # other local files, and remote access for local content is defended
+            # before load by BrowserPage.acceptNavigationRequest.
+            settings.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, False)
             settings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
             settings.setAttribute(QWebEngineSettings.ScrollAnimatorEnabled, True)
             settings.setAttribute(QWebEngineSettings.ShowScrollBars, True)

@@ -7,6 +7,9 @@ Three artefacts go up together, because the app needs all three:
 * ``Mei.exe``                        — the build itself;
 * ``Mei-<version>-web_support.zip``  — the site folder that lives *beside* the exe
                                       (it is deliberately not bundled into it);
+* ``MeiSetup.exe``                   — the Inno Setup installer (optional; attached
+                                      when it exists so people do not have to
+                                      unpack a companion archive by hand);
 * ``update.json``                    — the channel manifest the app polls at
                                       ``releases/latest/download/update.json``:
                                       version, asset URL, size and **sha256**.
@@ -56,8 +59,8 @@ except ImportError:  # pragma: no cover - script invocation
 
 USAGE = (
     "usage: publish_release.py --tag v<version> [--repo owner/name] [--exe dist/Mei.exe]\n"
-    "       [--web-support dist/web_support] [--notes \"text\"] [--draft] [--prerelease]\n"
-    "       [--replace] [--dry-run | --local-only]"
+    "       [--web-support dist/web_support] [--installer dist/MeiSetup.exe] [--notes \"text\"]\n"
+    "       [--draft] [--prerelease] [--replace] [--dry-run | --local-only]"
 )
 
 API_ROOT = "https://api.github.com"
@@ -67,6 +70,7 @@ CHANGELOG = os.path.join("docs", "CHANGELOG.md")
 BODY_FILENAME = "RELEASE_BODY.md"
 DEFAULT_WEB_SUPPORT = os.path.join("dist", "web_support")
 DEFAULT_EXE = os.path.join("dist", product.ASSET_NAME)
+DEFAULT_INSTALLER = os.path.join("dist", "MeiSetup.exe")
 
 # A release body is read by people, not by the updater. The channel manifest is
 # English (it is data); download instructions and release notes are English too.
@@ -416,6 +420,7 @@ def publish(
     exe: str,
     web_support: str,
     notes: str,
+    installer: str = "",
     token: str,
     draft: bool = False,
     prerelease: bool = False,
@@ -429,6 +434,16 @@ def publish(
         raise FileNotFoundError(f"{exe} — build first: build_exe.bat")
     facts = verify_build(exe)
     print(f"{product.PRODUCT_NAME} {version}: {facts['size'] / (1024 * 1024):.1f} MB, sha256 {facts['sha256'][:16]}...")
+
+    # The installer is optional: a release built without Inno Setup still ships
+    # the exe, and this says so instead of failing at upload time.
+    setup = ""
+    if installer:
+        if os.path.isfile(installer):
+            setup = installer
+            print(f"  installer: {os.path.getsize(setup) / (1024 * 1024):.1f} MB ({os.path.basename(setup)})")
+        else:
+            print(f"  installer: {installer} not found — the release ships without MeiSetup.exe")
 
     site_zip = os.path.join(out_dir or os.path.dirname(os.path.abspath(exe)), web_support_name(version))
     site_url = ""
@@ -478,13 +493,14 @@ def publish(
 
     if skip_upload:
         print("Dry run — nothing was uploaded. The release would carry:")
-        for path in filter(None, (exe, site_zip, manifest_path, body_path)):
+        for path in filter(None, (exe, setup, site_zip, manifest_path, body_path)):
             print(f"    {os.path.basename(path)}  ({os.path.getsize(path) / (1024 * 1024):.1f} MB)")
         return {
             "manifest": manifest,
             "manifest_path": manifest_path,
             "body": body,
             "body_path": body_path,
+            "installer": setup,
             "uploaded": False,
         }
 
@@ -501,7 +517,7 @@ def publish(
     release_id = int(release.get("id") or 0)
     kind = "pre-release" if prerelease else "release"
     print(f"Release {tag} ready (id {release_id}, draft={bool(draft)}, {kind}).")
-    for path in filter(None, (exe, site_zip, manifest_path)):
+    for path in filter(None, (exe, setup, site_zip, manifest_path)):
         _upload_asset(repo, release_id, path, token, replace)
     print(f"Published: {release_page_url(repo)}")
     return {
@@ -510,6 +526,7 @@ def publish(
         "body_path": body_path,
         "body": body,
         "release": release,
+        "installer": setup,
         "uploaded": True,
     }
 
@@ -533,6 +550,7 @@ def main(argv=None) -> int:
     repo = _arg_value(args, "--repo", product.RELEASES_REPO)
     exe = _arg_value(args, "--exe", DEFAULT_EXE)
     web_support = _arg_value(args, "--web-support", DEFAULT_WEB_SUPPORT)
+    installer = _arg_value(args, "--installer", DEFAULT_INSTALLER)
     notes = _arg_value(args, "--notes")
     token = os.environ.get("GITHUB_TOKEN", "").strip()
 
@@ -555,6 +573,7 @@ def main(argv=None) -> int:
             repo=repo,
             exe=exe,
             web_support="" if "--no-web-support" in args else web_support,
+            installer="" if "--no-installer" in args else installer,
             notes=notes,
             token=token,
             draft="--draft" in args,

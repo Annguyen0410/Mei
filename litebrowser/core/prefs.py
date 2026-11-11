@@ -736,6 +736,78 @@ def set_permission(base_dir, origin, feature, policy):
     save_permissions(base_dir, perms)
 
 
+def get_allow_untrusted_local_files(base_dir) -> bool:
+    """Whether a file:// document outside Mei's trusted roots may load.
+
+    Off by default: the browsing profile keeps LocalContentCanAccessRemoteUrls
+    on for the bundled chain apps, so an arbitrary downloaded .html must not be
+    able to run with that switch in reach (see
+    ``browser/local_content_policy.py``).
+    """
+    return bool(load_prefs(base_dir).get("allow_untrusted_local_files", False))
+
+
+@profile_transaction
+def set_allow_untrusted_local_files(base_dir, value):
+    data = load_prefs(base_dir)
+    data["allow_untrusted_local_files"] = bool(value)
+    save_prefs(base_dir, data)
+
+
+#: What Chromium sends when the user has not chosen a language list.
+DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
+
+
+def get_accept_language(base_dir) -> str:
+    """The Accept-Language header Mei sends, validated before it is trusted.
+
+    A stored value is run through ``_clean_accept_language``: it reaches an HTTP
+    header, so CR/LF (header injection) and anything that is not a language tag
+    plus q-value is dropped instead of being sent.
+    """
+    raw = load_prefs(base_dir).get("accept_language", "")
+    cleaned = _clean_accept_language(raw)
+    return cleaned or DEFAULT_ACCEPT_LANGUAGE
+
+
+@profile_transaction
+def set_accept_language(base_dir, value):
+    data = load_prefs(base_dir)
+    cleaned = _clean_accept_language(value)
+    if cleaned:
+        data["accept_language"] = cleaned
+    else:
+        data.pop("accept_language", None)
+    save_prefs(base_dir, data)
+
+
+def _clean_accept_language(value) -> str:
+    """Keep only well-formed ``lang;q=x`` entries joined by commas.
+
+    Returns "" when nothing survives, which callers treat as "use the default".
+    """
+    text = str(value or "")
+    if any(ch in text for ch in "\r\n\0"):
+        text = text.replace("\r", " ").replace("\n", " ").replace("\0", " ")
+    entries = []
+    for part in text.split(","):
+        token = part.strip()
+        if not token or len(token) > 32:
+            continue
+        pieces = [piece.strip() for piece in token.split(";")]
+        tag = pieces[0]
+        if not tag or not all(ch.isalnum() or ch in "-*" for ch in tag):
+            continue
+        if len(pieces) == 1:
+            entries.append(tag)
+            continue
+        if len(pieces) == 2 and pieces[1].startswith("q=") and pieces[1][2:].replace(".", "", 1).isdigit():
+            entries.append("%s;%s" % (tag, pieces[1]))
+            continue
+        entries.append(tag)
+    return ",".join(entries[:12])
+
+
 def get_startup_prefs(base_dir):
     d = load_prefs(base_dir)
     return d.get("startup_mode", "restore"), d.get("home_url", "https://google.com") or "https://google.com"

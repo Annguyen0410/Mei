@@ -7,17 +7,18 @@ from its publisher, and pretending otherwise (a placeholder key, a generated
 key committed to the repo, or "skip verification if absent") would be worse than
 not updating at all.
 
-To provision it, once:
+To provision it, once (see docs/RELEASE_SIGNING.md for the full runbook):
 
-1. Generate an Ed25519 key **outside** this repository, e.g.
-   ``python -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; ..."``
-2. Store the private key only as the CI secret ``MEI_UPDATE_SIGNING_KEY``
-   (base64 raw 32 bytes) and/or in the maintainer's password manager.
-3. Put its base64 **public** key in ``TRUSTED_UPDATE_KEYS`` under a key id
-   (``mei-release-2026``). The matching ``private`` half must never be in git.
-4. Bump ``key_id`` for the next rotation and add the new key before switching
-   the publisher; keep the old key pinned until every supported version can
-   verify the new one.
+1. Run ``python tools/generate_update_key.py --key-id mei-release-2026 --out <file
+   outside this repo>``. It prints the block below and the private half, and
+   refuses to write a key into the repository.
+2. Store the private half only as the CI secret ``MEI_UPDATE_SIGNING_KEY``
+   (base64 raw 32 bytes) and in the maintainer's password manager.
+3. Put its base64 **public** key in ``TRUSTED_UPDATE_KEYS`` under that key id and
+   set ``CURRENT_UPDATE_KEY_ID`` to it. The matching private half must never be
+   in git.
+4. Rotate by adding the new id *while the old one is still pinned*, ship one
+   release that carries both, then switch the publisher and remove the old pin.
 
 Revocation: list an id in ``REVOKED_UPDATE_KEY_IDS`` and ship a patch release.
 A revoked key is refused even though it is still pinned, which is why rotation

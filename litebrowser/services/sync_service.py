@@ -10,20 +10,26 @@ machines can stay in step without any cloud.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import math
+import os
+import threading
 import urllib.error
 import urllib.parse
 from datetime import datetime
 import time
 import urllib.request
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from litebrowser.core import prefs
+from litebrowser.core import prefs, storage_health
+from litebrowser.core.log import get_logger
 from litebrowser.core.profile_lock import profile_transaction
+from litebrowser.core.storage_utils import write_json
 from litebrowser.services import (
     conflict_service,
     flashcard_service,
@@ -34,6 +40,68 @@ from litebrowser.services import (
 )
 
 SYNC_API_VERSION = 1
+
+_log = get_logger("sync_service")
+
+#: The push gate is stored twice: in sync_state.json for the UI and in this
+#: independent operation journal so damage to one file cannot open the gate.
+SYNC_JOURNAL_RELPATH = os.path.join("Recovery", "sync_operation_journal.json")
+SYNC_STAGING_RELPATH = os.path.join("Recovery", "sync_staging")
+SYNC_JOURNAL_VERSION = 1
+
+JOURNAL_CLEAN = "CLEAN"
+JOURNAL_PREPARING_PULL = "PREPARING_PULL"
+JOURNAL_FETCHED = "FETCHED"
+JOURNAL_APPLYING = "APPLYING"
+JOURNAL_ARCHIVE_PENDING = "ARCHIVE_PENDING"
+JOURNAL_PUSH_BLOCKED = "PUSH_BLOCKED"
+JOURNAL_APPLIED = "APPLIED"
+JOURNAL_BASELINE_COMMITTED = "BASELINE_COMMITTED"
+JOURNAL_RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
+
+SYNC_JOURNAL_STATES = frozenset(
+    {
+        JOURNAL_CLEAN,
+        JOURNAL_PREPARING_PULL,
+        JOURNAL_FETCHED,
+        JOURNAL_APPLYING,
+        JOURNAL_ARCHIVE_PENDING,
+        JOURNAL_PUSH_BLOCKED,
+        JOURNAL_APPLIED,
+        JOURNAL_BASELINE_COMMITTED,
+        JOURNAL_RECOVERY_REQUIRED,
+    }
+)
+#: Only a clean (nothing applied) or a verified baseline commit opens the gate.
+SYNC_JOURNAL_RESOLVED = frozenset({JOURNAL_CLEAN, JOURNAL_BASELINE_COMMITTED})
+
+PULL_SUCCESS = "SUCCESS"
+PULL_NO_REMOTE_SNAPSHOT = "NO_REMOTE_SNAPSHOT"
+PULL_NETWORK_ERROR = "NETWORK_ERROR"
+PULL_AUTH_ERROR = "AUTH_ERROR"
+PULL_ENDPOINT_INVALID = "ENDPOINT_INVALID"
+PULL_INVALID_BUNDLE = "INVALID_BUNDLE"
+PULL_ARCHIVE_FAILED = "ARCHIVE_FAILED"
+PULL_WRITE_FAILED = "WRITE_FAILED"
+PULL_BASELINE_FAILED = "BASELINE_FAILED"
+PULL_JOURNAL_FAILED = "JOURNAL_FAILED"
+PULL_RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
+
+#: Process-local fail-closed latch.  If neither the journal nor sync_state can
+#: be written, this session still refuses every push until restart.
+_FAIL_CLOSED: set[str] = set()
+_FAIL_CLOSED_LOCK = threading.Lock()
+
+
+class _NoRemoteSnapshot(str):
+    """A typed HTTP 404 marker, never recognised by matching ordinary text."""
+
+
+class _AuthFailure(str):
+    """A typed HTTP 401/403 marker."""
+
+
+_NO_REMOTE_SNAPSHOT = _NoRemoteSnapshot("No snapshot yet")
 
 #: A snapshot is remote input. These caps are checked before anything is
 #: applied, so an oversized or deeply nested body fails without touching the
@@ -77,6 +145,16 @@ class BundleMergeResult:
     @property
     def ok(self) -> bool:
         return not self.error and self.status in ("APPLIED", "UNCHANGED")
+
+
+@dataclass(frozen=True)
+class PullResult:
+    """A typed pull outcome; callers never infer safety from message text."""
+
+    ok: bool
+    status: str
+    message: str
+    applied: dict[str, int] | None = None
 
 
 def _rows_entity(key: str, counter: str, load, save) -> SyncEntity:
@@ -570,12 +648,20 @@ def _apply_bundle_result(base_dir: str, bundle: dict) -> BundleMergeResult:
 
 
 def _apply_bundle(base_dir: str, bundle: dict) -> dict:
-    """Compatibility wrapper returning applied counts.
+    """Apply a bundle or raise; failure is never returned as counts.
 
-    Callers that must make a safety decision use ``_apply_bundle_result`` so an
-    archive/write failure cannot be mistaken for success.
+    The old wrapper dropped the failure status, so an archive/write failure
+    looked exactly like a successful merge to every direct caller.  Safety
+    callers use ``_apply_bundle_result``; this compatibility entry point now
+    raises the same typed ``SyncMergeError`` instead of lying.
     """
-    return _apply_bundle_result(base_dir, bundle).applied
+    result = _apply_bundle_result(base_dir, bundle)
+    if not result.ok:
+        raise SyncMergeError(
+            result.status,
+            result.error or "The remote snapshot could not be applied safely.",
+        )
+    return result.applied
 
 
 def validate_endpoint(endpoint: str) -> tuple[str, str]:
@@ -682,66 +768,451 @@ def _request(url: str, token: str, method: str = "GET", payload=None) -> tuple[b
                     parsed = body
             return True, parsed, ""
     except urllib.error.HTTPError as exc:
-        return False, None, "No snapshot yet" if exc.code == 404 else str(exc)
+        if exc.code == 404:
+            return False, None, _NO_REMOTE_SNAPSHOT
+        if exc.code in (401, 403):
+            return False, None, _AuthFailure(str(exc))
+        return False, None, str(exc)
     except (OSError, ValueError, UnicodeError) as exc:
         return False, None, str(exc)
 
 
-def push(base_dir: str, endpoint: str, token: str) -> tuple[bool, str]:
-    state = life_service.load_sync_state(base_dir)
-    if state.get("push_blocked"):
-        return False, "Push blocked: a previous pull could not preserve a conflict. " + str(
-            state.get("push_blocked_reason") or "Resolve the conflict first."
+def sync_journal_path(base_dir: str) -> str:
+    return os.path.join(base_dir, SYNC_JOURNAL_RELPATH)
+
+
+def _base_key(base_dir: str) -> str:
+    return os.path.normcase(os.path.realpath(base_dir))
+
+
+def _mark_fail_closed(base_dir: str) -> None:
+    with _FAIL_CLOSED_LOCK:
+        _FAIL_CLOSED.add(_base_key(base_dir))
+
+
+def _is_fail_closed(base_dir: str) -> bool:
+    with _FAIL_CLOSED_LOCK:
+        return _base_key(base_dir) in _FAIL_CLOSED
+
+
+def _clear_fail_closed(base_dir: str) -> None:
+    with _FAIL_CLOSED_LOCK:
+        _FAIL_CLOSED.discard(_base_key(base_dir))
+
+
+def _load_sync_journal(base_dir: str) -> tuple[str, dict, str]:
+    """Return ``(MISSING|OK|DAMAGED, journal, detail)`` without guessing."""
+    result = storage_health.read_json_checked(sync_journal_path(base_dir), dict)
+    if result.status == "missing":
+        return "MISSING", {}, ""
+    if not result.ok:
+        return "DAMAGED", {}, result.detail or result.status
+    journal = dict(result.value)
+    if (
+        journal.get("kind") != "mei.sync_journal"
+        or journal.get("version") != SYNC_JOURNAL_VERSION
+    ):
+        return "DAMAGED", {}, "unrecognised sync safety journal"
+    state = str(journal.get("state") or "")
+    if state not in SYNC_JOURNAL_STATES:
+        return "DAMAGED", journal, f"unknown sync safety state {state!r}"
+    return "OK", journal, ""
+
+
+def _new_sync_journal(endpoint: str) -> dict:
+    now = int(time.time())
+    return {
+        "kind": "mei.sync_journal",
+        "version": SYNC_JOURNAL_VERSION,
+        "operation_id": uuid.uuid4().hex,
+        "state": JOURNAL_PREPARING_PULL,
+        "endpoint_sha256": hashlib.sha256(
+            str(endpoint or "").encode("utf-8")
+        ).hexdigest()[:16],
+        "started_at": now,
+        "updated_at": now,
+        "finished_at": 0,
+        "applied": {},
+        "failed_store": "",
+        "bundle_path": "",
+        "bundle_sha256": "",
+        "error": "",
+        "outcome": "",
+    }
+
+
+def _write_sync_journal(base_dir: str, journal: dict) -> bool:
+    journal["updated_at"] = int(time.time())
+    try:
+        write_json(sync_journal_path(base_dir), journal)
+        return True
+    except OSError as exc:
+        _log.warning("could not persist the sync safety journal: %s", exc)
+        return False
+
+
+def _set_journal_state(base_dir: str, journal: dict, state: str, **fields) -> bool:
+    journal["state"] = state
+    for key, value in fields.items():
+        journal[key] = value
+    return _write_sync_journal(base_dir, journal)
+
+
+def _stage_bundle(base_dir: str, journal: dict, bundle: dict) -> bool:
+    """Persist the remote snapshot before any store is touched."""
+    try:
+        raw = json.dumps(bundle, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return False
+    path = os.path.join(
+        base_dir, SYNC_STAGING_RELPATH, f"{journal.get('operation_id', '')}.json"
+    )
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        write_json(path, bundle)
+    except OSError as exc:
+        _log.warning("could not stage the remote sync snapshot: %s", exc)
+        return False
+    journal["bundle_path"] = os.path.relpath(path, base_dir).replace("\\", "/")
+    journal["bundle_sha256"] = hashlib.sha256(raw).hexdigest()
+    return True
+
+
+def _remove_staged(base_dir: str, journal: dict) -> None:
+    relative = str(journal.get("bundle_path") or "")
+    if not relative:
+        return
+    candidate = os.path.normpath(os.path.join(base_dir, relative.replace("/", os.sep)))
+    staging_root = os.path.normcase(
+        os.path.realpath(os.path.join(base_dir, SYNC_STAGING_RELPATH))
+    )
+    try:
+        if (
+            os.path.normcase(os.path.realpath(os.path.dirname(candidate)))
+            == staging_root
+        ):
+            os.remove(candidate)
+    except OSError:
+        pass
+
+
+def _editable_sync_state(base_dir: str) -> dict:
+    checked = life_service.load_sync_state_checked(base_dir)
+    if not checked.ok:
+        raise OSError(
+            f"sync state is {checked.status.lower()}; refusing to rewrite it"
         )
+    return dict(checked.value)
+
+
+def _push_gate(base_dir: str) -> tuple[bool, str]:
+    """The only push permission check; every caller goes through it."""
+    if _is_fail_closed(base_dir):
+        return (
+            False,
+            "Push blocked: this session could not persist its sync safety state.",
+        )
+    status, journal, detail = _load_sync_journal(base_dir)
+    if status == "DAMAGED":
+        return (
+            False,
+            "Push blocked: the sync safety journal is unreadable or invalid ("
+            + (detail or "unknown")
+            + "). Restore it or the profile from a verified backup.",
+        )
+    if status == "OK":
+        state = str(journal.get("state") or "")
+        if state not in SYNC_JOURNAL_RESOLVED:
+            reason = str(
+                journal.get("error") or "the previous sync did not finish safely"
+            )
+            return (
+                False,
+                f"Push blocked: sync safety state {state}. {reason} "
+                "Retry a pull to reconcile, or restore the profile from a verified backup.",
+            )
+    checked = life_service.load_sync_state_checked(base_dir)
+    if not checked.ok:
+        return (
+            False,
+            f"Push blocked: sync state is {checked.status.lower()}; "
+            "repair or restore sync_state.json before pushing.",
+        )
+    if checked.value.get("push_blocked"):
+        return False, "Push blocked: a previous pull could not preserve a conflict. " + str(
+            checked.value.get("push_blocked_reason") or "Resolve the conflict first."
+        )
+    return True, ""
+
+
+def push(base_dir: str, endpoint: str, token: str) -> tuple[bool, str]:
+    allowed, reason = _push_gate(base_dir)
+    if not allowed:
+        return False, reason
     endpoint, error = validate_endpoint(endpoint)
     if error:
         return False, error
-    ok, _resp, err = _request(endpoint + "/api/sync/push", token, method="POST", payload=_bundle(base_dir))
+    ok, _resp, err = _request(
+        endpoint + "/api/sync/push", token, method="POST", payload=_bundle(base_dir)
+    )
     if not ok:
         return False, "Push failed: %s" % (err or "connection error")
     _record_sync(base_dir, pushed_at=int(time.time()))
     return True, "Pushed snapshot."
 
 
-def pull(base_dir: str, endpoint: str, token: str) -> tuple[bool, str]:
+def pull_typed(base_dir: str, endpoint: str, token: str) -> PullResult:
+    """Pull with a durable safety journal and an explicit outcome type."""
     endpoint, error = validate_endpoint(endpoint)
     if error:
-        return False, error
+        return PullResult(False, PULL_ENDPOINT_INVALID, error)
+    prior_status, prior, prior_detail = _load_sync_journal(base_dir)
+    if prior_status == "DAMAGED":
+        return PullResult(
+            False,
+            PULL_RECOVERY_REQUIRED,
+            "Pull refused: the sync safety journal is unreadable or invalid; "
+            "repair or restore it before syncing again. " + (prior_detail or ""),
+        )
+    prior_unresolved = prior_status == "OK" and str(
+        prior.get("state") or ""
+    ) not in SYNC_JOURNAL_RESOLVED
+    journal = _new_sync_journal(endpoint)
+    if prior_unresolved:
+        # A retry must never erase the evidence of an earlier partial apply.
+        journal["previous"] = {
+            "operation_id": prior.get("operation_id", ""),
+            "state": prior.get("state", ""),
+            "error": prior.get("error", ""),
+            "applied": prior.get("applied") or {},
+            "failed_store": prior.get("failed_store", ""),
+            "bundle_path": prior.get("bundle_path", ""),
+        }
+        journal["state"] = JOURNAL_RECOVERY_REQUIRED
+        journal["error"] = "retrying after an unresolved sync operation"
+    if not _write_sync_journal(base_dir, journal):
+        _mark_fail_closed(base_dir)
+        return PullResult(
+            False,
+            PULL_JOURNAL_FAILED,
+            "Pull refused: the sync safety journal could not be written, so no remote data was applied.",
+        )
+
     ok, resp, err = _request(endpoint + "/api/sync/latest", token)
     if not ok:
-        return False, "Pull failed: %s" % (err or "connection error")
-    if not isinstance(resp, dict) or resp.get("kind") != "snapshot" or resp.get("api", 1) != SYNC_API_VERSION or resp.get("app", "litebrowser") not in ("litebrowser", "mei"):
-        return False, "Remote did not return a snapshot."
+        if err is _NO_REMOTE_SNAPSHOT:
+            if prior_unresolved:
+                _set_journal_state(
+                    base_dir,
+                    journal,
+                    JOURNAL_RECOVERY_REQUIRED,
+                    outcome=PULL_NO_REMOTE_SNAPSHOT,
+                    error="the server has no snapshot; the earlier unresolved sync still needs recovery",
+                )
+            else:
+                _set_journal_state(
+                    base_dir,
+                    journal,
+                    JOURNAL_CLEAN,
+                    outcome=PULL_NO_REMOTE_SNAPSHOT,
+                    finished_at=int(time.time()),
+                )
+            return PullResult(
+                False,
+                PULL_NO_REMOTE_SNAPSHOT,
+                "Pull skipped: the server has no snapshot yet.",
+            )
+        status = PULL_AUTH_ERROR if isinstance(err, _AuthFailure) else PULL_NETWORK_ERROR
+        message = "Pull failed: %s" % (err or "connection error")
+        if prior_unresolved:
+            _set_journal_state(
+                base_dir,
+                journal,
+                JOURNAL_RECOVERY_REQUIRED,
+                outcome=status,
+                error=message[:2000],
+            )
+        else:
+            _set_journal_state(
+                base_dir,
+                journal,
+                JOURNAL_CLEAN,
+                outcome=status,
+                error=message[:2000],
+                finished_at=int(time.time()),
+            )
+        return PullResult(False, status, message)
+
+    if (
+        not isinstance(resp, dict)
+        or resp.get("kind") != "snapshot"
+        or resp.get("api", 1) != SYNC_API_VERSION
+        or resp.get("app", "litebrowser") not in ("litebrowser", "mei")
+    ):
+        message = "Remote did not return a snapshot."
+        if prior_unresolved:
+            _set_journal_state(
+                base_dir,
+                journal,
+                JOURNAL_RECOVERY_REQUIRED,
+                outcome=PULL_INVALID_BUNDLE,
+                error=message,
+            )
+        else:
+            _set_journal_state(
+                base_dir,
+                journal,
+                JOURNAL_CLEAN,
+                outcome=PULL_INVALID_BUNDLE,
+                error=message,
+                finished_at=int(time.time()),
+            )
+        return PullResult(False, PULL_INVALID_BUNDLE, message)
     if not _bundle_within_limits(resp):
-        return False, "Remote snapshot is malformed or too large. Nothing was changed."
+        message = "Remote snapshot is malformed or too large. Nothing was changed."
+        if prior_unresolved:
+            _set_journal_state(
+                base_dir,
+                journal,
+                JOURNAL_RECOVERY_REQUIRED,
+                outcome=PULL_INVALID_BUNDLE,
+                error=message,
+            )
+        else:
+            _set_journal_state(
+                base_dir,
+                journal,
+                JOURNAL_CLEAN,
+                outcome=PULL_INVALID_BUNDLE,
+                error=message,
+                finished_at=int(time.time()),
+            )
+        return PullResult(False, PULL_INVALID_BUNDLE, message)
+
+    if not _stage_bundle(base_dir, journal, resp):
+        message = (
+            "Pull refused: the remote snapshot could not be staged safely, "
+            "so no local store was changed."
+        )
+        _mark_fail_closed(base_dir)
+        _set_journal_state(
+            base_dir,
+            journal,
+            JOURNAL_RECOVERY_REQUIRED,
+            outcome=PULL_JOURNAL_FAILED,
+            error=message,
+        )
+        return PullResult(False, PULL_JOURNAL_FAILED, message)
+    if not _set_journal_state(
+        base_dir, journal, JOURNAL_FETCHED
+    ) or not _set_journal_state(base_dir, journal, JOURNAL_APPLYING):
+        _mark_fail_closed(base_dir)
+        return PullResult(
+            False,
+            PULL_JOURNAL_FAILED,
+            "Pull refused: the sync safety journal could not record the apply step, so no local store was changed.",
+        )
+
     result = _apply_bundle_result(base_dir, resp)
+    journal["applied"] = dict(result.applied)
+    journal["failed_store"] = result.failed_store
     if not result.ok:
-        _block_push(base_dir, result.error or "The remote snapshot could not be applied safely.")
-        return False, "Pull blocked: " + (result.error or "The remote snapshot could not be applied safely.")
+        message = result.error or "The remote snapshot could not be applied safely."
+        state = (
+            JOURNAL_ARCHIVE_PENDING
+            if result.status == "ARCHIVE_FAILED"
+            else JOURNAL_RECOVERY_REQUIRED
+        )
+        _block_push(base_dir, message, journal=journal, state=state)
+        status = (
+            PULL_ARCHIVE_FAILED
+            if result.status == "ARCHIVE_FAILED"
+            else PULL_WRITE_FAILED
+        )
+        return PullResult(False, status, "Pull blocked: " + message, result.applied)
+
+    if not _set_journal_state(base_dir, journal, JOURNAL_APPLIED):
+        _mark_fail_closed(base_dir)
+        _block_push(
+            base_dir,
+            "the applied pull could not be recorded",
+            journal=journal,
+            state=JOURNAL_RECOVERY_REQUIRED,
+        )
+        return PullResult(
+            False,
+            PULL_RECOVERY_REQUIRED,
+            "Pull applied local data but could not record it durably; push was blocked.",
+            result.applied,
+        )
+
     try:
         _record_sync(base_dir, pulled_at=int(time.time()))
         _clear_push_block(base_dir)
     except OSError as exc:
-        _block_push(base_dir, f"Could not record the pull baseline: {exc}")
-        return False, "Pull could not record its baseline; push was blocked."
+        reason = f"Could not record the pull baseline: {exc}"
+        _block_push(base_dir, reason, journal=journal, state=JOURNAL_APPLIED)
+        return PullResult(
+            False,
+            PULL_BASELINE_FAILED,
+            "Pull applied local data but could not record its baseline; push was blocked. "
+            + reason,
+            result.applied,
+        )
+
+    if not _set_journal_state(
+        base_dir,
+        journal,
+        JOURNAL_BASELINE_COMMITTED,
+        outcome=PULL_SUCCESS,
+        error="",
+        finished_at=int(time.time()),
+    ):
+        _mark_fail_closed(base_dir)
+        _block_push(
+            base_dir,
+            "the committed pull could not be recorded",
+            journal=journal,
+            state=JOURNAL_RECOVERY_REQUIRED,
+        )
+        return PullResult(
+            False,
+            PULL_BASELINE_FAILED,
+            "Pull applied local data but its safety journal could not be committed; push was blocked.",
+            result.applied,
+        )
+    _remove_staged(base_dir, journal)
+    _clear_fail_closed(base_dir)
     applied = result.applied
     counts = " · ".join("%s=%s" % (k, v) for k, v in applied.items() if v)
-    return True, "Pulled snapshot. (%s)" % (counts or "no changes")
+    return PullResult(
+        True,
+        PULL_SUCCESS,
+        "Pulled snapshot. (%s)" % (counts or "no changes"),
+        applied,
+    )
+
+
+def pull(base_dir: str, endpoint: str, token: str) -> tuple[bool, str]:
+    result = pull_typed(base_dir, endpoint, token)
+    return result.ok, result.message
 
 
 def sync_now(base_dir: str, endpoint: str, token: str) -> tuple[bool, str]:
     # Read before publishing: publishing first replaces the only remote copy
     # and silently discards changes from the other device.
-    ok_pull, msg_pull = pull(base_dir, endpoint, token)
-    if not ok_pull and "No snapshot yet" not in msg_pull:
-        return False, msg_pull
+    result = pull_typed(base_dir, endpoint, token)
+    if not result.ok and result.status != PULL_NO_REMOTE_SNAPSHOT:
+        return False, result.message
     ok_push, msg_push = push(base_dir, endpoint, token)
-    return ok_push, (msg_pull + " " + msg_push if ok_push else msg_push)
+    if not ok_push:
+        return False, msg_push
+    return True, (result.message + " " + msg_push).strip()
 
 
 @profile_transaction
 def _record_sync(base_dir: str, pushed_at: int | None = None, pulled_at: int | None = None):
-    data = life_service.load_sync_state(base_dir)
+    data = _editable_sync_state(base_dir)
     if pushed_at:
         data["last_push_at"] = pushed_at
     if pulled_at:
@@ -751,17 +1222,47 @@ def _record_sync(base_dir: str, pushed_at: int | None = None, pulled_at: int | N
 
 
 @profile_transaction
-def _block_push(base_dir: str, reason: str) -> None:
-    data = life_service.load_sync_state(base_dir)
-    data["push_blocked"] = True
-    data["push_blocked_reason"] = str(reason)[:2000]
-    data["push_blocked_at"] = int(time.time())
-    life_service.save_sync_state(base_dir, data)
+def _block_push(
+    base_dir: str,
+    reason: str,
+    *,
+    journal: dict | None = None,
+    state: str = JOURNAL_PUSH_BLOCKED,
+) -> bool:
+    """Persist the block in two independent places and fail closed on error."""
+    safe_reason = str(reason)[:2000]
+    if journal is None:
+        status, loaded, _detail = _load_sync_journal(base_dir)
+        journal = loaded if status == "OK" else _new_sync_journal("")
+    if not journal.get("operation_id"):
+        journal["operation_id"] = uuid.uuid4().hex
+    journal["state"] = state
+    journal["error"] = safe_reason
+    journal["push_blocked_at"] = int(time.time())
+    journal_ok = _write_sync_journal(base_dir, journal)
+    state_ok = False
+    try:
+        data = _editable_sync_state(base_dir)
+        data["push_blocked"] = True
+        data["push_blocked_reason"] = safe_reason
+        data["push_blocked_at"] = int(time.time())
+        life_service.save_sync_state(base_dir, data)
+        state_ok = True
+    except OSError as exc:
+        _log.warning("could not persist the sync push block: %s", exc)
+    journal["block_metadata"] = {"journal": journal_ok, "sync_state": state_ok}
+    if journal_ok:
+        _write_sync_journal(base_dir, journal)
+    else:
+        _mark_fail_closed(base_dir)
+    # A partially persisted block is still safe (the surviving copy gates push)
+    # but it must never be reported as fully recorded.
+    return bool(journal_ok and state_ok)
 
 
 @profile_transaction
 def _clear_push_block(base_dir: str) -> None:
-    data = life_service.load_sync_state(base_dir)
+    data = _editable_sync_state(base_dir)
     if not data.get("push_blocked"):
         return
     data.pop("push_blocked", None)
@@ -771,6 +1272,8 @@ def _clear_push_block(base_dir: str) -> None:
 
 
 def last_sync(base_dir: str) -> int | None:
-    data = life_service.load_sync_state(base_dir)
-    value = int(data.get("last_sync_at") or 0)
+    checked = life_service.load_sync_state_checked(base_dir)
+    if not checked.ok:
+        return None
+    value = int(checked.value.get("last_sync_at") or 0)
     return value or None

@@ -67,7 +67,13 @@ MAX_SCRYPT_P = 4
 MAX_ENCRYPTED_BYTES = backup_service.MAX_TOTAL_BYTES + 32 * 1024 * 1024
 _LOCK = threading.Lock()
 PRIVATE_TEMP_DIR_NAME = "MeiSecureTemp"
+TEMP_ROOT_ENV = "MEI_SECURE_TEMP_ROOT"
+OPERATION_PREFIX = "op-"
+OPERATION_MANIFEST = "owner.json"
+OPERATION_KINDS = frozenset({"decrypt", "encrypt"})
+MEI_TEMP_FILE_PREFIXES = (".decrypted.zip.", "decrypted.zip.", "mei-temp-")
 STALE_TEMP_SECONDS = 24 * 60 * 60
+STALE_OWNERLESS_SECONDS = 7 * 24 * 60 * 60
 
 
 class EncryptedBackupError(OSError):
@@ -108,36 +114,254 @@ def _strict_hex(value, length: int) -> bytes:
     return decoded
 
 
-def _private_temp_root() -> str:
-    """A Mei-owned private directory, not the shared user temp directory."""
-    root = os.path.join(tempfile.gettempdir(), PRIVATE_TEMP_DIR_NAME)
-    os.makedirs(root, mode=0o700, exist_ok=True)
+def _temp_parent() -> str:
+    r"""The user-specific parent for Mei plaintext temp operations.
+
+    On Windows this is ``%LOCALAPPDATA%\Mei\Temp``: a directory whose inherited
+    DACL belongs to the signed-in user.  ``os.chmod(0o700)`` does not grant a
+    Windows DACL, so this module does not claim it does; privacy there comes
+    from the parent's inherited ACL.  On POSIX the root is uid-specific and
+    explicitly mode 0700.
+    """
+    override = os.environ.get(TEMP_ROOT_ENV, "").strip()
+    if override:
+        return os.path.abspath(override)
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        if local:
+            return os.path.join(local, "Mei", "Temp")
+        return os.path.join(
+            os.path.expanduser("~"), "AppData", "Local", "Mei", "Temp"
+        )
     try:
-        os.chmod(root, 0o700)
-    except OSError:
-        pass
+        uid = os.getuid()
+    except AttributeError:
+        uid = 0
+    return os.path.join(tempfile.gettempdir(), f"{PRIVATE_TEMP_DIR_NAME}-{uid}")
+
+
+def temp_privacy_status() -> dict:
+    """Describe the actual protection mechanism, not an assumed one."""
+    parent = _temp_parent()
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        user_specific = bool(local) and os.path.commonpath(
+            [os.path.normcase(os.path.abspath(parent)), os.path.normcase(os.path.abspath(local))]
+        ) == os.path.normcase(os.path.abspath(local))
+        mechanism = (
+            "inherited per-user DACL from LOCALAPPDATA"
+            if user_specific
+            else "user profile directory; DACL not independently verified"
+        )
+    else:
+        user_specific = True
+        mechanism = "uid-specific directory with mode 0700"
+    return {
+        "root": _private_temp_root(),
+        "parent": parent,
+        "platform": "windows" if os.name == "nt" else "posix",
+        "user_specific": bool(user_specific),
+        "mechanism": mechanism,
+        "explicit_acl": False,
+    }
+
+
+def _private_temp_root() -> str:
+    """A Mei-owned, user-specific private directory for plaintext operations."""
+    root = os.path.join(_temp_parent(), PRIVATE_TEMP_DIR_NAME)
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    if os.name != "nt":
+        try:
+            os.chmod(root, 0o700)
+        except OSError:
+            pass
     return root
 
 
-def _private_temp_dir(prefix: str) -> str:
-    path = os.path.join(_private_temp_root(), f"{prefix}{uuid.uuid4().hex}")
-    os.makedirs(path, mode=0o700, exist_ok=False)
+def _process_start_token(pid: int) -> str:
+    """Best-effort process creation identity, used to detect PID reuse."""
     try:
-        os.chmod(path, 0o700)
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return ""
+    if pid <= 0:
+        return ""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if not handle:
+                return ""
+            try:
+                created = wintypes.FILETIME()
+                exited = wintypes.FILETIME()
+                kernel = wintypes.FILETIME()
+                user = wintypes.FILETIME()
+                if not ctypes.windll.kernel32.GetProcessTimes(
+                    handle,
+                    ctypes.byref(created),
+                    ctypes.byref(exited),
+                    ctypes.byref(kernel),
+                    ctypes.byref(user),
+                ):
+                    return ""
+                return str((created.dwHighDateTime << 32) | created.dwLowDateTime)
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:  # identity is optional; liveness is the hard rule
+            return ""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
+            fields = handle.read().split()
+        return fields[21]
+    except (OSError, IndexError):
+        return ""
+
+
+def _process_alive(pid: int) -> bool:
+    """True only when the process still exists (not merely a reused PID)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if not handle:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                if not ctypes.windll.kernel32.GetExitCodeProcess(
+                    handle, ctypes.byref(code)
+                ):
+                    return False
+                return code.value == 259  # STILL_ACTIVE
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _operation_dir(kind: str) -> tuple[str, dict]:
+    """Create one owned plaintext operation directory before it holds bytes."""
+    if kind not in OPERATION_KINDS:
+        raise ValueError(f"unknown temporary operation kind: {kind}")
+    root = _private_temp_root()
+    operation_id = uuid.uuid4().hex
+    path = os.path.join(root, OPERATION_PREFIX + operation_id)
+    os.makedirs(path, mode=0o700, exist_ok=False)
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+    owner = {
+        "kind": "mei.temp_operation",
+        "version": 1,
+        "operation_id": operation_id,
+        "operation": kind,
+        "pid": os.getpid(),
+        "process_start": _process_start_token(os.getpid()),
+        "created_at": int(time.time()),
+        "lease_until": int(time.time()) + STALE_TEMP_SECONDS,
+    }
+    try:
+        from litebrowser.core.storage_utils import write_json
+
+        write_json(os.path.join(path, OPERATION_MANIFEST), owner)
+    except OSError:
+        shutil.rmtree(path, ignore_errors=True)
+        raise
+    return path, owner
+
+
+def _read_owner(path: str) -> dict | None:
+    from litebrowser.core import storage_health
+
+    result = storage_health.read_json_checked(
+        os.path.join(path, OPERATION_MANIFEST), dict
+    )
+    if not result.ok:
+        return None
+    owner = dict(result.value)
+    if owner.get("kind") != "mei.temp_operation" or owner.get("version") != 1:
+        return None
+    try:
+        pid = int(owner.get("pid") or 0)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    owner["pid"] = pid
+    return owner
+
+
+def _owner_is_live(owner: dict) -> bool:
+    pid = int(owner.get("pid") or 0)
+    if pid == os.getpid():
+        return True
+    if not _process_alive(pid):
+        return False
+    recorded = str(owner.get("process_start") or "")
+    current = _process_start_token(pid)
+    if recorded and current:
+        # A live PID with a different creation identity was reused.
+        return recorded == current
+    # Alive but identity could not be read: never delete a possibly live op.
+    return True
+
+
+def _is_mei_temp_file(name: str) -> bool:
+    return any(name.startswith(prefix) for prefix in MEI_TEMP_FILE_PREFIXES)
+
+
+def _release_operation(path: str) -> None:
+    parent = os.path.realpath(os.path.dirname(path))
+    if parent != os.path.realpath(_private_temp_root()):
+        return
+    if not os.path.basename(path).startswith(OPERATION_PREFIX):
+        return
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _release_plain_temp(path: str) -> None:
+    try:
+        os.unlink(path)
     except OSError:
         pass
-    return path
+    parent = os.path.dirname(path)
+    if os.path.basename(parent).startswith(OPERATION_PREFIX):
+        _release_operation(parent)
 
 
 def cleanup_stale_temp(*, now: int | None = None, max_age: int = STALE_TEMP_SECONDS) -> list[str]:
-    """Remove only abandoned Mei-owned plaintext temp files.
+    """Remove only abandoned Mei-owned plaintext operations.
 
-    The caller may have crashed before ``finally`` ran.  Every candidate must be
-    directly under the private root, must not be a symlink, and must be older
-    than ``max_age``.  Unrelated files and recent in-flight work are untouched.
+    A directory owned by a live process is never removed, however old it is.
+    PID reuse is detected with the recorded process creation identity.  A
+    directory with a missing or invalid owner manifest is preserved for seven
+    days instead of guessing.  Files outside the managed root, unrelated names
+    and symlinks are never touched.
     """
     root = os.path.realpath(_private_temp_root())
-    cutoff = int(now if now is not None else time.time()) - max(0, int(max_age))
+    current = int(now if now is not None else time.time())
+    cutoff = current - max(0, int(max_age))
+    ownerless_cutoff = current - max(int(max_age), STALE_OWNERLESS_SECONDS)
     removed: list[str] = []
     try:
         names = os.listdir(root)
@@ -146,16 +370,34 @@ def cleanup_stale_temp(*, now: int | None = None, max_age: int = STALE_TEMP_SECO
     for name in names:
         path = os.path.join(root, name)
         try:
-            if os.path.islink(path) or os.path.realpath(os.path.dirname(path)) != root:
-                continue
-            stat = os.lstat(path)
-            if stat.st_mtime > cutoff:
+            info = os.lstat(path)
+            # Never follow a symlink out of the managed root.
+            if os.path.islink(path):
                 continue
             if os.path.isdir(path):
+                if not name.startswith(OPERATION_PREFIX):
+                    continue
+                owner = _read_owner(path)
+                if owner is None:
+                    if info.st_mtime > ownerless_cutoff:
+                        continue
+                    shutil.rmtree(path, ignore_errors=False)
+                    removed.append(path)
+                    continue
+                if _owner_is_live(owner):
+                    continue
+                created = int(owner.get("created_at") or 0)
+                if info.st_mtime > cutoff and created > cutoff:
+                    continue
                 shutil.rmtree(path, ignore_errors=False)
+                removed.append(path)
             else:
+                if not _is_mei_temp_file(name):
+                    continue
+                if info.st_mtime > cutoff:
+                    continue
                 os.unlink(path)
-            removed.append(path)
+                removed.append(path)
         except OSError as exc:
             _log.warning("could not clean stale encrypted-backup temp %s: %s", path, exc)
     return removed
@@ -371,11 +613,13 @@ def decrypt_to_temp(path: str, password: str) -> tuple[str, dict]:
     ciphertext_size = size - offset - TAG_BYTES
     if ciphertext_size <= 0:
         raise EncryptedBackupError("Encrypted payload is truncated.", status="truncated")
-    fd, plain_path = tempfile_mkstemp_same_dir(_private_temp_root(), "decrypted.zip")
-    try:
-        os.chmod(plain_path, 0o600)
-    except OSError:
-        pass
+    operation_dir, _owner = _operation_dir("decrypt")
+    fd, plain_path = tempfile_mkstemp_same_dir(operation_dir, "decrypted.zip")
+    if os.name != "nt":
+        try:
+            os.chmod(plain_path, 0o600)
+        except OSError:
+            pass
     try:
         digest = hashlib.sha256()
         with open(path, "rb") as source, os.fdopen(fd, "wb") as target:
@@ -416,10 +660,7 @@ def decrypt_to_temp(path: str, password: str) -> tuple[str, dict]:
             )
         return plain_path, header
     except Exception:
-        try:
-            os.unlink(plain_path)
-        except OSError:
-            pass
+        _release_plain_temp(plain_path)
         raise
     finally:
         key = b""
@@ -432,10 +673,7 @@ def verify_encrypted(path: str, password: str) -> dict:
         try:
             checked = backup_service.verify_backup(plain_path)
         finally:
-            try:
-                os.unlink(plain_path)
-            except OSError:
-                pass
+            _release_plain_temp(plain_path)
         checked["encrypted"] = True
         checked["encrypted_header"] = header
         checked["path"] = path
@@ -474,10 +712,7 @@ def materialized(path: str, password: str | None):
     try:
         yield plain_path
     finally:
-        try:
-            os.unlink(plain_path)
-        except OSError:
-            pass
+        _release_plain_temp(plain_path)
 
 
 def create_encrypted_backup(
@@ -501,7 +736,7 @@ def create_encrypted_backup(
         )
     if not _LOCK.acquire(blocking=False):
         return backup_service.BackupResult(ok=False, error="Another encrypted backup is already in progress.")
-    temporary_dir = _private_temp_dir("encrypt-")
+    temporary_dir, _owner = _operation_dir("encrypt")
     try:
         policy = backup_service.load_policy(base_dir)
         target_dir = os.path.abspath(destination or policy.destination)
@@ -545,7 +780,7 @@ def create_encrypted_backup(
         return backup_service.BackupResult(ok=False, error=f"Encrypted backup failed: {exc}")
     finally:
         _LOCK.release()
-        shutil.rmtree(temporary_dir, ignore_errors=True)
+        _release_operation(temporary_dir)
 
 
 __all__ = [
@@ -558,6 +793,7 @@ __all__ = [
     "MIN_PASSWORD_CHARS",
     "create_encrypted_backup",
     "cleanup_stale_temp",
+    "temp_privacy_status",
     "decrypt_to_temp",
     "inspect",
     "is_encrypted",

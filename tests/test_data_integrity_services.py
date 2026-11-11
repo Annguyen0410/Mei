@@ -494,6 +494,8 @@ class TestBackupScheduler(_Base):
                 "destination": self.dest,
                 "enabled": True,
                 "frequency": "daily",
+                "scheduled_protection": "plaintext",
+                "plaintext_acknowledged": True,
                 "daily_keep": 7,
                 "weekly_keep": 4,
                 "monthly_keep": 6,
@@ -511,7 +513,7 @@ class TestBackupScheduler(_Base):
         prefs.save_pref(
             self.base,
             "backup_policy",
-            {"destination": self.dest, "enabled": True, "frequency": "daily"},
+            {"destination": self.dest, "enabled": True, "frequency": "daily", "scheduled_protection": "plaintext", "plaintext_acknowledged": True},
         )
         scheduler = backup_scheduler.BackupScheduler(self.base)
         failed = backup_service.BackupResult(False, error="disk full")
@@ -527,7 +529,7 @@ class TestBackupScheduler(_Base):
         prefs.save_pref(
             self.base,
             "backup_policy",
-            {"destination": self.dest, "enabled": True, "frequency": "daily"},
+            {"destination": self.dest, "enabled": True, "frequency": "daily", "scheduled_protection": "plaintext", "plaintext_acknowledged": True},
         )
         write_json(
             restore_service.journal_path(self.base),

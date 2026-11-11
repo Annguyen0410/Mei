@@ -958,6 +958,7 @@ class PersonalWindow(QMainWindow):
     def __init__(self, base_dir: str, app_dir: str = None, embedded: bool = False):
         super().__init__()
         self.base_dir = prefs.ensure_profile_layout(base_dir)
+        self.profile_dir = self.base_dir
         self.app_dir = app_dir or app_paths.project_root()
         self.embedded = embedded
         self.current_note_id = None
@@ -1056,7 +1057,34 @@ class PersonalWindow(QMainWindow):
         # fully usable; they scroll/compact like they already do when the
         # window is narrow.
         self.stack.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.nav_splitter.addWidget(self.stack)
+        # The Personal Hub hosts Notes, Plan, Tasks, Review, Calendar and Boards.
+        # A damaged JSON store must not look like an empty page in any of them.
+        self._content_wrap = QWidget()
+        _content_layout = QVBoxLayout(self._content_wrap)
+        _content_layout.setContentsMargins(0, 0, 0, 0)
+        _content_layout.setSpacing(0)
+        self.page_store_notice = components.PageStoreNotice(
+            self,
+            (
+                "tasks.json",
+                "calendar.json",
+                "boards.json",
+                "saved_pages.json",
+                "personal_plan.json",
+                "flashcards.json",
+                "bookmarks.json",
+                "entity_links.json",
+                "tab_sets.json",
+                "workspaces.json",
+                "workspace.json",
+                "routines.json",
+                "feeds.json",
+                "monitors.json",
+            ),
+        )
+        _content_layout.addWidget(self.page_store_notice)
+        _content_layout.addWidget(self.stack, 1)
+        self.nav_splitter.addWidget(self._content_wrap)
         self.nav_splitter.setStretchFactor(0, 0)
         self.nav_splitter.setStretchFactor(1, 1)
         self.nav_splitter.setCollapsible(0, False)
@@ -1319,6 +1347,8 @@ class PersonalWindow(QMainWindow):
             theme.animate_entrance(self.stack.currentWidget())
 
     def refresh_all(self):
+        if hasattr(self, "page_store_notice"):
+            self.page_store_notice.refresh()
         now = time.time()
         if hasattr(self, "_last_refresh") and (now - self._last_refresh) < 2.0:
             return

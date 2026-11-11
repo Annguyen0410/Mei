@@ -225,13 +225,18 @@ class TestRestoreSelectionAndJournal(_Base):
         prefs.save_bookmarks(
             self.base, [{"title": "Current bookmark", "url": "https://example.test/one"}]
         )
-        tasks_path = os.path.normcase(os.path.abspath(os.path.join(self.base, "tasks.json")))
-        bookmarks_path = os.path.normcase(os.path.abspath(os.path.join(self.base, "bookmarks.json")))
+        def canonical(path):
+            return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+
+        tasks_path = canonical(os.path.join(self.base, "tasks.json"))
+        bookmarks_path = canonical(os.path.join(self.base, "bookmarks.json"))
         real_write = restore_service._write_bytes_atomic
+        hits = []
 
         def crash_after_first_target(path, data):
             real_write(path, data)
-            if os.path.normcase(os.path.abspath(path)) in {tasks_path, bookmarks_path}:
+            if canonical(path) in {tasks_path, bookmarks_path}:
+                hits.append(path)
                 raise KeyboardInterrupt("simulated process termination")
 
         with mock.patch.object(restore_service, "_write_bytes_atomic", side_effect=crash_after_first_target):
@@ -242,6 +247,7 @@ class TestRestoreSelectionAndJournal(_Base):
                     categories=["tasks", "bookmarks"],
                     confirm=True,
                 )
+        self.assertEqual(len(hits), 1, "the crash hook must intercept exactly one target")
         with open(restore_service.journal_path(self.base), encoding="utf-8") as handle:
             journal = json.load(handle)
         self.assertIn(journal["state"], {"APPLYING", "STAGED", "VERIFYING"})
@@ -313,24 +319,49 @@ class TestEncryptedHeaderAndTemp(_Base):
         self.assertFalse(checked["ok"])
         self.assertEqual(checked["status"], "invalid_header")
 
+    def _owner(self, path, pid):
+        manifest = {
+            "kind": "mei.temp_operation",
+            "version": 1,
+            "operation_id": os.path.basename(path)[3:],
+            "operation": "decrypt",
+            "pid": pid,
+            "process_start": "",
+            "created_at": 1,
+            "lease_until": 1,
+        }
+        with open(os.path.join(path, "owner.json"), "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+
     def test_stale_private_temp_is_cleaned_without_touching_unrelated_files(self):
+        def canonical(path):
+            return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+
         with tempfile.TemporaryDirectory() as tmp:
-            root = os.path.join(tmp, "MeiSecureTemp")
-            os.makedirs(root)
-            stale = os.path.join(root, "old-decrypt.zip")
-            fresh = os.path.join(root, "in-flight.zip")
-            unrelated = os.path.join(tmp, "unrelated.txt")
-            for path in (stale, fresh, unrelated):
-                with open(path, "wb") as handle:
-                    handle.write(b"plain")
-            os.utime(stale, (1, 1))
-            os.utime(fresh, (2**31 - 1, 2**31 - 1))
-            with mock.patch.object(encrypted_backup_service.tempfile, "gettempdir", return_value=tmp):
+            env = {encrypted_backup_service.TEMP_ROOT_ENV: tmp}
+            with mock.patch.dict(os.environ, env):
+                root = os.path.join(tmp, encrypted_backup_service.PRIVATE_TEMP_DIR_NAME)
+                os.makedirs(root)
+                stale = os.path.join(root, "op-" + "a" * 32)
+                fresh = os.path.join(root, "op-" + "b" * 32)
+                unrelated_dir = os.path.join(root, "not-an-operation")
+                unrelated = os.path.join(tmp, "unrelated.txt")
+                os.makedirs(stale)
+                os.makedirs(fresh)
+                os.makedirs(unrelated_dir)
+                self._owner(stale, 99999999)
+                self._owner(fresh, os.getpid())
+                with open(unrelated, "wb") as handle:
+                    handle.write(b"unrelated")
+                os.utime(stale, (1, 1))
+                os.utime(fresh, (1, 1))
+                os.utime(unrelated_dir, (1, 1))
                 removed = encrypted_backup_service.cleanup_stale_temp(now=2**31 - 1)
-            self.assertEqual(removed, [stale])
+            self.assertEqual([canonical(path) for path in removed], [canonical(stale)])
             self.assertFalse(os.path.exists(stale))
-            self.assertTrue(os.path.exists(fresh))
+            self.assertTrue(os.path.exists(fresh), "a live operation is never removed")
             self.assertTrue(os.path.exists(unrelated))
+            self.assertTrue(os.path.exists(unrelated_dir))
 
 
 class TestReleasePreflight(_Base):

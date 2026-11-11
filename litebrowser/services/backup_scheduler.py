@@ -120,6 +120,7 @@ class BackupScheduler:
         return {
             "enabled": bool(policy.enabled),
             "frequency": policy.frequency,
+            "protection": backup_service.scheduled_protection_status(self.base_dir),
             "due": bool(due),
             "running": bool(self._thread_lock.locked()),
             "restore_requires_review": _restore_needs_review(self.base_dir),
@@ -157,6 +158,15 @@ class BackupScheduler:
         if _migration_needs_review(self.base_dir):
             return self._finish(
                 moment, SchedulerResult("blocked_migration_review")
+            )
+        protection = backup_service.scheduled_protection_status(self.base_dir)
+        if not protection.get("ok"):
+            return self._finish(
+                moment,
+                SchedulerResult(
+                    "blocked_" + str(protection.get("reason") or "protection"),
+                    error=str(protection.get("warning") or ""),
+                ),
             )
         if not backup_service.due_for_backup(self.base_dir, now=moment):
             return self._finish(moment, SchedulerResult("not_due"))

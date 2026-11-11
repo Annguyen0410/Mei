@@ -131,6 +131,10 @@ class DataManagementDialog(QDialog):
         self.lbl_backup_status = QLabel("")
         self.lbl_backup_status.setWordWrap(True)
         layout.addWidget(self.lbl_backup_status)
+        self.lbl_backup_protection = QLabel("")
+        self.lbl_backup_protection.setWordWrap(True)
+        self.lbl_backup_protection.setObjectName("MutedLabel")
+        layout.addWidget(self.lbl_backup_protection)
         self.list_backups = QListWidget()
         layout.addWidget(self.list_backups, 1)
         row = QHBoxLayout()
@@ -176,6 +180,11 @@ class DataManagementDialog(QDialog):
             f"{status['backup_count']} archive(s) ({status.get('encrypted_count', 0)} encrypted) · {status['frequency']} "
             f"(daily {status['retention']['daily']}, weekly {status['retention']['weekly']}, "
             f"monthly {status['retention']['monthly']})"
+        )
+
+        protection = status.get("scheduled_protection") or {}
+        self.lbl_backup_protection.setText(
+            "Scheduled protection: " + str(protection.get("warning") or "unknown")
         )
 
     def _selected_backup(self) -> str:
@@ -297,6 +306,8 @@ class DataManagementDialog(QDialog):
             daily_keep=self.policy.daily_keep,
             weekly_keep=self.policy.weekly_keep,
             monthly_keep=self.policy.monthly_keep,
+            scheduled_protection=self.policy.scheduled_protection,
+            plaintext_acknowledged=self.policy.plaintext_acknowledged,
         )
         backup_service.save_policy(self.base_dir, updated)
         self.policy = updated

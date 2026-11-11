@@ -94,6 +94,79 @@ def _sha256_file(path: str) -> str:
         return ""
 
 
+TARGET_ORIGINAL = "ORIGINAL"
+TARGET_STAGED = "STAGED"
+TARGET_MISSING = "MISSING"
+TARGET_UNKNOWN = "UNKNOWN"
+TARGET_UNREADABLE = "UNREADABLE"
+
+
+@dataclass(frozen=True)
+class TargetProbe:
+    """What one restore target actually is right now.
+
+    ``_sha256_file`` returns an empty string for both a missing file and an I/O
+    failure.  Rollback must never treat those as the same thing: restoring over
+    a target that exists but could not be read would destroy whatever it holds.
+    """
+
+    path: str
+    exists: bool
+    readable: bool
+    sha256: str = ""
+    detail: str = ""
+
+
+def _probe_file(path: str) -> TargetProbe:
+    """Inspect one target without collapsing missing into unreadable."""
+    import stat as stat_module
+
+    try:
+        info = os.stat(path)
+    except FileNotFoundError:
+        return TargetProbe(path=path, exists=False, readable=False)
+    except NotADirectoryError:
+        return TargetProbe(path=path, exists=False, readable=False)
+    except PermissionError as exc:
+        return TargetProbe(path=path, exists=True, readable=False, detail=str(exc))
+    except OSError as exc:
+        return TargetProbe(path=path, exists=True, readable=False, detail=str(exc))
+    if stat_module.S_ISDIR(info.st_mode):
+        return TargetProbe(
+            path=path, exists=True, readable=False, detail="target is a directory"
+        )
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            while True:
+                block = handle.read(1024 * 1024)
+                if not block:
+                    break
+                digest.update(block)
+    except FileNotFoundError:
+        return TargetProbe(path=path, exists=False, readable=False)
+    except (PermissionError, OSError) as exc:
+        return TargetProbe(path=path, exists=True, readable=False, detail=str(exc))
+    return TargetProbe(path=path, exists=True, readable=True, sha256=digest.hexdigest())
+
+
+def _classify_target(path: str, entry: dict) -> tuple[str, TargetProbe]:
+    """Classify a journal target as ORIGINAL, STAGED, MISSING, UNKNOWN or UNREADABLE."""
+    probe = _probe_file(path)
+    if not probe.exists:
+        return TARGET_MISSING, probe
+    if not probe.readable:
+        return TARGET_UNREADABLE, probe
+    original_exists = bool(entry.get("original_exists"))
+    original_sha = str(entry.get("original_sha") or "")
+    staged_sha = str(entry.get("staged_sha") or "")
+    if original_exists and original_sha and probe.sha256 == original_sha:
+        return TARGET_ORIGINAL, probe
+    if staged_sha and probe.sha256 == staged_sha:
+        return TARGET_STAGED, probe
+    return TARGET_UNKNOWN, probe
+
+
 def _write_bytes_atomic(path: str, data: bytes) -> None:
     parent = os.path.dirname(os.path.abspath(path))
     os.makedirs(parent, exist_ok=True)
@@ -481,53 +554,159 @@ def _safe_rollback(staging: str, entry: dict) -> str:
     return target
 
 
-def _rollback_entries(base_dir: str, journal: dict) -> list[str]:
+def _persist_rollback_state(base_dir: str, journal: dict, journal_file: str) -> None:
+    """Make each rollback step durable before and after touching a target."""
+    if not journal_file:
+        return
+    journal["updated_at"] = int(time.time())
+    write_json(journal_file, journal)
+
+
+def _rollback_entries(
+    base_dir: str,
+    journal: dict,
+    *,
+    journal_file: str = "",
+    restore_missing: bool = True,
+) -> list[str]:
     """Restore each target from its verified rollback copy.
 
-    A target whose bytes match neither the recorded original nor the recorded
-    staged version is left untouched: another writer may have produced it, and
-    guessing would destroy data.  The caller then enters RECOVERY_REQUIRED.
+    Every target is classified first.  A target that is readable but matches
+    neither the recorded original nor the recorded staged bytes is left
+    untouched: another writer may have produced it, and guessing would destroy
+    data.  An unreadable target is never treated as missing.  Both cases are
+    reported so the caller records ``RECOVERY_REQUIRED`` and keeps every
+    artifact.
+
+    A missing target whose journal proves the original existed may be restored
+    from the verified rollback copy when ``restore_missing`` is explicitly set;
+    no current bytes exist to overwrite, so this only recovers the last known
+    version.
     """
     operation_id = str(journal.get("operation_id") or "")
     if not operation_id:
         return ["journal has no operation id"]
     staging = os.path.join(base_dir, STAGING_RELPATH, operation_id)
     errors: list[str] = []
-    for entry in reversed(_entries_from_journal(journal)):
-        try:
-            target = _safe_target(base_dir, entry)
-            original_exists = bool(entry.get("original_exists"))
-            original_sha = str(entry.get("original_sha") or "")
-            staged_sha = str(entry.get("staged_sha") or "")
-            current_sha = _sha256_file(target) if os.path.isfile(target) else ""
-            if original_exists:
-                if current_sha == original_sha:
-                    continue
-                rollback = _safe_rollback(staging, entry)
-                if not os.path.isfile(rollback):
-                    errors.append(f"rollback copy is missing for {entry.get('path')}")
-                    continue
-                if _sha256_file(rollback) != original_sha:
-                    errors.append(f"rollback copy is corrupt for {entry.get('path')}")
-                    continue
-                with open(rollback, "rb") as handle:
-                    data = handle.read()
-                _write_bytes_atomic(target, data)
-                if _sha256_file(target) != original_sha:
-                    errors.append(f"rollback verification failed for {entry.get('path')}")
-            else:
-                if not current_sha:
-                    continue
-                if current_sha != staged_sha:
+    with profile_locked(base_dir):
+        for entry in reversed(_entries_from_journal(journal)):
+            name = entry.get("path")
+            try:
+                target = _safe_target(base_dir, entry)
+                original_exists = bool(entry.get("original_exists"))
+                original_sha = str(entry.get("original_sha") or "")
+                state, probe = _classify_target(target, entry)
+                if original_exists:
+                    if state == TARGET_ORIGINAL:
+                        entry["status"] = "ORIGINAL"
+                        _persist_rollback_state(base_dir, journal, journal_file)
+                        continue
+                    if state == TARGET_UNKNOWN:
+                        errors.append(
+                            f"refusing to overwrite changed target {name} during rollback"
+                        )
+                        entry["status"] = "RECOVERY_REQUIRED"
+                        _persist_rollback_state(base_dir, journal, journal_file)
+                        continue
+                    if state == TARGET_UNREADABLE:
+                        errors.append(
+                            f"refusing to overwrite unreadable target {name} during rollback"
+                        )
+                        entry["status"] = "RECOVERY_REQUIRED"
+                        _persist_rollback_state(base_dir, journal, journal_file)
+                        continue
+                    if state == TARGET_MISSING and not restore_missing:
+                        errors.append(
+                            f"target {name} is missing and the recovery policy does not restore missing targets"
+                        )
+                        entry["status"] = "RECOVERY_REQUIRED"
+                        _persist_rollback_state(base_dir, journal, journal_file)
+                        continue
+                    if state == TARGET_STAGED or state == TARGET_MISSING:
+                        if not original_sha:
+                            raise RestoreError(
+                                f"journal has no original hash for {name}; refusing an approximate rollback"
+                            )
+                        rollback = _safe_rollback(staging, entry)
+                        rollback_probe = _probe_file(rollback)
+                        if not rollback_probe.exists:
+                            errors.append(f"rollback copy is missing for {name}")
+                            entry["status"] = "RECOVERY_REQUIRED"
+                            _persist_rollback_state(base_dir, journal, journal_file)
+                            continue
+                        if not rollback_probe.readable:
+                            errors.append(
+                                f"rollback copy is unreadable for {name}: {rollback_probe.detail}"
+                            )
+                            entry["status"] = "RECOVERY_REQUIRED"
+                            _persist_rollback_state(base_dir, journal, journal_file)
+                            continue
+                        if rollback_probe.sha256 != original_sha:
+                            errors.append(f"rollback copy is corrupt for {name}")
+                            entry["status"] = "RECOVERY_REQUIRED"
+                            _persist_rollback_state(base_dir, journal, journal_file)
+                            continue
+                        entry["status"] = "ROLLING_BACK"
+                        _persist_rollback_state(base_dir, journal, journal_file)
+                        with open(rollback, "rb") as handle:
+                            data = handle.read()
+                        _write_bytes_atomic(target, data)
+                        check = _probe_file(target)
+                        if not check.readable or check.sha256 != original_sha:
+                            errors.append(f"rollback verification failed for {name}")
+                            entry["status"] = "RECOVERY_REQUIRED"
+                            _persist_rollback_state(base_dir, journal, journal_file)
+                            continue
+                        entry["status"] = "ROLLED_BACK"
+                        _persist_rollback_state(base_dir, journal, journal_file)
+                        continue
                     errors.append(
-                        f"refusing to delete changed target {entry.get('path')} during rollback"
+                        f"unexpected rollback state {state} for {name}; target left untouched"
                     )
+                    entry["status"] = "RECOVERY_REQUIRED"
+                    _persist_rollback_state(base_dir, journal, journal_file)
                     continue
-                os.remove(target)
-                if os.path.exists(target):
-                    errors.append(f"could not remove restored file {entry.get('path')}")
-        except Exception as exc:  # each file is independent; report, never guess
-            errors.append(f"{entry.get('path')}: {exc}")
+                # The restore created this target; only delete bytes this
+                # operation provably wrote.
+                if state == TARGET_MISSING:
+                    entry["status"] = "ORIGINAL"
+                    _persist_rollback_state(base_dir, journal, journal_file)
+                    continue
+                if state == TARGET_UNKNOWN:
+                    errors.append(
+                        f"refusing to delete changed target {name} during rollback"
+                    )
+                    entry["status"] = "RECOVERY_REQUIRED"
+                    _persist_rollback_state(base_dir, journal, journal_file)
+                    continue
+                if state == TARGET_UNREADABLE:
+                    errors.append(
+                        f"refusing to delete unreadable target {name} during rollback"
+                    )
+                    entry["status"] = "RECOVERY_REQUIRED"
+                    _persist_rollback_state(base_dir, journal, journal_file)
+                    continue
+                if state == TARGET_STAGED:
+                    entry["status"] = "ROLLING_BACK"
+                    _persist_rollback_state(base_dir, journal, journal_file)
+                    os.remove(target)
+                    if os.path.exists(target):
+                        errors.append(f"could not remove restored file {name}")
+                        entry["status"] = "RECOVERY_REQUIRED"
+                    else:
+                        entry["status"] = "ROLLED_BACK"
+                    _persist_rollback_state(base_dir, journal, journal_file)
+                    continue
+                errors.append(f"unexpected rollback state {state} for {name}")
+                entry["status"] = "RECOVERY_REQUIRED"
+                _persist_rollback_state(base_dir, journal, journal_file)
+            except Exception as exc:  # each file is independent; report, never guess
+                errors.append(f"{name}: {exc}")
+                entry["status"] = "RECOVERY_REQUIRED"
+                try:
+                    _persist_rollback_state(base_dir, journal, journal_file)
+                except Exception:
+                    pass
     return errors
 
 
@@ -571,24 +750,21 @@ def recover_interrupted(base_dir: str, *, now: int | None = None) -> dict:
             statuses = []
             for entry in entries:
                 target = _safe_target(base_dir, entry)
-                current = _sha256_file(target) if os.path.isfile(target) else ""
-                original_exists = bool(entry.get("original_exists"))
-                original_sha = str(entry.get("original_sha") or "")
-                staged_sha = str(entry.get("staged_sha") or "")
-                if original_exists:
-                    if current == original_sha:
-                        statuses.append("original")
-                    elif current == staged_sha:
-                        statuses.append("staged")
-                    else:
-                        statuses.append("unknown")
+                state, _probe = _classify_target(target, entry)
+                if state == TARGET_ORIGINAL:
+                    statuses.append("original")
+                elif state == TARGET_STAGED:
+                    statuses.append("staged")
+                elif state == TARGET_MISSING:
+                    # A created target that is still missing is untouched; an
+                    # original target that is missing has lost its live bytes.
+                    statuses.append(
+                        "original" if not bool(entry.get("original_exists")) else "missing"
+                    )
+                elif state == TARGET_UNREADABLE:
+                    statuses.append("unreadable")
                 else:
-                    if not current:
-                        statuses.append("original")
-                    elif current == staged_sha:
-                        statuses.append("staged")
-                    else:
-                        statuses.append("unknown")
+                    statuses.append("unknown")
             pre = str(journal.get("pre_restore_backup") or "")
             all_staged = all(value == "staged" for value in statuses)
             all_original = all(value == "original" for value in statuses)
@@ -608,7 +784,7 @@ def recover_interrupted(base_dir: str, *, now: int | None = None) -> dict:
                 return {"status": "rolled_back", "journal_path": journal_file, "detail": ""}
             journal["state"] = "ROLLING_BACK"
             _journal(base_dir, journal)
-            errors = _rollback_entries(base_dir, journal)
+            errors = _rollback_entries(base_dir, journal, journal_file=journal_file)
             journal["state"] = "ROLLED_BACK" if not errors else "RECOVERY_REQUIRED"
             journal["finished_at"] = int(time.time())
             journal["rollback"] = "complete" if not errors else "failed: " + "; ".join(errors)[:2000]
@@ -777,14 +953,13 @@ def _restore_plain(
             for entry in entries:
                 target = _safe_target(base_dir, entry)
                 original_exists = bool(entry["original_exists"])
-                original_sha = str(entry["original_sha"])
-                current_sha = _sha256_file(target) if os.path.isfile(target) else ""
+                state, _probe = _classify_target(target, entry)
                 if original_exists:
-                    if current_sha != original_sha:
+                    if state != TARGET_ORIGINAL:
                         raise RestoreError(
-                            f"{entry['path']} changed while the restore was being prepared; refusing to overwrite it."
+                            f"{entry['path']} changed or became unreadable while the restore was being prepared; refusing to overwrite it."
                         )
-                elif current_sha:
+                elif state != TARGET_MISSING:
                     raise RestoreError(
                         f"{entry['path']} appeared while the restore was being prepared; refusing to overwrite it."
                     )
@@ -829,7 +1004,7 @@ def _restore_plain(
             journal["state"] = "ROLLING_BACK"
             if journal_file:
                 _journal(base_dir, journal)
-            errors = _rollback_entries(base_dir, journal)
+            errors = _rollback_entries(base_dir, journal, journal_file=journal_file)
             rollback_error = "; ".join(errors)
             journal["state"] = "RECOVERY_REQUIRED" if errors else "ROLLED_BACK"
             journal["finished_at"] = int(time.time())

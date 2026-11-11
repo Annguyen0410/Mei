@@ -188,7 +188,11 @@ class TestHttpConflictClosure(_Base):
         personal_plan.save_plan(self.base, plan)
         remote = dict(item, title="Remote item", updated_at=200)
         with mock.patch.object(sync_service, "_archive_http_conflict", return_value=False):
-            sync_service._apply_bundle(self.base, {"personal_plan": {"items": [remote]}})
+            with self.assertRaises(sync_service.SyncMergeError) as raised:
+                sync_service._apply_bundle(
+                    self.base, {"personal_plan": {"items": [remote]}}
+                )
+        self.assertEqual(raised.exception.status, "ARCHIVE_FAILED")
         self.assertEqual(personal_plan.load_plan(self.base)["items"][0]["title"], "Local item")
         self.assertEqual(conflict_service.list_conflicts(self.base), [])
 

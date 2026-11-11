@@ -1,8 +1,10 @@
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 
+from litebrowser.core import storage_health
 from litebrowser.core.profile_lock import profile_locked
 from litebrowser.core.storage_utils import read_json, write_json
 from litebrowser.services import history_service
@@ -385,16 +387,110 @@ def continue_reading_page(base_dir: str) -> dict | None:
     return best
 
 
+#: Checked sync-state statuses.  A caller that makes a safety decision must use
+#: the checked loader: a convenience default would erase the persisted push block.
+SYNC_STATE_HEALTHY = "HEALTHY"
+SYNC_STATE_MISSING = "MISSING"
+SYNC_STATE_EMPTY = "EMPTY"
+SYNC_STATE_CORRUPT = "CORRUPT"
+SYNC_STATE_UNREADABLE = "UNREADABLE"
+SYNC_STATE_INVALID_SCHEMA = "INVALID_SCHEMA"
+SYNC_STATE_RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
+
+_SYNC_STATE_READ_STATUSES = {
+    "ok": SYNC_STATE_HEALTHY,
+    "missing": SYNC_STATE_MISSING,
+    "empty": SYNC_STATE_EMPTY,
+    "unreadable": SYNC_STATE_UNREADABLE,
+    "invalid_encoding": SYNC_STATE_CORRUPT,
+    "malformed_json": SYNC_STATE_CORRUPT,
+    "too_large": SYNC_STATE_CORRUPT,
+    "wrong_root_type": SYNC_STATE_INVALID_SCHEMA,
+}
+
+
+def _default_sync_state() -> dict:
+    return {
+        "enabled": False,
+        "last_sync_at": 0,
+        "pending_changes": 0,
+        "mode": "local-cache",
+        "push_blocked": False,
+    }
+
+
+def _sync_state_schema_error(data: dict) -> str:
+    for key in ("enabled", "push_blocked"):
+        if key in data and not isinstance(data[key], bool):
+            return f"{key} must be a boolean"
+    for key in (
+        "last_sync_at",
+        "last_push_at",
+        "last_pull_at",
+        "pending_changes",
+        "push_blocked_at",
+    ):
+        if key in data and (
+            isinstance(data[key], bool)
+            or not isinstance(data[key], int)
+            or data[key] < 0
+        ):
+            return f"{key} must be a non-negative integer"
+    for key in ("mode", "push_blocked_reason"):
+        if key in data and not isinstance(data[key], str):
+            return f"{key} must be text"
+    return ""
+
+
+@dataclass(frozen=True)
+class SyncStateRead:
+    """One explicit outcome for the sync settings store."""
+
+    status: str
+    value: dict
+    path: str
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """A missing state is a legitimate first run; every damage state is not."""
+        return self.status in (SYNC_STATE_HEALTHY, SYNC_STATE_MISSING)
+
+    @property
+    def push_blocked(self) -> bool:
+        return bool(self.value.get("push_blocked"))
+
+
+def load_sync_state_checked(base_dir: str) -> SyncStateRead:
+    """Read sync_state.json without turning damage into a permissive default.
+
+    ``load_sync_state`` remains the UI history convenience API and still returns
+    a default object for a damaged file.  Every sync decision uses this checked
+    result, so an unreadable or corrupt file blocks a push instead of silently
+    dropping the persisted safety gate.
+    """
+    path = sync_state_path(base_dir)
+    result = storage_health.read_json_checked(path, dict)
+    if result.ok:
+        data = dict(result.value)
+        error = _sync_state_schema_error(data)
+        if error:
+            return SyncStateRead(
+                SYNC_STATE_INVALID_SCHEMA, _default_sync_state(), path, error
+            )
+        data.setdefault("enabled", False)
+        data.setdefault("last_sync_at", 0)
+        data.setdefault("pending_changes", 0)
+        data.setdefault("mode", "local-cache")
+        data.setdefault("push_blocked", False)
+        return SyncStateRead(SYNC_STATE_HEALTHY, data, path)
+    status = _SYNC_STATE_READ_STATUSES.get(result.status, SYNC_STATE_CORRUPT)
+    return SyncStateRead(status, _default_sync_state(), path, result.detail)
+
+
 def load_sync_state(base_dir: str):
     with profile_locked(base_dir):
-        data = read_json(sync_state_path(base_dir), None)
-    if not isinstance(data, dict):
-        return {"enabled": False, "last_sync_at": 0, "pending_changes": 0, "mode": "local-cache"}
-    data.setdefault("enabled", False)
-    data.setdefault("last_sync_at", 0)
-    data.setdefault("pending_changes", 0)
-    data.setdefault("mode", "local-cache")
-    return data
+        return load_sync_state_checked(base_dir).value
 
 
 def save_sync_state(base_dir: str, data):

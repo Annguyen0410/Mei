@@ -84,6 +84,11 @@ class BackupPolicy:
     daily_keep: int = DEFAULT_DAILY_KEEP
     weekly_keep: int = DEFAULT_WEEKLY_KEEP
     monthly_keep: int = DEFAULT_MONTHLY_KEEP
+    #: Scheduled archives are plaintext unless the user explicitly chose
+    #: machine-bound encryption.  This build does not implement that mode, so a
+    #: request for it is BLOCKED rather than silently downgraded to plaintext.
+    scheduled_protection: str = "plaintext"
+    plaintext_acknowledged: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -93,6 +98,8 @@ class BackupPolicy:
             "daily_keep": self.daily_keep,
             "weekly_keep": self.weekly_keep,
             "monthly_keep": self.monthly_keep,
+            "scheduled_protection": self.scheduled_protection,
+            "plaintext_acknowledged": self.plaintext_acknowledged,
         }
 
 
@@ -174,6 +181,9 @@ def load_policy(base_dir: str) -> BackupPolicy:
         except (TypeError, ValueError, OverflowError):
             return default
 
+    protection = str(raw.get("scheduled_protection") or "plaintext").strip().lower()
+    if protection not in ("plaintext", "encrypted"):
+        protection = "plaintext"
     return BackupPolicy(
         destination=destination,
         enabled=bool(raw.get("enabled", True)),
@@ -181,11 +191,61 @@ def load_policy(base_dir: str) -> BackupPolicy:
         daily_keep=keep("daily_keep", DEFAULT_DAILY_KEEP, 90),
         weekly_keep=keep("weekly_keep", DEFAULT_WEEKLY_KEEP, 52),
         monthly_keep=keep("monthly_keep", DEFAULT_MONTHLY_KEEP, 60),
+        scheduled_protection=protection,
+        plaintext_acknowledged=raw.get("plaintext_acknowledged") is True,
     )
 
 
 def save_policy(base_dir: str, policy: BackupPolicy) -> None:
     prefs.save_pref(base_dir, "backup_policy", policy.as_dict())
+
+
+def scheduled_protection_status(base_dir: str) -> dict:
+    """State exactly how a scheduled archive would be protected.
+
+    There is no plaintext-password fallback: a password is never persisted, so a
+    scheduled backup cannot be portable-password encrypted.  Machine-bound
+    encryption is not implemented in this build; requesting it must block the
+    scheduler instead of quietly writing a plaintext archive.
+    """
+    policy = load_policy(base_dir)
+    if policy.scheduled_protection == "encrypted":
+        return {
+            "mode": "blocked",
+            "requested": "encrypted",
+            "ok": False,
+            "explicit": False,
+            "reason": "machine_bound_encryption_unavailable",
+            "warning": (
+                "Scheduled encryption is not available in this build. No scheduled "
+                "backup will be written until you choose plaintext explicitly or "
+                "create a manual encrypted backup. Mei never stores a backup password."
+            ),
+        }
+    if not policy.plaintext_acknowledged:
+        return {
+            "mode": "plaintext",
+            "requested": "plaintext",
+            "ok": False,
+            "explicit": False,
+            "reason": "plaintext_not_acknowledged",
+            "warning": (
+                "Scheduled backups are plaintext ZIP archives. Confirm plaintext in "
+                "Backup settings, or use a manual password-encrypted backup for "
+                "confidential archives."
+            ),
+        }
+    return {
+        "mode": "plaintext",
+        "requested": "plaintext",
+        "ok": True,
+        "explicit": True,
+        "reason": "",
+        "warning": (
+            "Scheduled backups are plaintext ZIP archives. Manual encrypted backups "
+            "remain the portable confidential option."
+        ),
+    }
 
 
 def _redact(value, redacted: list[str]):
@@ -698,6 +758,7 @@ def status(base_dir: str) -> dict:
         "secret_store_excluded": True,
         "incognito_excluded": True,
         "encrypted_count": sum(1 for row in rows if row.get("encrypted")),
+        "scheduled_protection": scheduled_protection_status(base_dir),
     }
 
 
@@ -732,6 +793,7 @@ __all__ = [
     "list_backups",
     "load_policy",
     "save_policy",
+    "scheduled_protection_status",
     "status",
     "verify_backup",
     "write_manifest_sidecar",

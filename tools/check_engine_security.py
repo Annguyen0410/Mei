@@ -50,7 +50,10 @@ def runtime_qtwebengine_version() -> str:
             module = importlib.import_module(_RUNTIME_MODULES[binding])
         except Exception:  # noqa: BLE001 - a binding that will not import is absent
             continue
-        for attr in ("QTWEBENGINE_VERSION_STR", "QT_VERSION_STR"):
+        # PYQT_WEBENGINE_VERSION_STR is the WebEngine build itself and can be
+        # newer than the base PyQt6/QtCore version (6.11.1 vs 6.11.0 here), so it
+        # is preferred over Qt's own string.
+        for attr in ("QTWEBENGINE_VERSION_STR", "PYQT_WEBENGINE_VERSION_STR", "QT_VERSION_STR"):
             value = str(getattr(module, attr, "") or "").strip()
             if value:
                 return value

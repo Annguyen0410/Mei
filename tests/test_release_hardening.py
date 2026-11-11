@@ -230,6 +230,14 @@ class TestUpdateKeyTool(unittest.TestCase):
         self.assertIn("outside the repository", err)
         self.assertFalse(os.path.exists(inside))
 
+    def test_refuses_an_unexpanded_shell_variable(self):
+        # A PowerShell expression pasted into cmd.exe used to land as a relative
+        # path inside the repo, producing a refusal that never named the cause.
+        code, _out, err = self._run(["--key-id", "test-key", "--out", "$env:USERPROFILE\\mei-key.txt"])
+        self.assertEqual(code, 2)
+        self.assertIn("cmd.exe", err)
+        self.assertIn("did not expand", err)
+
     def test_refuses_to_overwrite_an_existing_key_file(self):
         self.assertEqual(self._run(["--key-id", "test-key", "--out", self.out])[0], 0)
         code, _out, err = self._run(["--key-id", "test-key", "--out", self.out])

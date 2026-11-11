@@ -75,6 +75,19 @@ def main(argv=None) -> int:
     if not args.out.strip():
         print("error: --out is required", file=sys.stderr)
         return 2
+    # A PowerShell expression pasted into cmd.exe arrives here unexpanded, and the
+    # literal string then resolves *inside* the repository — where this tool
+    # refuses to write. Name the real cause instead of a confusing refusal.
+    lowered_out = args.out.lower()
+    for token in ("$env:", "${", "%userprofile%", "%appdata%", "%temp%", "<", ">"):
+        if token in lowered_out:
+            print(
+                "error: --out contains '%s', which your shell did not expand.\n"
+                "       cmd.exe:    %%USERPROFILE%%\\mei-key.txt\n"
+                "       PowerShell: \"$env:USERPROFILE\\mei-key.txt\"" % token,
+                file=sys.stderr,
+            )
+            return 2
     if _inside_repo(args.out) and not args.force:
         print(
             "error: refusing to write the private key inside the repository.\n"

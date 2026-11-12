@@ -41,6 +41,13 @@ jobs:
       - name: Lint source
         run: python -m ruff check --select F401,F811,F841,F821 litebrowser tests tools
 
+      - name: Engine security version
+        # The same gate as ci.yml, run again here: a release tag can point at a
+        # commit whose ordinary CI run was green on a different engine, and the
+        # security version (not the Chromium base) is what decides how much of
+        # Qt's patch stream ships. Below the floor or unknown -> no build.
+        run: python tools/check_engine_security.py
+
       - name: Check daytime theme behavior
         run: python tools/run_at_hour.py 10
 
@@ -107,7 +114,10 @@ jobs:
       # refuses to publish. Mei never generates a fake certificate to look signed.
       - name: Sign the executables (Authenticode, cloud HSM)
         if: ${{ vars.MEI_SIGNING_PROVIDER == 'azure-trusted-signing' }}
-        uses: azure/trusted-signing-action@v0
+        # Pinned to the commit behind v0 (v0.5.11) rather than the moving major
+        # tag: this action holds the cloud-signing credentials, so what runs in
+        # this job must not change underneath a tag.
+        uses: azure/trusted-signing-action@1d365fec12862c4aa68fcac418143d73f0cea293  # v0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}

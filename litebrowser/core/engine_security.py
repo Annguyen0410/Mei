@@ -7,12 +7,17 @@ string:
 * the **security version** — how much of Qt's backported patch stream is in the
   build.
 
-Keys here are Qt WebEngine **runtime** versions, not PyPI package versions.
-Those differ: this project pins ``PyQt6-WebEngine==6.11.0``, whose wheel imports
-Qt 6.11.1, and it is Qt's patch stream (not the wheel label) that decides the
-security version. Reading the package version therefore *under*-reports the
-patch level, which is why ``tools/check_engine_security.py`` reads the runtime
-and why the diagnostics page passes the runtime version too.
+Keys here are Qt WebEngine **runtime** versions, not PyPI package versions. The
+runtime is read from Qt rather than from ``importlib.metadata`` because the
+wheel label is a package version while the security version follows the Qt
+patch stream that wheel actually imports.
+
+The pinned ``PyQt6-WebEngine==6.11.0`` reports runtime ``6.11.0`` — both in this
+project's venv (``QT_VERSION_STR``) and in CI's engine report — which is security
+version 146, exactly the current floor. An earlier revision of this comment
+claimed the wheel imported Qt 6.11.1 and therefore carried 148; that was never
+what the runtime reported, so it was corrected here rather than left to make a
+future upgrade plan look one patch stream rosier than it is.
 
 Qt ships 6.11.0 at 146, 6.11.1 at 148, 6.11.2 at 151 and 6.11.3 at 155, all on
 Chromium base 140. PyPI publishes no 6.11.1/6.11.2/6.11.3 *wheels*, so "bump the
@@ -68,13 +73,20 @@ def security_version_for(qt_webengine_version: str) -> int | None:
     return entry[1] if entry else UNKNOWN
 
 
-def meets_floor(security_version: int | None, floor: int = MIN_SECURITY_VERSION) -> bool:
+def meets_floor(security_version: int | None, floor: int | None = None) -> bool:
     """True when ``security_version`` is at least ``floor``.
+
+    ``floor`` defaults to :data:`MIN_SECURITY_VERSION`, read at call time rather
+    than bound as a default argument: a caller that raises the constant (and the
+    diagnostics page, which quotes it back to the user) must see the same number
+    the check just used.
 
     An unknown version does not meet the floor: "we could not tell" is not the
     same as "it is patched", and the point of the gate is to stop that being
     assumed.
     """
+    if floor is None:
+        floor = MIN_SECURITY_VERSION
     if security_version is None:
         return False
     try:

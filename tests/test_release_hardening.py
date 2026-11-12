@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -46,10 +47,83 @@ class TestLocalContentPolicy(unittest.TestCase):
         sibling = pathlib.Path(self._tmp.name, "web_support_old", "index.html").as_uri()
         self.assertEqual(policy.navigation_decision(sibling, (self.root,)), policy.BLOCK)
 
-    def test_file_url_with_a_host_authority_is_not_local_content(self):
-        # file://fileserver/share/x.html is a network document, not a local one.
+    def test_file_url_with_a_network_authority_is_blocked(self):
+        # file://fileserver/share/x.html is a UNC share, not local content. It
+        # used to read as "not local, therefore allowed", which put a network
+        # document behind LocalContentCanAccessRemoteUrls. This test used to
+        # assert exactly that ALLOW, so it was pinning the hole.
+        self.assertTrue(policy.is_file_url("file://fileserver/share/x.html"))
         self.assertFalse(policy.is_local_url("file://fileserver/share/x.html"))
-        self.assertEqual(policy.navigation_decision("file://fileserver/share/x.html", (self.root,)), policy.ALLOW)
+        self.assertEqual(
+            policy.navigation_decision("file://fileserver/share/x.html", (self.root,)),
+            policy.BLOCK,
+        )
+
+    def test_network_authority_is_blocked_even_with_the_untrusted_opt_in(self):
+        # The opt-in is about opening a downloaded page, not about letting the
+        # browser dial an SMB server on the user's behalf.
+        for url in (
+            "file://fileserver/share/x.html",
+            "file://127.0.0.1/share/x.html",
+            "file:////fileserver/share/x.html",
+            "file://///fileserver/share/x.html",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(
+                    policy.navigation_decision(url, (self.root,), True), policy.BLOCK
+                )
+
+    def test_file_url_without_a_usable_path_is_blocked(self):
+        for url in ("file:", "file://", "file:///"):
+            with self.subTest(url=url):
+                self.assertEqual(policy.navigation_decision(url, (self.root,)), policy.BLOCK)
+
+    def test_symlink_inside_the_root_cannot_escape_it(self):
+        # The name is inside web_support; the target is not. abspath() compared
+        # the name only, so a link (or junction) borrowed the folder's trust.
+        outside = os.path.join(self._tmp.name, "Downloads", "evil.html")
+        os.makedirs(os.path.dirname(outside), exist_ok=True)
+        with open(outside, "w", encoding="utf-8") as handle:
+            handle.write("<script>alert(1)</script>")
+        link = os.path.join(self.root, "innocent.html")
+        try:
+            os.symlink(outside, link)
+        except (OSError, NotImplementedError, AttributeError) as exc:
+            self.skipTest(f"symlinks unavailable here: {exc}")
+        self.assertEqual(
+            policy.navigation_decision(pathlib.Path(link).as_uri(), (self.root,)),
+            policy.BLOCK,
+        )
+
+    @unittest.skipUnless(os.name == "nt", "junctions are a Windows feature")
+    def test_junction_inside_the_root_cannot_escape_it(self):
+        outside = os.path.join(self._tmp.name, "elsewhere")
+        os.makedirs(outside, exist_ok=True)
+        link = os.path.join(self.root, "junction")
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", link, outside],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            self.skipTest(f"mklink /J unavailable: {(result.stderr or '').strip()}")
+        self.assertEqual(
+            policy.navigation_decision(pathlib.Path(link, "page.html").as_uri(), (self.root,)),
+            policy.BLOCK,
+        )
+
+    def test_a_page_inside_the_root_is_still_allowed_after_resolution(self):
+        self.assertEqual(
+            policy.navigation_decision(pathlib.Path(self.root, "index.html").as_uri(), (self.root,)),
+            policy.ALLOW,
+        )
+
+    @unittest.skipUnless(os.name == "nt", "drive-letter authority is a Windows form")
+    def test_drive_letter_authority_is_still_a_local_file(self):
+        # RFC 8089's "file://C:/x" form names a local file, so it is judged by
+        # the trusted roots instead of being refused as network content.
+        uri = pathlib.Path(self.root, "index.html").as_uri()
+        self.assertEqual(policy.navigation_decision("file://" + uri[len("file:///"):], (self.root,)), policy.ALLOW)
 
     def test_http_navigation_is_never_gated_here(self):
         for url in ("https://example.com/", "about:blank", "http://localhost:8080/"):
@@ -97,13 +171,33 @@ class TestWebEngineSettingsPinned(unittest.TestCase):
     def test_navigation_gate_is_installed(self):
         source = (ROOT / "litebrowser" / "browser" / "browser_page.py").read_text(encoding="utf-8")
         self.assertIn("def acceptNavigationRequest", source)
-        self.assertIn("policy.BLOCK", source)
+        self.assertIn("policy.ALLOW", source)
+
+    def _gate_body(self):
+        source = (ROOT / "litebrowser" / "browser" / "browser_page.py").read_text(encoding="utf-8")
+        start = source.index("def acceptNavigationRequest")
+        return source[start : source.index("def _feature_name", start)]
+
+    def test_navigation_gate_judges_every_frame(self):
+        # A subframe runs in the same renderer and reaches the same profile
+        # switch, so gating only the main frame left the hole open sideways.
+        self.assertNotIn("if is_main_frame", self._gate_body())
+
+    def test_navigation_gate_fails_closed(self):
+        body = self._gate_body()
+        self.assertIn("allowed = False", body, "a file: document is refused until judged")
+        self.assertIn("if allowed:", body, "only a positive decision may reach the engine")
+
+    def test_navigation_gate_only_supervises_file_urls(self):
+        # http(s)/about: keep the engine's own rules; the gate is not a URL filter.
+        body = self._gate_body()
+        self.assertIn('if scheme != "file":', body)
 
 
 class TestEngineSecurityFloor(unittest.TestCase):
     def test_the_whole_611_line_is_known_and_meets_the_current_floor(self):
-        # Keys are Qt runtime versions: the pinned 6.11.0 wheel imports Qt 6.11.1,
-        # so the package label would under-report the patch level.
+        # Keys are Qt runtime versions, read from Qt: the pinned wheel reports
+        # 6.11.0 (security version 146), not the 6.11.1 an earlier comment claimed.
         expected = {"6.11.0": 146, "6.11.1": 148, "6.11.2": 151, "6.11.3": 155}
         for version, security in expected.items():
             with self.subTest(version=version):

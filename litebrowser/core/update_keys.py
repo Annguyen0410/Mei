@@ -1,13 +1,13 @@
 """Publisher keys Mei pins for update-manifest verification.
 
-**This map is intentionally empty until a real publisher key exists.** An empty
-map means every remote update is refused ("untrusted key"): fail closed. That is
-the honest state — Mei has no signing key yet, so it cannot prove a release came
-from its publisher, and pretending otherwise (a placeholder key, a generated
-key committed to the repo, or "skip verification if absent") would be worse than
-not updating at all.
+This map ships with ``mei-release-2026b``, the key releases are signed with. An
+empty map stays a *valid* state — it means every remote update is refused
+("untrusted key"), which is the honest answer for a fork with no publisher key —
+but it is no longer the state of this tree, and a build that cannot verify its
+own releases cannot update at all. What must never happen is a placeholder pin,
+a private key in git, or "skip verification when absent".
 
-To provision it, once (see docs/RELEASE_SIGNING.md for the full runbook):
+To provision or rotate a key (see docs/RELEASE_SIGNING.md for the full runbook):
 
 1. Run ``python tools/generate_update_key.py --key-id mei-release-2026 --out <file
    outside this repo>``. It prints the block below and the private half, and

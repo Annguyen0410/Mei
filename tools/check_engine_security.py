@@ -6,9 +6,10 @@ stream is in the build: Qt ships 6.11.0 at 146 and 6.11.3 at 155, all on base
 ``engine_security.MIN_SECURITY_VERSION``, so the engine cannot get quieter over
 time.
 
-The version is read from Qt, not from ``importlib.metadata``: the pinned
-``PyQt6-WebEngine==6.11.0`` wheel imports Qt 6.11.1, so the package label
-under-reports the patch level.
+The version is read from Qt, not from ``importlib.metadata``: the package label
+is a wheel version, while the security version follows the Qt runtime that wheel
+imports. This project's pinned wheel reports 6.11.0 — 146, the floor — in CI and
+in a local venv.
 
     python tools/check_engine_security.py            # print + gate
     python tools/check_engine_security.py --report   # print only
@@ -50,9 +51,9 @@ def runtime_qtwebengine_version() -> str:
             module = importlib.import_module(_RUNTIME_MODULES[binding])
         except Exception:  # noqa: BLE001 - a binding that will not import is absent
             continue
-        # PYQT_WEBENGINE_VERSION_STR is the WebEngine build itself and can be
-        # newer than the base PyQt6/QtCore version (6.11.1 vs 6.11.0 here), so it
-        # is preferred over Qt's own string.
+        # PYQT_WEBENGINE_VERSION_STR is the WebEngine build itself and can differ
+        # from the base QtCore version, so it is preferred over Qt's own string;
+        # QT_VERSION_STR is the fallback when neither attribute is exposed.
         for attr in ("QTWEBENGINE_VERSION_STR", "PYQT_WEBENGINE_VERSION_STR", "QT_VERSION_STR"):
             value = str(getattr(module, attr, "") or "").strip()
             if value:

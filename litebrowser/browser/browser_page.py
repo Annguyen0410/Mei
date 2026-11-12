@@ -581,27 +581,46 @@ class BrowserPage(QWebEnginePage):
         Qt cannot scope that switch to one origin. The gate is therefore here:
         a local document outside Mei's own folders never runs, so a downloaded
         ``.html`` cannot use the switch at all. Other schemes are untouched.
-        """
-        if is_main_frame:
-            try:
-                from litebrowser.browser import local_content_policy as policy
 
-                target = url.toString() if hasattr(url, "toString") else str(url)
-                allow_untrusted = bool(
-                    self._base_dir and prefs.get_allow_untrusted_local_files(self._base_dir)
-                )
-                decision = policy.navigation_decision(target, self._trusted_local_roots(), allow_untrusted)
-                if decision == policy.BLOCK:
-                    try:
-                        self.localContentBlocked.emit(target)
-                    except Exception:
-                        pass
-                    return False
-            except Exception:
-                # A policy failure must not brick navigation; the engine's own
-                # rules still apply and the stored setting stays closed.
-                pass
-        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+        Every frame is judged, not just the main one: an untrusted document in
+        an iframe runs in the same renderer and reaches the same switch. The
+        decision also fails closed — a ``file:`` document whose policy cannot be
+        evaluated is refused, because the alternative is an unreviewed local page
+        running with that switch in reach. A redirect's target arrives here as
+        its own navigation request, so each hop is judged like the first.
+        """
+        try:
+            scheme = str(url.scheme() if hasattr(url, "scheme") else "").lower()
+        except Exception:  # noqa: BLE001 - an unreadable URL is not a file: document
+            scheme = ""
+        if scheme != "file":
+            return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+        try:
+            target = url.toString() if hasattr(url, "toString") else str(url)
+        except Exception:  # noqa: BLE001
+            target = ""
+
+        allowed = False
+        try:
+            from litebrowser.browser import local_content_policy as policy
+
+            allow_untrusted = bool(
+                self._base_dir and prefs.get_allow_untrusted_local_files(self._base_dir)
+            )
+            allowed = (
+                policy.navigation_decision(target, self._trusted_local_roots(), allow_untrusted)
+                == policy.ALLOW
+            )
+        except Exception:  # noqa: BLE001 - a gate that cannot judge must refuse
+            allowed = False
+        if allowed:
+            return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+        try:
+            self.localContentBlocked.emit(target)
+        except Exception:  # noqa: BLE001 - a host without the signal still gets the block
+            pass
+        return False
 
     def _feature_name(self, feature):
         """Backwards-compatible name lookup; unknown features get a slug."""

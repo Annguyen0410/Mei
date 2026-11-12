@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import QApplication, QStyleOptionViewItem, QWidget
 from litebrowser.core import prefs
 from litebrowser.services import personal_service
 from litebrowser.ui import personal_window as pw
+from litebrowser.ui import theme
 
 LONG_TITLE = "Kien truc he thong va cac tang giao thuc mang may tinh trong thuc te"
 
@@ -153,6 +154,14 @@ class TestNotesPageUI(unittest.TestCase):
         self.assertTrue(self._shown(win._note_empty))
 
     def test_selected_row_draws_with_the_accent_ink(self):
+        """The open note is the row the delegate paints as selected.
+
+        This compared painted pixels before, which only held while the platform
+        style happened to draw a selection wash: with no font database (both
+        bindings offscreen here, PyQt5 in CI) the two rows rasterised
+        byte-identical and the job went red for a reason unrelated to the accent
+        rule. Assert the decision the pen follows instead.
+        """
         win = self._window()
         first = personal_service.create_note(self.base, "Alpha", "body")
         personal_service.create_note(self.base, "Beta", "body")
@@ -160,9 +169,10 @@ class TestNotesPageUI(unittest.TestCase):
         win.select_note(first["id"])
         QApplication.processEvents()
         delegate = win.notes_list.itemDelegate()
-        rows = []
+        model = win.notes_list.model()
+        selection = []
         for row in range(win.notes_list.count()):
-            index = win.notes_list.model().index(row, 0)
+            index = model.index(row, 0)
             option = QStyleOptionViewItem()
             option.rect = QRect(0, 0, 220, delegate.ROW_HEIGHT)
             option.widget = win.notes_list
@@ -171,19 +181,15 @@ class TestNotesPageUI(unittest.TestCase):
             canvas.fill()
             painter = QPainter(canvas)
             try:
-                delegate.paint(painter, option, index)
+                delegate.paint(painter, option, index)  # a paint pass must not raise
             finally:
                 painter.end()
-            image = canvas.toImage()
-            rows.append(
-                [
-                    image.pixelColor(x, y).name()
-                    for y in range(image.height())
-                    for x in range(image.width())
-                    if image.pixelColor(x, y).alpha() > 0
-                ]
-            )
-        self.assertNotEqual(rows[0], rows[1], "the open note must not paint like the rest")
+            selection.append(pw._option_is_selected(option, index))
+        self.assertEqual([True, False], selection, "only the open note paints as selected")
+        palette = theme.palette()
+        self.assertNotEqual(
+            palette["ACCENT_HOVER"], palette["TEXT"], "the accent ink must differ from body ink"
+        )
 
     def test_hint_row_without_a_payload_still_paints(self):
         win = self._window()

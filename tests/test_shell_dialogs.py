@@ -11,6 +11,7 @@ The shell is too heavy to construct in this suite (WebEngine), so the contract
 is pinned two ways: the attribute wiring in ``AppShell.__init__`` is asserted
 from source, and both dialogs are built against a shell-shaped parent.
 """
+import contextlib
 import inspect
 import os
 import tempfile
@@ -51,6 +52,21 @@ class TestShellDialogContract(unittest.TestCase):
         self.parent.deleteLater()
         self._tmp.cleanup()
 
+    def _stubbed_modal(self):
+        """Stub the modal call under both spellings, always.
+
+        The dialogs call ``exec_()``. PyQt6 only has ``exec()`` and the shim
+        bridges it, so patching ``exec`` alone looks like it works — but on
+        PyQt5 ``exec_`` is the real slot, the patch leaves it live, and the
+        dialog opens a modal loop that never returns offscreen. That is what
+        hung the PyQt5 job until the runner's timeout cancelled it.
+        """
+        recorder = self._exec_recorder()
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(QDialog, "exec", recorder, create=True))
+        stack.enter_context(mock.patch.object(QDialog, "exec_", recorder, create=True))
+        return stack
+
     def _exec_recorder(self):
         def _exec(dialog):
             self.dialogs.append(dialog)
@@ -67,7 +83,7 @@ class TestShellDialogContract(unittest.TestCase):
         routines_service.add_routine(
             self.base, "Morning brief", "09:30", [0, 1, 2], ["/brief"]
         )
-        with mock.patch.object(QDialog, "exec", self._exec_recorder()):
+        with self._stubbed_modal():
             navigation.show_routines_dialog(self.parent)
         self.assertEqual(1, len(self.dialogs))
         dialog = self.dialogs[0]
@@ -75,7 +91,7 @@ class TestShellDialogContract(unittest.TestCase):
         self.assertTrue(dialog.findChildren(QPushButton))
 
     def test_export_dialog_builds_against_a_shell_shaped_parent(self):
-        with mock.patch.object(QDialog, "exec", self._exec_recorder()):
+        with self._stubbed_modal():
             navigation.show_export_dialog(self.parent)
         self.assertEqual(1, len(self.dialogs))
         dialog = self.dialogs[0]

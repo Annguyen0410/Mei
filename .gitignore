@@ -1,5 +1,7 @@
 # --- Python / virtualenv ---
 .venv/
+.venv-qt5/
+
 __pycache__/
 *.py[cod]
 .pytest_cache/

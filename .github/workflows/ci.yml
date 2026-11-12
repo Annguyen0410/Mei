@@ -91,9 +91,16 @@ jobs:
 
       - name: Tests
         # Tee the run into a file so the next step can say *what* failed.
+        # A step timeout shorter than the job's means a hung test reports the
+        # step as failed instead of eating the whole job budget and coming back
+        # as an unattributed "cancelled after 30m".
+        # faulthandler_timeout dumps every thread's stack when a test stops
+        # making progress, so a hang names its own test in the log: the PyQt5
+        # job used to hang for 30 minutes with no indication where.
+        timeout-minutes: 20
         shell: pwsh
         run: |
-          python -m pytest -p no:cacheprovider --no-header -q 2>&1 | Tee-Object -FilePath pytest.log
+          python -m pytest -p no:cacheprovider --no-header -q -o faulthandler_timeout=600 2>&1 | Tee-Object -FilePath pytest.log
           exit $LASTEXITCODE
 
       - name: Report the failing tests

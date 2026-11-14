@@ -15,10 +15,10 @@ requires-python = ">=3.10"
 # Production is Qt 6.11 only; see
 # docs/audit/MEI_BROWSER_COMPATIBILITY_MATRIX.md.
 dependencies = [
-    "PyQt6==6.11.0",
-    "PyQt6-WebEngine==6.11.0",
-    "cryptography>=41",
-    "segno>=1.6.0",
+    "PyQt6==6.12.0",
+    "PyQt6-WebEngine==6.140.0",
+    "cryptography>=50.0.2",
+    "segno>=1.6.6",
 ]
 
 [project.optional-dependencies]
@@ -27,9 +27,9 @@ dev = ["pytest>=7.0"]
 # of the modern web treats as unsupported (sign-in, WebAuthn, many JS APIs).
 # Kept only so an old checkout can still run its test suite; never ship it and
 # never advertise it as an install path.
-qt5 = ["PyQt5>=5.15", "PyQtWebEngine>=5.15"]
+qt5 = ["PyQt5>=5.15.11", "PyQtWebEngine>=5.15.7"]
 # Compatibility alias for the old extra name.
-qt6 = ["PyQt6==6.11.0", "PyQt6-WebEngine==6.11.0"]
+qt6 = ["PyQt6==6.12.0", "PyQt6-WebEngine==6.140.0"]
 # Packaging is the other half of the engine: 6.19.0 is what the shipped .exe is
 # built with and what the Qt 6.11 spike proved still packages the engine. Bump
 # it in its own commit, never in the same one as Qt, or a broken exe has two

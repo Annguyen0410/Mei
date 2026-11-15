@@ -55,6 +55,25 @@ class TestPasswordCaptureRemoved:
         assert "sessionStorage" not in script
 
 
+class TestAutofillNeedsAUserGesture:
+    """F-40: loading a page must never be what releases a vault secret."""
+
+    def test_load_path_does_not_inject_the_autofill_script(self):
+        source = (REPO_ROOT / "litebrowser/ui/main_window/window.py").read_text(encoding="utf-8")
+        load_body = source.split("def on_load_finished", 1)[1].split("\n    def ", 1)[0]
+        assert "build_autofill_script" not in load_body
+        # A master-password prompt is a user action too, not a side effect.
+        assert "ask_master_password" not in load_body
+        assert "_arm_saved_login_hint" in load_body
+
+    def test_fill_is_user_triggered_and_rechecks_the_origin(self):
+        source = (REPO_ROOT / "litebrowser/ui/main_window/window.py").read_text(encoding="utf-8")
+        assert 'QKeySequence("Ctrl+Shift+L")' in source
+        fill_body = source.split("def fill_saved_login", 1)[1].split("\n    def ", 1)[0]
+        assert "same_origin" in fill_body
+        assert "build_autofill_script" in fill_body
+
+
 # --------------------------------------------------------------------------- #
 # URL normalisation invariants (property-based)
 # ---------------------------------------------------------------------------

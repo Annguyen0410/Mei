@@ -163,10 +163,11 @@ feed Mei Browser (MeiRemote/Android bridge, Mei extension import bridge).
 |---|---|---|---|---|
 | F-34 | Save-password wrote **plaintext credentials into page-readable `sessionStorage`** from a MainWorld script | Critical | Confirmed | Fixed by removal (feature suspended, ADR-0006) |
 | F-24 | Secret-bearing script executed in the page's main world | High | Confirmed | Resolved with F-34 (no secret-bearing script remains) |
-| F-35 | Android bridge uses plain HTTP with a long-lived bearer token; no device identity, revocation or replay protection | Medium | Confirmed | Partially fixed (replay layer added; TLS/device identity open) |
+| F-35 | Android bridge uses plain HTTP with a long-lived bearer token; no device identity, revocation or replay protection | Medium | Confirmed | Partially fixed — **residual risk accepted** (optional replay layer shipped; TLS/device identity deferred to the client) |
 | F-36 | Extension requests `http://*/*` + `https://*/*` host permissions although it only reads the active tab on demand | Low | Confirmed | Fixed (`activeTab`, no standing host access) |
 | F-37 | Extension ZIP import bounds each member (32 MB) but not the total uncompressed size | Low | Confirmed | Fixed (members, total, ratio, traversal, real bytes) |
 | F-39 | Autofill filled a form without re-checking the document, the frame or the form's target origin | High | Confirmed | Fixed (top-frame + origin + form-action checks, no cleartext HTTP) |
+| F-40 | Autofill ran automatically on page load and would fill a **GET** form, putting the password in the URL | High | Confirmed | Fixed (POST only, `formmethod` overrides refused, fill requires `Ctrl+Shift+L`) |
 | F-38 | App UI scripts (dark mode, highlight, WebGL off, userscripts) run in MainWorld | Info | Confirmed | Accepted by design (no secrets; DOM mutation is the feature) |
 
 ## F-34 — plaintext credentials in page storage (Critical)
@@ -207,7 +208,8 @@ Gaps (accepted for a loopback-first feature, must be stated):
    who captures the token can call the bridge until it is rotated.
 2. One long-lived token per profile; no per-device identity, listing or revocation;
    rotation is manual.
-3. ~~No request signing/nonce/timestamp~~ — **partially fixed**: a request that carries
+3. ~~No request signing/nonce/timestamp~~ — **fixed for clients that send it; residual risk
+   for the 1.x client**: a request that carries
    `X-Mei-Timestamp` + `X-Mei-Nonce` is checked (300 s window, single use, bounded cache)
    and answered with `X-Mei-Replay: on`; a stale or replayed pair is refused with 409.
    Clients that send neither are still accepted and answered `X-Mei-Replay: optional`,
@@ -238,13 +240,49 @@ handing a vault secret to a document, and every script on that document can read
   3. in-script `window.top === window.self` and `location.origin === expected origin`,
      so a subframe or a post-navigation document gets nothing;
   4. a form whose resolved `action` points at another origin is skipped — the filled
-     password would otherwise be posted to a third party.
+     password would otherwise be posted to a third party;
+  5. only a form whose resolved `method` is **POST** is filled (F-40). `form.method`
+     already resolves to the spec default `get`, so an unlabelled form is refused, and any
+     `formmethod` override on a submit control must also be POST.
 - The username/password are JSON-escaped into local closure variables; the script keeps
   them out of `window`, `sessionStorage`, `localStorage` and the network (asserted).
 - Test: `TestAutofillBoundary` (7 cases) plus the existing capture-removal checks.
 - Residual: a same-origin script still reads what was filled — that is inherent to any
   autofill, and is the reason the origin match must be exact. Cross-origin iframe logins
   are **not** filled (they are skipped, not silently attempted).
+
+## F-40 — Autofill timing and GET forms (High, fixed)
+
+Two defects in the same function, both found in review after F-39:
+
+- **Automatic fill.** `on_load_finished` called `build_autofill_script` on every successful
+  load and, if the master password was not cached, opened the master-password dialog by
+  itself. The user never asked for the secret; the page did. Any navigation that completed
+  between `loadFinished` and the JS call made the fill a side effect of visiting a page.
+- **GET forms.** `AUTOFILL_SCRIPT` checked the form's `action` origin but not its `method`.
+  A `<form method="get">` (or a form with **no** method attribute, which defaults to GET)
+  serialises all fields into the query string on submit, so the filled password would be
+  written into browser history, the `Referer` of every subresource on the next page, and the
+  server's access log — a leak that survives far longer than the session.
+
+Fix, in `password_manager.AUTOFILL_SCRIPT` and `window.py`:
+
+1. The script returns early unless the form's resolved method is `post`, and unless every
+   `formmethod` override on a submit control is also `post`.
+2. The load path no longer injects anything and no longer prompts. It only records an offer
+   (`mei_autofill_url` on the view) and shows a toast: *Saved login available · Ctrl+Shift+L
+   to fill*. `_saved_login_offer` performs the boundary checks without decrypting anything.
+3. `fill_saved_login` (new `Ctrl+Shift+L`, listed in the hotkeys hub) is the only caller of
+   `build_autofill_script`. It re-checks `same_origin(offer, current URL)` before touching the
+   vault, so a redirect between load and keypress fills nothing, and it only asks for the
+   master password at that moment.
+
+- Test: `TestAutofillRefusesFormsThatLeakTheUrl` (2 cases), `TestAutofillNeedsAUserGesture`
+  (2 source-level cases: the load path contains neither `build_autofill_script` nor
+  `ask_master_password`, and the shortcut exists), plus the 7 F-39 cases.
+- Residual: a same-origin script can still read a filled value, and a POST form on a
+  compromised origin can still ship it anywhere the page wants. Autofill is a convenience for
+  origins the user chose to save credentials for, not a confidentiality boundary.
 
 ## F-36 — Extension capability scope (Low, fixed)
 
@@ -287,7 +325,11 @@ user input and never feed them vault values. This is documented in
 Both bridges were reviewed as independent trust boundaries, not as "does it connect".
 The extension side is meaningfully tighter (local token, MV3 CSP, no ambient content
 scripts, pure-protocol module with Node tests). The Android side has strong input and
-network-scope validation but a plaintext, unrevocable, replayable bearer token. Neither
+network-scope validation, an optional nonce/timestamp replay layer (enforced when the client
+sends it, `X-Mei-Replay: on|optional|rejected`), and a loopback default; what remains is a
+plaintext LAN transport and one unrevocable long-lived token. That remainder is **accepted
+residual risk, not a passed control**: it is documented here, in the bridge UI and in
+`memory/CURRENT_STATE.md`, and it must not be described as "LAN mode is secure". Neither
 bridge can reach the encrypted vault or the password manager; the Android bridge writes
 notes/tasks/pages/files, and the extension bridge writes tab/workspace metadata.
 

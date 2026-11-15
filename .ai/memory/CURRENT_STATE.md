@@ -1,7 +1,9 @@
 # Current state
 
-As of 2026-11-14, working tree `main` at `a74ec98` plus the overhaul changes listed in
-`CHANGELOG.md`. Nothing has been committed or pushed.
+As of 2026-11-14, branch `security/overhaul-autofill-bridge-hardening` (head `8af5d5b`, base
+`main` at `a74ec98`) is **committed and pushed**: `a51ecc8` (hardening), `8af5d5b` (Qt 5.15
+job removed). Ahead 2 / behind 0, CI run #115 green. **Not merged** — security sign-off still
+pending one stabilization round (autofill GET + gesture, doc sync).
 
 ## Environment (verified)
 
@@ -19,8 +21,11 @@ As of 2026-11-14, working tree `main` at `a74ec98` plus the overhaul changes lis
 ## Test status
 
 - Baseline before changes: **3356 passed, 56 skipped, 0 failed** (147 s).
-- Targeted suites after changes: hardening/adblock/downloads/password/safety all green.
-- Full-suite result after changes: see `../MEI_ENGINEERING_OVERHAUL_REPORT.md` §H.
+- Last full suite in this workspace (before push): **3395 passed, 56 skipped, 0 failed,
+  1531 subtests** (189.96 s).
+- CI run #115 on `8af5d5b`: **3400 passed, 51 skipped**, 1 DeprecationWarning.
+- Targeted suites after the autofill round: password-manager + hardening green (see §H of the
+  engineering report).
 - Known skipped tests are platform/engine dependent, unchanged by this work.
 
 ## What changed (code)
@@ -39,13 +44,34 @@ As of 2026-11-14, working tree `main` at `a74ec98` plus the overhaul changes lis
 
 ## Client bridges (reviewed 2026-11-14)
 
-- Android bridge: strong input/network-scope validation; plaintext HTTP, single
-  unrevocable bearer token, no replay protection (F-35, open, documented).
-- Extension: local-only token, MV3 CSP, no ambient content scripts; broad host permissions
-  (F-36) and no total-uncompressed ZIP cap (F-37) remain.
+- Android bridge: strong input/network-scope validation; optional replay layer shipped
+  (timestamp + nonce, 300 s window, single use, `X-Mei-Replay` response header). Plaintext LAN
+  HTTP, one long-lived token, no per-device identity or revocation → **F-35 is accepted
+  residual risk**, stated in the docs and the bridge UI. Enforcing the pair (and signing
+  requests) waits for the MeiRemote client that sends the headers.
+- Extension: local-only token, MV3 CSP, no ambient content scripts; **F-36 fixed**
+  (`host_permissions: []`, `activeTab` + `scripting`, optional bridge origin requested only at
+  pairing) and **F-37 fixed** (member/total/ratio caps, real decompressed bytes). Not
+  runtime-tested in a real Chrome/Opera GX session — code review only.
+
+## Stabilization round (2026-11-14, pending merge)
+
+1. **Autofill GET (F-40)** — fixed: only a POST form on the exact matched origin is filled;
+   `formmethod` overrides are refused. A GET submission would have put the password in the
+   URL (history, Referer, server log).
+2. **Autofill timing (F-40)** — fixed: `on_load_finished` no longer injects the script and no
+   longer prompts for the master password. It only arms an offer and shows a toast; the fill
+   happens on `Ctrl+Shift+L` (`fill_saved_login`), which re-checks the origin before filling.
+3. **Docs** — this file, `../security/SECURITY_FINDINGS.md` and
+   `../MEI_ENGINEERING_OVERHAUL_REPORT.md` now describe the pushed state, not the pre-push one.
+4. **F-35** — recorded as intentional residual risk (loopback default) instead of "open".
+5. Still missing: a pull request, and GUI/pairing smoke testing (no desktop GUI in Freebuff).
 
 ## What did not change
 
 Engine pin, Qt façade, storage formats, backup allowlist, password vault format (v2), proxy
-startup flags, AI behaviour, autofill. No data migration was required: every new JSON field is
-additive and read with `.get`.
+startup flags, AI behaviour, vault encryption and manual entries. No data migration was
+required: every new JSON field is additive and read with `.get`.
+
+Autofill behaviour *did* change (F-40): it is no longer automatic on page load, it refuses GET
+forms, and it is triggered by `Ctrl+Shift+L`. The stored data is untouched.

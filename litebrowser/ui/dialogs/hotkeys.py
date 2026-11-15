@@ -35,6 +35,7 @@ HOTKEYS = (
     ("Ctrl+Shift+S", "Capture", "Save page as PDF"),
     ("Ctrl+P", "Capture", "Print page"),
     ("Ctrl+D", "Bookmark", "Bookmark current page"),
+    ("Ctrl+Shift+L", "Privacy", "Fill the saved login for this page (offered, never automatic)"),
     ("Ctrl+H", "Panels", "Open history dialog"),
     ("Ctrl+J", "Panels", "Open downloads dialog"),
     ("Ctrl+Shift+B", "Shell", "Collapse / expand the toolbar"),

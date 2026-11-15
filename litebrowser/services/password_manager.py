@@ -311,10 +311,13 @@ def autofill_allowed(url):
 
     * The origin must be exactly the one the entry was saved for. That is
       enforced separately by ``_origin_match``; this function only screens the
-      page origin itself.
-    * A plaintext ``http`` origin is refused unless it is loopback. A password
-      filled into a cleartext page (or cleartext form action) is readable on
-      the wire, so the exact-origin match is not by itself enough.
+      page origin itself.    * A plaintext ``http`` origin is refused unless it is loopback. A password
+      filled into a cleartext page (or cleartext form action) is readable on the
+      wire, so the exact-origin match is not by itself enough.
+
+    The form itself is screened by ``AUTOFILL_SCRIPT``: only a POST form on the
+    same origin is filled, because a GET submission would put the password in
+    the URL (history, Referer, server logs).
     """
     origin = _normalize_origin(url)
     if not origin:
@@ -323,6 +326,18 @@ def autofill_allowed(url):
     if parsed.scheme == "https":
         return True
     return parsed.scheme == "http" and (parsed.hostname or "").lower() in _LOOPBACK_HOSTS
+
+
+def same_origin(url_a, url_b):
+    """True when both URLs normalise to one http(s) origin.
+
+    Used to re-validate an armed autofill offer against the document actually in
+    front of the user: a redirect between the offer and the keypress must not
+    receive the secret.
+    """
+    a = _normalize_origin(url_a)
+    b = _normalize_origin(url_b)
+    return bool(a and b and a == b)
 
 
 def credentials_for_autofill(base_dir, url, master_password):
@@ -354,6 +369,21 @@ AUTOFILL_SCRIPT = """
     var target = null;
     try { target = new URL(action, location.href); } catch (e) { return; }
     if (target.origin !== location.origin) return;
+  }
+
+  // A form submitted with GET serialises every field into the URL, so a filled
+  // password would land in browser history, in the Referer of the page's next
+  // requests and in the server's access log. `form.method` already resolves to
+  // the spec default ("get") when the attribute is missing, so an unlabelled
+  // form is refused instead of being assumed to be a POST.
+  var method = (form.getAttribute('method') || form.method || 'get').toLowerCase();
+  if (method !== 'post') return;
+
+  // A submit button can override the form's method; an override that is not
+  // POST moves the same secret into the URL.
+  var overrides = form.querySelectorAll('button[formmethod], input[formmethod]');
+  for (var b = 0; b < overrides.length; b++) {
+    if ((overrides[b].getAttribute('formmethod') || '').toLowerCase() !== 'post') return;
   }
 
   var inputs = form.querySelectorAll('input');

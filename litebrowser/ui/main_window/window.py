@@ -237,6 +237,7 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.toggle_zen_mode)
         QShortcut(QKeySequence("Ctrl+Shift+R"), self).activated.connect(self.hard_reload)
         QShortcut(QKeySequence("Ctrl+Shift+V"), self).activated.connect(self.show_clipboard_history)
+        QShortcut(QKeySequence("Ctrl+Shift+L"), self).activated.connect(self.fill_saved_login)
         # Esc exits Zen mode first (then closes the find bar if that was open).
         QShortcut(QKeySequence(Qt.Key_Escape), self).activated.connect(self._escape_in_browser)
 
@@ -2479,6 +2480,72 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         toast.show()
         self._toast_timer.start(2200)
 
+    def _saved_login_offer(self, browser):
+        """URL this tab may offer a saved login for, or "" — reads no secret.
+
+        Only the boundary checks run here: feature enabled, crypto available and
+        an origin autofill may ever write to (https, or http on loopback).
+        Nothing is decrypted, so arming the offer per page load can neither leak
+        a credential nor prompt for the master password unasked.
+        """
+        if not browser:
+            return ""
+        if not prefs.get_password_manager_enabled(self.base_dir):
+            return ""
+        if not prefs.get_autofill_passwords(self.base_dir):
+            return ""
+        from litebrowser.services import password_manager
+        if not password_manager.HAS_CRYPTO:
+            return ""
+        url_str = browser.url().toString()
+        return url_str if password_manager.autofill_allowed(url_str) else ""
+
+    def _arm_saved_login_hint(self, browser):
+        """Remember whether *browser* has a saved login to offer, and say so."""
+        offer = self._saved_login_offer(browser)
+        browser.setProperty("mei_autofill_url", offer)
+        if offer and browser is self.current_browser():
+            self._flash_status("Saved login available · Ctrl+Shift+L to fill")
+
+    def fill_saved_login(self):
+        """Fill the current tab's saved login after an explicit user gesture.
+
+        The offer armed at load time is re-validated against the document in
+        front of the user now, because a redirect between the load and the
+        keypress would otherwise receive the secret.
+        """
+        from litebrowser.core.log import get_logger
+        from litebrowser.services import password_manager
+        browser = self.current_browser()
+        if not browser:
+            return
+        expected = browser.property("mei_autofill_url") or ""
+        url_now = browser.url().toString()
+        if not expected or not password_manager.same_origin(expected, url_now):
+            browser.setProperty("mei_autofill_url", "")
+            self._flash_status("Saved login: this page changed, nothing was filled")
+            return
+        master = getattr(self, "_master_password", None)
+        if master is None:
+            master = dialogs.ask_master_password(self)
+            if master is not None:
+                self._master_password = master
+        if not master:
+            return
+        try:
+            cred = password_manager.credentials_for_autofill(self.base_dir, url_now, master)
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            # A broken vault or KDF must not disappear the way a bare ``pass``
+            # did (F-32): leave the type in the log, never the credentials.
+            get_logger("window").warning("autofill skipped: %s", type(exc).__name__)
+            return
+        if not cred:
+            self._flash_status("No saved login for this site")
+            return
+        browser.page().runJavaScript(
+            password_manager.build_autofill_script(cred["username"], cred["password"], url_now)
+        )
+
     def update_urlbar(self, q, browser=None):
         if browser != self.current_browser():
             return
@@ -2602,36 +2669,13 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
             )
         for js in js_queue:
             browser.page().runJavaScript(js)
-        if prefs.get_password_manager_enabled(self.base_dir) and prefs.get_autofill_passwords(self.base_dir):
-            # Autofill is the one place a vault secret leaves the vault, so the
-            # page has to pass the boundary check first (https or loopback, and
-            # an exact origin match against the stored entry). The script itself
-            # re-checks location.origin, so a navigation between loadFinished
-            # and this call writes nothing.
-            from litebrowser.services import password_manager
-            if password_manager.HAS_CRYPTO:
-                url_str = browser.url().toString()
-                try:
-                    if password_manager.autofill_allowed(url_str):
-                        master = getattr(self, "_master_password", None)
-                        if master is None:
-                            master = dialogs.ask_master_password(self)
-                            if master is not None:
-                                self._master_password = master
-                        if master:
-                            cred = password_manager.credentials_for_autofill(self.base_dir, url_str, master)
-                            if cred:
-                                browser.page().runJavaScript(
-                                    password_manager.build_autofill_script(
-                                        cred["username"], cred["password"], url_str
-                                    )
-                                )
-                except (OSError, RuntimeError, ValueError, TypeError) as exc:
-                    # A broken vault or KDF must not block the page load, but it
-                    # also must not disappear the way a bare ``pass`` did (F-32):
-                    # leave the type in the log, never the credentials.
-                    from litebrowser.core.log import get_logger
-                    get_logger("window").warning("autofill skipped: %s", type(exc).__name__)
+        # Loading a page never releases a vault secret on its own (F-40): the
+        # load path only records that a saved login may apply here, and the fill
+        # itself waits for Ctrl+Shift+L (``fill_saved_login``). Injecting on
+        # loadFinished handed the secret to whatever the tab had navigated to by
+        # the time the script ran, and asked for the master password without the
+        # user having asked for anything.
+        self._arm_saved_login_hint(browser)
         # The save-password prompt was fed by the removed sessionStorage
         # handoff; nothing reads captured credentials any more (ADR-0006).
         host_l = (browser.url().host() or "").lower()

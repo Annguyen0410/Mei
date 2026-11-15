@@ -1,7 +1,9 @@
 # Mei — Engineering Overhaul Report
 
-Date: 2026-11-14 · Repository: `Annguyen0410/Mei` (local `main` at `a74ec98`) ·
-Branch: none created / nothing committed · No push, release or deployment performed.
+Date: 2026-11-14 · Repository: `Annguyen0410/Mei` · Base: `main` at `a74ec98` ·
+Branch: `security/overhaul-autofill-bridge-hardening`, committed and pushed (`a51ecc8`,
+`8af5d5b`; ahead 2, behind 0), CI run #115 green. No pull request was opened, and no release
+or deployment was performed.
 
 ## A. Executive summary
 
@@ -169,8 +171,13 @@ during development (`set_strict_referrer` became unreferenced; a test imported Q
 shim) and were fixed by deleting the dead setter and importing the shim first — no gate was
 weakened.
 
+After the branch was pushed, CI run #115 reported **3400 passed, 51 skipped**, 0 failed
+(1 DeprecationWarning). The stabilization round that followed (F-40) is covered by
+`TestAutofillRefusesFormsThatLeakTheUrl` and `TestAutofillNeedsAUserGesture`.
+
 **Not run:** CodeQL/OpenGrep/Gitleaks/OSV-Scanner/zizmor/Serena/Repomix/Context7 (see §B);
-manual GUI browser QA; GitHub Actions (no push). These are limitations, not passes.
+manual GUI browser QA; extension pairing against a real Chrome/Opera GX; Android pairing
+against a real device. These are limitations, not passes.
 
 ## K. Client bridge security review (second pass)
 
@@ -179,8 +186,8 @@ connectivity. Full detail and evidence are in `security/SECURITY_FINDINGS.md` (s
 
 | Component | Verified controls | Gaps / disposition |
 |---|---|---|
-| **Android bridge** (`services/android_bridge_service.py`) | Bearer token from DPAPI-backed `secret_store` compared with `hmac.compare_digest`; loopback default, LAN mode accepts only loopback/private/link-local; 120 req/min + 8 auth failures/min per IP; 10 MB JSON / 25 MB upload caps; Content-Length and Content-Type enforced; chunked bodies refused; 16 connection slots with timeouts; `safe_child_path` + `..` rejection + Windows filename sanitisation; generic `service_failure` (no paths/exception text); CORS answered only for extension origins; nosniff/DENY/no-referrer/no-store/CSP on every response | **F-35 (Medium, open):** plain HTTP; one long-lived token with no device identity, listing or revocation; no nonce/timestamp signing, so a captured request can be replayed within the token lifetime. Recommendation: keep loopback default, warn on LAN, add rotate/forget-device and HMAC-signed requests. Cannot reach the vault or password manager |
-| **Extension import bridge** (`Extensions/tab-window-bridge/`, `services/extension_bridge.py`) | MV3, `script-src 'self'; object-src 'none'`; token in `chrome.storage.local` (never `sync`); no ambient content scripts; `executeScript` only on the active tab after a user gesture; pairing parser mirrors the desktop exactly; ZIP members bounded at 32 MB, in-memory read (no extraction, so no path traversal); URL schemes restricted; per-batch tab cap 100 | **F-36 (Low, open):** requests `http://*/*` + `https://*/*` although it only needs the active tab — recommend `activeTab`. **F-37 (Low, open):** ZIP import bounds each member but not total uncompressed bytes. Writes only tab/workspace metadata |
+| **Android bridge** (`services/android_bridge_service.py`) | Bearer token from DPAPI-backed `secret_store` compared with `hmac.compare_digest`; loopback default, LAN mode accepts only loopback/private/link-local; 120 req/min + 8 auth failures/min per IP; 10 MB JSON / 25 MB upload caps; Content-Length and Content-Type enforced; chunked bodies refused; 16 connection slots with timeouts; `safe_child_path` + `..` rejection + Windows filename sanitisation; generic `service_failure` (no paths/exception text); CORS answered only for extension origins; nosniff/DENY/no-referrer/no-store/CSP on every response; optional nonce/timestamp replay layer (300 s window, single use, `X-Mei-Replay: on\|optional\|rejected`, stale pair → 409) | **F-35 (Medium, accepted residual risk):** plain LAN HTTP; one long-lived token with no device identity, listing or revocation; the 1.x client sends no nonce, so a captured request stays replayable until enforcement. Deferred, with the reasoning recorded: mandatory pair + HMAC-signed requests ship with the MeiRemote client update, not before (it would break the installed app). Cannot reach the vault or password manager |
+| **Extension import bridge** (`Extensions/tab-window-bridge/`, `services/extension_bridge.py`) | MV3, `script-src 'self'; object-src 'none'`; token in `chrome.storage.local` (never `sync`); no ambient content scripts; `executeScript` only on the active tab after a user gesture; pairing parser mirrors the desktop exactly; ZIP members bounded at 32 MB, in-memory read (no extraction, so no path traversal); URL schemes restricted; per-batch tab cap 100 **F-36 (Low, fixed):** `host_permissions: []`, `activeTab` + `scripting`, and the bridge origin requested as an optional permission only on the pairing click. **F-37 (Low, fixed):** ZIP import caps members (256), member size (32 MB), total bytes (64 MB) and ratio (200:1), and reads through a byte-limited reader instead of trusting header sizes. Writes only tab/workspace metadata |
 
 Neither bridge can read saved passwords, tokens or AI prompts. The Android bridge writes
 notes/tasks/calendar/pages/files and can ask the desktop to open a URL or a bundled app
@@ -192,6 +199,7 @@ notes/tasks/calendar/pages/files and can ask the desktop to open a URL or a bund
 |---|---|---|
 | High | Credential capture bridge (F-24/F-34) | Page-context capture removed; re-enable only with an isolated-world, nonce/Origin-validated native channel (ADR-0006) |
 | Medium | F-32 silent exceptions | Replace `except Exception: pass` with logged, typed handling, starting with download/session/cookie paths |
+| Medium | F-35 Android transport | Enforce the nonce/timestamp pair and sign requests once MeiRemote ships the headers; add per-device tokens with revocation; warn explicitly in the LAN-mode UI (loopback stays the default) |
 | Medium | Issues 02/06/15 | Runtime tests with disposable profiles: tab tear-off, split view, workspace restore |
 | Medium | CI security scanning | pip-audit at minimum; type checking (Pyright) on `core/`+`services/` |
 | Low | Issue 18 leak test | DNS/WebRTC coverage or a narrower UI claim |
@@ -209,7 +217,8 @@ notes/tasks/calendar/pages/files and can ask the desktop to open a URL or a bund
 | `litebrowser/ui/main_window/window.py` | Per-profile cookie policy, download privacy flag, counter initialization |
 | `litebrowser/browser/tab_manager.py` | Private download flag and cookie policy for new OTR profiles |
 | `litebrowser/ui/dialogs/profiles_privacy.py` | Removed the no-op Referer toggle; password-manager label now states autofill-only |
-| `litebrowser/services/password_manager.py` | Removed the page-context capture/read scripts (F-34); autofill unchanged |
+| `litebrowser/services/password_manager.py` | Removed the page-context capture/read scripts (F-34); autofill is now POST-only and re-validated by origin (F-39/F-40) |
+| `litebrowser/ui/dialogs/hotkeys.py` | `Ctrl+Shift+L` (fill saved login) added to the reference table |
 | `litebrowser/core/prefs.py` | Deprecated referrer getter documented; dead setter removed; hint docstring |
 | `tests/test_hardening_2026.py` | **New** regression suite (20 tests incl. property test) |
 | `tests/test_adblock_subscriptions.py` | Deterministic `unittest.mock` import |

@@ -23,10 +23,10 @@ _DISTRACTION_HOSTS = (
 
 _CACHED_CHROME_VERSION: str | None = None
 _CACHED_CHROME_FULL_VERSION: str | None = None
-# Only reachable before the engine can answer at all (no Qt yet). A plausible
-# major beats an empty client-hint header.
-_FALLBACK_CHROME_MAJOR = "122"
-_FALLBACK_CHROME_FULL = "122.0.6261.171"
+# A version the engine cannot report is left unknown, and the caller then sends
+# no `sec-ch-ua*` at all. The old fallback ("122.0.6261.171") spent its time
+# putting a build the engine is not into the header the fragile Google
+# compatibility path lives on.
 _FULL_CHROME_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
 _DOMAIN_RE = re.compile(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", re.IGNORECASE)
 
@@ -47,59 +47,27 @@ def _engine_chrome_versions():
     return "", ""
 
 
-def _ua_chrome_versions(user_agent: str):
-    """``(major, full)`` read out of a user-agent string, or ``("", "")``.
-
-    Pure text in, text out — no Qt — so the fallback rules stay testable, and so
-    the trap is on the record: Qt 6.8's UA carries a real build
-    (``Chrome/122.0.6261.171``) while Qt 6.11's says only ``Chrome/140.0.0.0``,
-    which matches this shape and would be sent as a build that never existed.
-    That is why the binding is asked first and this is only reached without it.
-    """
-    ua = user_agent or ""
-    m_full = re.search(r"Chrome/(\d+)\.(\d+)\.(\d+)\.(\d+)", ua)
-    if m_full:
-        return m_full.group(1), ".".join(m_full.groups())
-    m_major = re.search(r"Chrome/(\d+)", ua)
-    if m_major:
-        return m_major.group(1), f"{m_major.group(1)}.0.0.0"
-    return "", ""
-
-
 def _detect_chrome_versions():
     """Return ``(major, full)`` Chrome version reported by the Qt WebEngine build.
 
     Both values are cached after the first successful call because this runs on
-    every HTTP request via ``interceptRequest`` — repeatedly creating /
-    querying a default ``QWebEngineProfile`` is both expensive and (when called
-    before a QApplication exists) unstable on Windows.
+    every HTTP request via ``interceptRequest``.
 
-    The binding is asked first, and the UA is only a fallback: Qt 6.11's default
-    UA says just ``Chrome/140.0.0.0``, so a UA-derived "full" version would put a
-    build that never existed into ``sec-ch-ua-full-version``, the header the
-    Google-shaped compatibility path lives on. On PyQt5 there is no
-    ``qWebEngineChromiumVersion()`` at all, so that branch really does read the
-    default profile's UA once and cache it.
+    The binding is the only source, and asking it is the whole point: it needs no
+    application object and no profile, and it answers through the project shim on
+    either binding. The previous fallback read
+    ``QWebEngineProfile.defaultProfile().httpUserAgent()`` from this same path,
+    and on Qt 5.15 that took the interpreter down with a native access violation
+    — ``try/except`` cannot catch that. A version nobody can read is now returned
+    as unknown, and the caller sends no client hints instead of a guess.
     """
     global _CACHED_CHROME_VERSION, _CACHED_CHROME_FULL_VERSION
     if _CACHED_CHROME_VERSION is not None and _CACHED_CHROME_FULL_VERSION is not None:
         return _CACHED_CHROME_VERSION, _CACHED_CHROME_FULL_VERSION
     major, full = _engine_chrome_versions()
-    if not full:
-        major = _CACHED_CHROME_VERSION or _FALLBACK_CHROME_MAJOR
-        full = _CACHED_CHROME_FULL_VERSION or _FALLBACK_CHROME_FULL
-        try:
-            from PyQt5.QtWidgets import QApplication
-            if QApplication.instance() is None:
-                return major, full
-            from PyQt5.QtWebEngineWidgets import QWebEngineProfile
-            ua_major, ua_full = _ua_chrome_versions(QWebEngineProfile.defaultProfile().httpUserAgent())
-            if ua_full:
-                major, full = ua_major, ua_full
-        except Exception:
-            pass
-    _CACHED_CHROME_VERSION = major
-    _CACHED_CHROME_FULL_VERSION = full
+    if full:
+        _CACHED_CHROME_VERSION = major
+        _CACHED_CHROME_FULL_VERSION = full
     return major, full
 
 
@@ -109,11 +77,17 @@ def _detect_chrome_version():
 
 
 def _modern_google_ua():
+    """A Chrome-shaped UA for the engine that is actually running.
+
+    With no readable version the ``Chrome/`` token is dropped rather than
+    filled in, the same rule ``engine_identity.build_user_agent`` follows.
+    """
     ver = _detect_chrome_version()
     return (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        f"Chrome/{ver}.0.0.0 Safari/537.36"
+        + (f"Chrome/{ver}.0.0.0 " if ver else "")
+        + "Safari/537.36"
     )
 
 
@@ -568,6 +542,9 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
         from litebrowser.browser import engine_identity
 
         major, full = _detect_chrome_versions()
+        if not major or not full:
+            # No hints at all beats hints naming a version the engine is not.
+            return
         for key, value in engine_identity.client_hint_headers(major, full).items():
             info.setHttpHeader(key, value)
         # A real platform version is Chromium-specific and not exposed to us;

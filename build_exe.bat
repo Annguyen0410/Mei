@@ -23,16 +23,19 @@ if exist "build\Mei"             rmdir /s /q "build\Mei"
 if exist "build\LiteBrowser"     rmdir /s /q "build\LiteBrowser"
 if exist "build\browser"         rmdir /s /q "build\browser"
 
-REM --- Pick the Qt binding that is actually installed ---------------------
-REM The app runs on PyQt5 or PyQt6 (litebrowser\qt.py). Collect whichever one
-REM exists, so this script also works on a machine that has only one of them.
-set "QTFLAGS=--collect-all PyQt5.QtWebEngineCore --collect-all PyQt5.QtWebEngineWidgets --collect-all PyQt5.QtWebChannel --exclude-module PyQt6"
-set "QTVERSION=PyQt5"
+REM --- Require the engine we ship -----------------------------------------
+REM Mei runs on PyQt6 6.11 (Chromium 140). The `from PyQt5 ...` imports in the
+REM source are rewritten onto it by litebrowser\qt_compat.py, so a real PyQt5
+REM install is not an alternative: it would package Qt 5.15 / Chromium 87 and
+REM ship a browser that is not the one that was tested.
 "%PY%" -c "import PyQt6.QtWebEngineWidgets" >nul 2>nul
-if not errorlevel 1 (
-  set "QTFLAGS=--collect-all PyQt6.QtWebEngineCore --collect-all PyQt6.QtWebEngineWidgets --collect-all PyQt6.QtWebChannel --exclude-module PyQt5"
-  set "QTVERSION=PyQt6"
+if errorlevel 1 (
+  echo ERROR: PyQt6-WebEngine is not installed in %PY%
+  echo        Install it with: "%PY%" -m pip install PyQt6==6.11.0 PyQt6-WebEngine==6.11.0
+  exit /b 1
 )
+set "QTVERSION=PyQt6"
+set "QTFLAGS=--collect-all PyQt6.QtWebEngineCore --collect-all PyQt6.QtWebEngineWidgets --collect-all PyQt6.QtWebChannel --exclude-module PyQt5"
 echo Building Mei.exe with %QTVERSION% ...
 
 "%PY%" -m PyInstaller ^

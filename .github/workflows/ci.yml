@@ -3,8 +3,11 @@ name: CI
 # The suite is the project's whole safety net, including the gates that keep the
 # layers, the capability ledger and the command registry honest. Until this
 # workflow existed it only ever ran on the machine that wrote it.
-# Both Qt bindings are exercised: the shipped .exe is built with PyQt6 (the shim
-# rewrites PyQt5 imports onto it), while a source checkout often only has PyQt5.
+# One binding, the one that ships: PyQt6 6.11 / Chromium 140. The source still
+# says `from PyQt5 ...` everywhere, but `litebrowser/qt_compat.py` rewrites those
+# names onto PyQt6 — so a job that installed real PyQt5 was testing an engine no
+# user runs (Qt 5.15 = Chromium 87), and it died on a native access violation in
+# the request interceptor rather than on a failing test.
 
 on:
   push:
@@ -31,11 +34,6 @@ jobs:
           # here either split it badly or keep the quotes), and pip then fails
           # before a single test runs. Quoting each expression separately is the
           # shape that works in pwsh and bash alike.
-          # PyQt5 is the fallback a source checkout often already has, and it
-          # pins Qt 5.15 = Chromium 87: this job is the canary for that branch.
-          - binding: PyQt5
-            qt_core: "PyQt5>=5.15"
-            qt_web: "PyQtWebEngine>=5.15"
           # PyQt6 is the engine the shipped .exe is built on, so this job is
           # pinned to exactly what we ship (Chromium 140). Left unpinned it
           # silently became a beta channel for whatever PyPI published that day,
@@ -59,7 +57,7 @@ jobs:
 
       - name: Install dependencies (${{ matrix.binding }})
         # The package is not installed: pytest reads `pythonpath = ["."]` from
-        # pyproject.toml, and installing it would drag in PyQt5 on the Qt6 job.
+        # pyproject.toml, and installing it would re-resolve the pinned engine.
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
@@ -95,8 +93,8 @@ jobs:
         # step as failed instead of eating the whole job budget and coming back
         # as an unattributed "cancelled after 30m".
         # faulthandler_timeout dumps every thread's stack when a test stops
-        # making progress, so a hang names its own test in the log: the PyQt5
-        # job used to hang for 30 minutes with no indication where.
+        # making progress, so a hang names its own test in the log: this job
+        # used to hang for 30 minutes with no indication where.
         timeout-minutes: 20
         shell: pwsh
         run: |

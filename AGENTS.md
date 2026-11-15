@@ -1,7 +1,9 @@
 # AGENTS.md — working on Mei
 
 Mei is a Qt WebEngine desktop browser. Production engine is **PyQt6 6.11.0 / Qt 6.11.0 /
-Chromium 140.0.7339.225**; PyQt5/Qt 5.15 exists only as a CI canary for old checkouts.
+Chromium 140.0.7339.225**, and the only one CI tests. PyQt5/Qt 5.15 is not supported: the
+`from PyQt5 ...` imports throughout the source are rewritten onto PyQt6 by
+`litebrowser/qt_compat.py`, so do not install real PyQt5 or "fix" a Qt5-only path.
 Read `ARCHITECTURE.md` and `.ai/architecture/SYSTEM_OVERVIEW.md` before touching a major
 subsystem, then the matching feature/boundary document under `.ai/`.
 

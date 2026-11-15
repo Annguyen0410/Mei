@@ -10,7 +10,7 @@ As of 2026-11-14, working tree `main` at `a74ec98` plus the overhaul changes lis
 | OS | Windows (win32), bash shell |
 | Python | 3.11.9 |
 | App engine | PyQt6 6.11.0 / Qt 6.11.0 / Chromium 140.0.7339.225 |
-| Legacy engine present | PyQt5 5.15.11 / Qt 5.15.2 (not shipped) |
+| Legacy engine | PyQt5 5.15.11 / Qt 5.15.2 — installed locally, **not shipped, not tested** (CI job removed) |
 | Qt security stream | 146 (floor 146 — `tools/check_engine_security.py` passes) |
 | cryptography | 50.0.2 (floor raised to 48.0.1) |
 | Test tooling | pytest, hypothesis (property test added) |

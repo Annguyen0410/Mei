@@ -53,26 +53,31 @@ class TestClientHintsFollowTheEngine(unittest.TestCase):
         with mock.patch("PyQt5.QtWebEngineCore.qWebEngineChromiumVersion", return_value="", create=True):
             self.assertEqual(adblock._engine_chrome_versions(), ("", ""))
 
-    def test_the_fallback_version_is_shaped_like_a_chrome_build(self):
-        """With no engine to ask, send a plausible build rather than an empty header."""
-        self.assertTrue(adblock._FALLBACK_CHROME_MAJOR.isdigit())
-        self.assertEqual(adblock._FALLBACK_CHROME_FULL.count("."), 3)
-        self.assertTrue(adblock._FALLBACK_CHROME_FULL.startswith(adblock._FALLBACK_CHROME_MAJOR + "."))
+    def test_an_unreadable_engine_sends_no_client_hints(self):
+        """The regression that crashed the Qt 5.15 job: a guess instead of a probe.
 
-    def test_a_full_user_agent_yields_the_real_build(self):
-        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Ch"
-        ua += "rome/122.0.6261.171 Safari/537.36"
-        self.assertEqual(adblock._ua_chrome_versions(ua), ("122", "122.0.6261.171"))
+        With no version to report the header path must stand down — never reach
+        for a default ``QWebEngineProfile`` from inside ``interceptRequest``,
+        which takes the interpreter down natively on that binding.
+        """
+        info = _RequestInfo()
+        with mock.patch.object(adblock, "_engine_chrome_versions", return_value=("", "")):
+            adblock.TrackingBlocker._apply_compat_headers(None, info, "accounts.google.com")
+        self.assertNotIn(b"sec-ch-ua", info.headers)
+        self.assertNotIn(b"sec-ch-ua-full-version", info.headers)
 
-    def test_the_reduced_qt611_user_agent_is_the_reason_for_the_probe(self):
-        """A UA-only build number is zeros — yet it is shaped like a real one."""
-        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Ch"
-        ua += "rome/140.0.0.0 Safari/537.36"
-        self.assertEqual(adblock._ua_chrome_versions(ua), ("140", "140.0.0.0"))
+    def test_an_unknown_version_is_not_cached(self):
+        """An engine that had not answered yet must still be askable later."""
+        with mock.patch.object(adblock, "_engine_chrome_versions", return_value=("", "")):
+            self.assertEqual(adblock._detect_chrome_versions(), ("", ""))
+        with mock.patch.object(adblock, "_engine_chrome_versions", return_value=("140", "140.0.7339.225")):
+            self.assertEqual(adblock._detect_chrome_versions(), ("140", "140.0.7339.225"))
 
-    def test_a_user_agent_with_only_a_major_still_answers(self):
-        self.assertEqual(adblock._ua_chrome_versions("Chrome/140"), ("140", "140.0.0.0"))
-        self.assertEqual(adblock._ua_chrome_versions(""), ("", ""))
+    def test_the_user_agent_omits_the_chrome_token_when_the_engine_is_unknown(self):
+        with mock.patch.object(adblock, "_engine_chrome_versions", return_value=("", "")):
+            ua = adblock._modern_google_ua()
+        self.assertNotIn("Chrome/", ua)
+        self.assertIn("Safari/537.36", ua)
 
 
 class TestEngineNotice(unittest.TestCase):

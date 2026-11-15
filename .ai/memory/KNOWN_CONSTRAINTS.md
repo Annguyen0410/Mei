@@ -41,7 +41,10 @@
 
 ## Repository
 
-- **Two engines in CI.** The PyQt5 job is a canary; fixing Qt5-only issues is out of scope.
+- **One engine in CI.** PyQt6 6.11 / Chromium 140 only. The PyQt5 job was removed: it
+  installed real Qt 5.15 (Chromium 87) — an engine nobody runs — and it died on a native
+  access violation in the request interceptor, which no `try/except` can catch. The
+  `from PyQt5 ...` imports in the source are rewritten onto PyQt6 by `qt_compat`.
 - **Test isolation.** `conftest.py` blanks the update channel and forces offscreen Qt; tests
   must not require network, a display, or a specific wall-clock hour.
 - **`uv.lock` is not regenerated** by the dependency-floor change; run `uv lock` when the

@@ -1,6 +1,11 @@
 # Mei
 
 [![CI](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml/badge.svg)](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Annguyen0410/Mei?include_prereleases&sort=semver&label=release)](https://github.com/Annguyen0410/Mei/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-5F6E55)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-302D27)
+
+**Website:** <https://annguyen0410.github.io/Mei/>
 
 **Mei is a desktop browser and personal study workspace.** It brings web research,
 notes, planning, flashcards, and AI assistance into one application, so information
@@ -89,6 +94,7 @@ or extension paired with the old token. Treat a pairing code as a credential.
 
 ## Documentation
 
+- [Product website](website/README.md) — the separate marketing site (`website/`, not part of the application bundle)
 - [User guide](docs/USER_GUIDE.md)
 - [Command and shortcut reference](docs/COMMAND_REFERENCE.md)
 - [Run and build guide](RUN_AND_BUILD.md)

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mei — social card</title>
+    <style>
+      /* Rendered to og.png at 1200×630 by tests/screenshots.spec.mjs. Not linked
+         from the site; it exists so the social card is real type, not an image
+         editor export nobody can regenerate. */
+      @font-face {
+        font-family: "MeiDisplay";
+        src: local("Georgia"), local("Iowan Old Style"), local("Palatino Linotype"), local("Times New Roman");
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+      }
+      body {
+        background: #f7f3ea;
+        color: #302d27;
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        padding: 64px 72px;
+        box-sizing: border-box;
+        gap: 40px;
+      }
+      .top {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 20px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #6b6459;
+      }
+      .mark {
+        width: 46px;
+        height: 46px;
+        border-radius: 12px;
+      }
+      h1 {
+        font-family: "MeiDisplay", Georgia, serif;
+        font-weight: 400;
+        font-size: 78px;
+        line-height: 1.02;
+        letter-spacing: -0.02em;
+        margin: 0;
+        max-width: 20ch;
+      }
+      h1 em {
+        color: #5f6e55;
+        font-style: italic;
+      }
+      .sub {
+        font-size: 24px;
+        line-height: 1.4;
+        color: #4a453d;
+        max-width: 46ch;
+        margin: 26px 0 0;
+      }
+      .bottom {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        border-top: 1px solid #ded3c0;
+        padding-top: 26px;
+      }
+      .bottom p {
+        margin: 0;
+        font-size: 19px;
+        color: #6b6459;
+      }
+      .strip {
+        display: flex;
+        gap: 10px;
+      }
+      .strip i {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <div class="top"><img class="mark" src="icon.png" alt="" /><span>Mei · Windows · MIT</span></div>
+      <h1 style="margin-top: 40px">A browser that becomes <em>your workspace</em>.</h1>
+      <p class="sub">
+        Tabs, research desks, notes, planning and SM-2 review in one desktop app — with a local
+        profile and an AI workspace that reads only the context you hand it.
+      </p>
+    </div>
+    <div class="bottom">
+      <p>Chromium 140 · Qt 6.11 · 35 themes · local-first</p>
+      <div class="strip" aria-hidden="true">
+        <i style="background: #5f6e55"></i>
+        <i style="background: #a9603f"></i>
+        <i style="background: #d9a94f"></i>
+        <i style="background: #3ab5a4"></i>
+        <i style="background: #9b7fe0"></i>
+      </div>
+    </div>
+  </body>
+</html>

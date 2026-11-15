@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mei — a browser that becomes your workspace</title>
+    <meta
+      name="description"
+      content="Mei is a Windows desktop browser and study workspace. Keep the page, the note, the plan and the flashcard in one place — with a local profile and an AI workspace that only reads the context you hand it."
+    />
+    <meta name="theme-color" content="#F7F3EA" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1B1815" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="icon.png" sizes="any" />
+    <link rel="apple-touch-icon" href="icon.png" />
+    <!-- No canonical URL and no sitemap yet: this repository has not published a
+         production domain, and a guessed canonical is worse than none. -->
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Mei" />
+    <meta property="og:title" content="Mei — a browser that becomes your workspace" />
+    <meta
+      property="og:description"
+      content="Browse, research, plan and review in one desktop app. Local profile, MIT licensed, Windows."
+    />
+    <meta property="og:image" content="og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Mei wordmark on a warm paper background beside a browser and a notes desk." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Mei — a browser that becomes your workspace" />
+    <meta
+      name="twitter:description"
+      content="A Windows desktop browser and study workspace: tabs, research desks, notes, planning, SM-2 review, and an AI workspace that reads only the context you select."
+    />
+    <meta name="twitter:image" content="og.png" />
+
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Mei",
+        "applicationCategory": "BrowserApplication",
+        "applicationSubCategory": "Study workspace",
+        "operatingSystem": "Windows 10, Windows 11",
+        "softwareVersion": "1.0.2.0",
+        "license": "https://github.com/Annguyen0410/Mei/blob/main/LICENSE",
+        "isAccessibleForFree": true,
+        "downloadUrl": "https://github.com/Annguyen0410/Mei/releases/latest",
+        "codeRepository": "https://github.com/Annguyen0410/Mei",
+        "description": "Mei is a desktop browser and personal study workspace: Chromium-based browsing, research desks, notes, planning and SM-2 review, with an AI workspace that only reads the context the user selects."
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="wrap site-header__inner">
+        <a class="brand" href="#top" aria-label="Mei, back to top">
+          <img class="brand__mark" src="icon.png" alt="" width="34" height="34" />
+          <span class="brand__name">Mei</span>
+          <span class="brand__note">browser · study workspace</span>
+        </a>
+
+        <nav class="nav" aria-label="Sections">
+          <a href="#browser">Browser</a>
+          <a href="#research">Research</a>
+          <a href="#plan">Plan</a>
+          <a href="#ai">AI</a>
+          <a href="#themes">Themes</a>
+          <a href="#privacy">Privacy</a>
+        </nav>
+
+        <div class="site-header__actions">
+          <a class="btn btn--primary btn--sm" href="#download">Download</a>
+          <details class="menu">
+            <summary aria-label="Open section menu">
+              <span class="menu__lines" aria-hidden="true"></span>
+              <span class="visually-hidden">Sections</span>
+            </summary>
+            <nav class="menu__panel" aria-label="Sections">
+              <a href="#browser">Browser</a>
+              <a href="#research">Research</a>
+              <a href="#plan">Plan &amp; notes</a>
+              <a href="#ai">AI workspace</a>
+              <a href="#study">Study loop</a>
+              <a href="#privacy">Privacy</a>
+              <a href="#themes">Themes</a>
+              <a href="#download">Download</a>
+              <a href="#faq">Questions</a>
+            </nav>
+          </details>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ------------------------------------------------------------ hero -->
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="wrap hero__grid">
+          <div class="hero__copy">
+            <p class="eyebrow">Windows · Chromium 140 · MIT</p>
+            <h1 class="display" id="hero-title">
+              A browser that becomes
+              <em>your workspace</em>.
+            </h1>
+            <p class="lead">
+              A page is rarely the end of the work. Mei keeps the tab, the note you took, the plan
+              you made and the card you will review tomorrow in one application — with a profile
+              that lives on your disk.
+            </p>
+
+            <div class="cta-row">
+              <a class="btn btn--primary" href="#download">
+                Download for Windows
+                <span class="btn__meta">v1.0.2.0</span>
+              </a>
+              <a class="btn btn--ghost" href="#browser">See it work</a>
+            </div>
+
+            <ul class="hero__facts">
+              <li><strong>No account.</strong> Nothing to sign in to.</li>
+              <li><strong>No hosted store.</strong> The profile is a folder you own.</li>
+              <li><strong>AI is optional.</strong> Local models or a remote endpoint you choose.</li>
+            </ul>
+          </div>
+
+          <div class="hero__art" aria-hidden="true">
+            <div class="window window--hero">
+              <div class="window__bar">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span class="window__title">Mei</span>
+              </div>
+              <div class="tabs">
+                <span class="tab tab--active">Attention and memory</span>
+                <span class="tab">Desk · Memory systems</span>
+                <span class="tab tab--plus">+</span>
+              </div>
+              <div class="omni">
+                <span class="omni__pill">mei://desk/memory-systems</span>
+                <span class="omni__icons"><i></i><i></i></span>
+              </div>
+              <div class="window__body">
+                <aside class="rail">
+                  <span class="rail__item rail__item--on">Overview</span>
+                  <span class="rail__item">Notes</span>
+                  <span class="rail__item">Weekly Plan</span>
+                  <span class="rail__item">Tasks</span>
+                  <span class="rail__item">Review</span>
+                </aside>
+                <div class="pane">
+                  <p class="pane__kicker">Research desk</p>
+                  <h2 class="pane__title">Memory systems</h2>
+                  <div class="pane__rows">
+                    <div class="mini">
+                      <p class="mini__label">Linked tab</p>
+                      <p class="mini__text">Working memory is the bottleneck</p>
+                    </div>
+                    <div class="mini">
+                      <p class="mini__label">Note</p>
+                      <p class="mini__text">Chunking beats rereading — cite §4</p>
+                    </div>
+                    <div class="mini">
+                      <p class="mini__label">Card</p>
+                      <p class="mini__text">What limits working memory?</p>
+                      <span class="mini__due">due today</span>
+                    </div>
+                    <div class="mini mini--quiet">
+                      <p class="mini__label">Next step</p>
+                      <p class="mini__text">Review 5 cards, then draft the summary</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="art-card art-card--note">
+              <p class="art-card__kicker">Quick capture</p>
+              <p class="art-card__body">[[Chunking]] beats rereading.</p>
+              <p class="art-card__meta">saved to SafeVault · linked to this desk</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------------ flow -->
+      <section class="flow wrap" aria-labelledby="flow-title">
+        <div class="section-head">
+          <p class="eyebrow">One process, four stations</p>
+          <h2 class="h2" id="flow-title">Capture, plan, study, review — in one window</h2>
+          <p class="lede">
+            Mei is not a browser with a notes tab bolted on. It is organised around the loop that
+            studying actually follows, and every station reads the same profile.
+          </p>
+        </div>
+        <ol class="steps">
+          <li class="step">
+            <span class="step__num">01</span>
+            <h3 class="step__title">Capture the page</h3>
+            <p>A tab, a highlight, a saved page or a quick note. It lands in the profile, not in a cloud clipboard.</p>
+          </li>
+          <li class="step">
+            <span class="step__num">02</span>
+            <h3 class="step__title">Give it a desk</h3>
+            <p>Name a research desk and link the tabs, notes, tasks and cards it belongs to — the same records, not copies.</p>
+          </li>
+          <li class="step">
+            <span class="step__num">03</span>
+            <h3 class="step__title">Plan the week</h3>
+            <p>Courses, deadlines, focus blocks and study sessions sit on one week grid, with the next step surfaced on Home.</p>
+          </li>
+          <li class="step">
+            <span class="step__num">04</span>
+            <h3 class="step__title">Review on a schedule</h3>
+            <p>Cards come back on an SM-2 interval. Grades move the interval; the deck and the week both learn from it.</p>
+          </li>
+        </ol>
+      </section>
+
+      <!-- --------------------------------------------------------- browser -->
+      <section class="band" id="browser" aria-labelledby="browser-title">
+        <div class="wrap split">
+          <div class="split__copy">
+            <p class="eyebrow">The browser</p>
+            <h2 class="h2" id="browser-title">Chromium 140, arranged for reading</h2>
+            <p class="lede">
+              Real browsing on Qt WebEngine 6.11 — tabs, tab groups, split view, reader tools,
+              downloads, incognito profiles and optional web panels. The difference is what the
+              chrome is willing to hold for you.
+            </p>
+            <dl class="facts">
+              <div class="facts__row">
+                <dt>Engine</dt>
+                <dd>Chromium 140.0.7339.225 on Qt 6.11.0, packaged with PyInstaller 6.19.0. Pinned, and checked in CI.</dd>
+              </div>
+              <div class="facts__row">
+                <dt>Tabs</dt>
+                <dd>Groups, split view, hibernation for the ones you are not reading, and saved tab sets you can restore later.</dd>
+              </div>
+              <div class="facts__row">
+                <dt>Reading</dt>
+                <dd>Reader mode that strips the page, plus a workspace that keeps the source beside the note you wrote about it.</dd>
+              </div>
+              <div class="facts__row">
+                <dt>Protections</dt>
+                <dd>Ad and tracker filtering, HTTPS-only policy, Client Hints and cookie controls, per-origin permissions.</dd>
+              </div>
+              <div class="facts__row">
+                <dt>Autofill</dt>
+                <dd>Saved logins fill only when you ask (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>), and only into a form that submits by POST — a password never lands in a URL.</dd>
+              </div>
+            </dl>
+          </div>
+
+          <figure class="shot shot--browser shot--wide">
+            <div class="shot__frame">
+              <img
+                src="shots/overview.png"
+                alt="Mei's Overview page: a left rail with Overview, Notes, Weekly Plan, Tasks, Review, Calendar, Boards, Files and Sites, and a workspace pane listing current work and suggestions."
+                width="1440"
+                height="900"
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
+            <figcaption>
+              The Overview page in Mei 1.0.2.0, rendered from the app itself on a fresh profile.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- -------------------------------------------------------- research -->
+      <section class="wrap section" id="research" aria-labelledby="research-title">
+        <div class="section-head">
+          <p class="eyebrow">Research desks</p>
+          <h2 class="h2" id="research-title">A desk is a link table, not a folder of duplicates</h2>
+          <p class="lede">
+            Save your open tabs as a named desk, then point it at the notes, tasks, saved pages and
+            flashcards that already exist. Mei stores one typed edge per link, so a note edited from
+            the desk is the same note the Personal hub shows.
+          </p>
+        </div>
+
+        <div class="link-map">
+          <div class="link-map__node">
+            <p class="link-map__label">Tabs</p>
+            <p class="link-map__value">6 open pages</p>
+          </div>
+          <div class="link-map__arrow" aria-hidden="true">→</div>
+          <div class="link-map__node link-map__node--hub">
+            <p class="link-map__label">Desk</p>
+            <p class="link-map__value">Memory systems</p>
+          </div>
+          <div class="link-map__arrow" aria-hidden="true">→</div>
+          <div class="link-map__stack">
+            <div class="link-map__node"><p class="link-map__label">Notes</p><p class="link-map__value">3 linked</p></div>
+            <div class="link-map__node"><p class="link-map__label">Tasks</p><p class="link-map__value">2 linked</p></div>
+            <div class="link-map__node"><p class="link-map__label">Cards</p><p class="link-map__value">5 linked</p></div>
+          </div>
+        </div>
+
+        <ul class="notes-list">
+          <li><strong>Existing records stay single.</strong> Linking never copies a note into a desk; the edge table is one row per relationship.</li>
+          <li><strong>Anything can be linked.</strong> Tabs, notes, tasks, saved pages, flashcards, files and planner rows share one link store.</li>
+          <li><strong>Search reads the same store.</strong> Universal search, the Morning Brief and the AI index all start from those records.</li>
+        </ul>
+      </section>
+
+      <!-- ------------------------------------------------------------ plan -->
+      <section class="band band--alt" id="plan" aria-labelledby="plan-title">
+        <div class="wrap split split--reverse">
+          <figure class="shot shot--tall">
+            <div class="shot__frame">
+              <img
+                src="shots/weekly-plan.png"
+                alt="Mei's Weekly Plan: a week grid from Monday to Sunday with a date selector, an add-item field with a Study button, and controls for focus blocks and courses."
+                width="1440"
+                height="900"
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
+            <figcaption>The Weekly Plan holds courses, deadlines, focus blocks and study sessions on one grid.</figcaption>
+          </figure>
+
+          <div class="split__copy">
+            <p class="eyebrow">Personal workspace</p>
+            <h2 class="h2" id="plan-title">The part that turns reading into a week</h2>
+            <p class="lede">
+              Notes with wiki links, quick tasks, a calendar, boards, saved pages, the Weekly Plan
+              and SM-2 review. Each one is a view over the profile — not a separate app with its own
+              database to keep in sync.
+            </p>
+            <ul class="tick-list">
+              <li><strong>Notes</strong> save as you type, with categories, wiki-style links and a word count that is honest about length.</li>
+              <li><strong>Planner rows</strong> pour into a study session: minutes are credited once, and the focus block records where they came from.</li>
+              <li><strong>Review</strong> grades a card, moves its interval, and reports the deck's due count on the nav badge.</li>
+              <li><strong>Rest — your records stay yours:</strong> everything is JSON on disk, written atomically, with a versioned migration step per store.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="wrap shot-row">
+          <figure class="shot">
+            <div class="shot__frame">
+              <img src="shots/tasks.png" alt="The Tasks page: buckets for personal and school work with due dates and completion state." width="1440" height="900" loading="lazy" decoding="async" />
+            </div>
+            <figcaption>Tasks, with due dates that the planner and Home both read.</figcaption>
+          </figure>
+          <figure class="shot">
+            <div class="shot__frame">
+              <img src="shots/review.png" alt="The Review page: flashcard review with the due count and grade buttons." width="1440" height="900" loading="lazy" decoding="async" />
+            </div>
+            <figcaption>SM-2 review. Grades move the interval; nothing else decides it.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- -------------------------------------------------------------- ai -->
+      <section class="wrap section" id="ai" aria-labelledby="ai-title">
+        <div class="section-head">
+          <p class="eyebrow">AI workspace</p>
+          <h2 class="h2" id="ai-title">Retrieval first, provider second, context by consent</h2>
+          <p class="lede">
+            Mei searches your own profile before it asks a model anything: BM25 by default, optional
+            embeddings when you have them. The provider is a setting, not a dependency — and page
+            content is treated as untrusted input, never as instructions.
+          </p>
+        </div>
+
+        <div class="table-wrap">
+          <table class="providers">
+            <caption>Where a request goes depends entirely on the provider you configure.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Provider</th>
+                <th scope="col">Runs</th>
+                <th scope="col">What leaves the device</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Ollama</th>
+                <td><span class="pill pill--local">local</span></td>
+                <td>Nothing, as long as the endpoint is on your machine or your own network.</td>
+              </tr>
+              <tr>
+                <th scope="row">llama.cpp server</th>
+                <td><span class="pill pill--local">local</span></td>
+                <td>Nothing, to the same extent — Mei sends the request to the endpoint you set.</td>
+              </tr>
+              <tr>
+                <th scope="row">OpenRouter</th>
+                <td><span class="pill pill--remote">remote</span></td>
+                <td>The prompt and the context you selected, sent to that provider. Reviewed by you, per request.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="ai-grid">
+          <div class="ai-card">
+            <h3>Context controls</h3>
+            <p>Browser context and research context are separate switches. Private windows are excluded from both, and the prompt shows what was attached before it is sent.</p>
+          </div>
+          <div class="ai-card">
+            <h3>Agents and slash commands</h3>
+            <p>Commands run against the same stores the UI does — summarize the active page, save a tab set, ask the deck what is due. Nothing is hidden behind a second API.</p>
+          </div>
+          <div class="ai-card">
+            <h3>What Mei will not claim</h3>
+            <p>No model is bundled, no benchmark is invented, and “local” never means “private by default” — it means the request did not leave the machine you configured.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ----------------------------------------------------------- study -->
+      <section class="band" id="study" aria-labelledby="study-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">The study loop</p>
+            <h2 class="h2" id="study-title">One recommendation, four surfaces</h2>
+            <p class="lede">
+              The flow layer stores nothing. It reads the agenda, the deck, the captures and the pour
+              journal, then answers one question — what do I do next — for Home, the planner, the
+              Morning Brief and slash commands alike.
+            </p>
+          </div>
+
+          <ol class="loop" aria-label="Study loop">
+            <li class="loop__item"><span class="loop__step">Read</span><p>Capture the page that mattered, with the tab still attached.</p></li>
+            <li class="loop__item"><span class="loop__step">Distil</span><p>Write the note, then the card. The card remembers which note it came from.</p></li>
+            <li class="loop__item"><span class="loop__step">Pour</span><p>Study a planner row in a focus block; minutes are credited once.</p></li>
+            <li class="loop__item"><span class="loop__step">Return</span><p>Review what is due, then read the week back: streak, minutes, untouched rows.</p></li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- --------------------------------------------------------- privacy -->
+      <section class="wrap section" id="privacy" aria-labelledby="privacy-title">
+        <div class="section-head">
+          <p class="eyebrow">Privacy and data integrity</p>
+          <h2 class="h2" id="privacy-title">Local-first, described precisely</h2>
+          <p class="lede">
+            Marketing loves the word “encrypted”. Mei's actual model is more specific than that, so
+            this section says exactly what protects what.
+          </p>
+        </div>
+
+        <div class="privacy-grid">
+          <dl class="privacy-claims">
+            <div><dt>No account, no hosted service</dt><dd>Mei runs without signing in. Nothing is uploaded to a Mei server because there is no Mei server in the path.</dd></div>
+            <div><dt>One profile, plain files</dt><dd>Tabs, history, notes, planner, cards and links live under the profile folder, written atomically and migrated with a version per store.</dd></div>
+            <div><dt>Secrets are kept apart</dt><dd>The AI key, Google token cache, sync token, bridge token and proxy password sit in <code>secrets.dat</code>, protected with Windows DPAPI for the signed-in user.</dd></div>
+            <div><dt>Secrets stay out of copies</dt><dd><code>secrets.dat</code> is deliberately excluded from backups, folder and self-hosted sync, and diagnostics bundles.</dd></div>
+            <div><dt>Backups are verified</dt><dd>Versioned backups, a staged Restore Center with rollback, Storage Health, record-level restore and a Sync Conflicts archive.</dd></div>
+            <div><dt>Opt-in backup encryption</dt><dd>Encrypted backups use an AES-256-GCM container with a scrypt-derived key. Scheduled backups stay unencrypted because Mei never stores that password.</dd></div>
+          </dl>
+
+          <aside class="caveat">
+            <p class="caveat__kicker">What Mei does not promise</p>
+            <ul>
+              <li>A passcode gates workspaces; it does not encrypt every profile file at rest.</li>
+              <li>Local storage is not encryption. File permissions are not encryption either.</li>
+              <li>On platforms other than Windows, secrets use owner-only file permissions and Mei says so in the UI.</li>
+              <li>A remote AI provider receives the context you select for that request.</li>
+              <li>The local-network bridge speaks plain HTTP; Mei warns before LAN mode is enabled.</li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------- themes -->
+      <section class="band band--alt" id="themes" aria-labelledby="themes-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">35 themes · 15 accents</p>
+            <h2 class="h2" id="themes-title">Try the real palettes, not swatches</h2>
+            <p class="lede">
+              Every colour in this preview is read from the app's own theme data — the same tokens
+              the desktop UI resolves, including the accent lifting that keeps text readable on dark
+              surfaces. Pick a theme and an accent; the mockup repaints.
+            </p>
+          </div>
+
+          <div class="explorer" data-theme-explorer>
+            <div class="explorer__controls">
+              <fieldset class="chips" data-theme-chips>
+                <legend class="chips__legend">Theme</legend>
+              </fieldset>
+              <fieldset class="swatches" data-accent-chips>
+                <legend class="chips__legend">Accent</legend>
+              </fieldset>
+              <p class="explorer__status" data-theme-status aria-live="polite">Quiet Table · warm paper, sage &amp; clay</p>
+              <noscript>
+                <p class="explorer__status">
+                  The interactive preview needs JavaScript. The app ships Quiet Table, Honey Crème,
+                  Sakura Café, Matcha Latte, Espresso House, Paper Studio, Aurora Glass, Cyberpunk
+                  Neon, Midnight AMOLED, High Contrast and 25 more.
+                </p>
+              </noscript>
+            </div>
+
+            <div class="explorer__frame" data-theme-frame>
+              <div class="preview">
+                <div class="preview__rail">
+                  <span class="preview__brand">Mei</span>
+                  <span class="preview__nav preview__nav--on">Overview</span>
+                  <span class="preview__nav">Notes</span>
+                  <span class="preview__nav">Weekly Plan</span>
+                  <span class="preview__nav">Review</span>
+                </div>
+                <div class="preview__pane">
+                  <div class="preview__head">
+                    <span class="preview__kicker">Today</span>
+                    <h3 class="preview__title">Good evening, An</h3>
+                  </div>
+                  <div class="preview__cards">
+                    <div class="preview__card">
+                      <span class="preview__label">Due now</span>
+                      <p class="preview__value">5 cards</p>
+                    </div>
+                    <div class="preview__card">
+                      <span class="preview__label">Next step</span>
+                      <p class="preview__value">Draft the summary</p>
+                    </div>
+                    <div class="preview__card preview__card--accent">
+                      <span class="preview__label">Focus block</span>
+                      <p class="preview__value">45 min · systems</p>
+                    </div>
+                  </div>
+                  <div class="preview__list">
+                    <div class="preview__row"><span>Reading notes: attention and memory</span><span class="preview__meta">School</span></div>
+                    <div class="preview__row"><span>Thesis outline</span><span class="preview__meta">School</span></div>
+                    <div class="preview__row"><span>Weekly review</span><span class="preview__meta">General</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------- integrations -->
+      <section class="wrap section" id="integrations" aria-labelledby="integrations-title">
+        <div class="section-head">
+          <p class="eyebrow">Optional integrations</p>
+          <h2 class="h2" id="integrations-title">Nothing here is required to use Mei</h2>
+          <p class="lede">
+            Each integration is configured by you, and each one is off until you turn it on.
+          </p>
+        </div>
+        <ul class="integration-list">
+          <li>
+            <h3>Android bridge</h3>
+            <p>Pair a phone on loopback by default. LAN mode speaks plain HTTP, warns first, and rotating the token disconnects everything paired with the old one.</p>
+          </li>
+          <li>
+            <h3>Mei browser extension</h3>
+            <p>Requests <code>activeTab</code> rather than access to all sites, and talks to the app over the same bridge token.</p>
+          </li>
+          <li>
+            <h3>Folder sync</h3>
+            <p>Sync a profile bundle through a folder you choose, with conflict archives instead of silent overwrites.</p>
+          </li>
+          <li>
+            <h3>Self-hosted sync</h3>
+            <p>A token-protected endpoint you run. Mei stores the token in <code>secrets.dat</code>, not in the profile JSON.</p>
+          </li>
+          <li>
+            <h3>Google integration</h3>
+            <p>Optional, with the token cache protected by DPAPI and excluded from backups and diagnostics.</p>
+          </li>
+        </ul>
+      </section>
+
+      <!-- --------------------------------------------------------- download -->
+      <section class="band band--download" id="download" aria-labelledby="download-title">
+        <div class="wrap download">
+          <div class="download__copy">
+            <p class="eyebrow">Download</p>
+            <h2 class="h2" id="download-title">Mei 1.0.2.0 for Windows</h2>
+            <p class="lede">
+              Windows 10 and 11, 64-bit. The installer and the portable executable are published on
+              GitHub Releases under an MIT licence; nothing else is downloaded at install time.
+            </p>
+            <div class="cta-row">
+              <a class="btn btn--primary" href="https://github.com/Annguyen0410/Mei/releases/latest">
+                Open the latest release
+              </a>
+              <a class="btn btn--ghost" href="https://github.com/Annguyen0410/Mei/releases">All releases</a>
+            </div>
+            <p class="fine">
+              No macOS, Linux, iOS or Android build is published in this repository. Release files
+              are listed below exactly as they are named on the release page.
+            </p>
+          </div>
+
+          <div class="download__assets">
+            <h3 class="assets__title">What the release contains</h3>
+            <ul class="assets">
+              <li><code>MeiSetup.exe</code><span>Installer (Inno Setup), recommended for a first install.</span></li>
+              <li><code>Mei.exe</code><span>Portable build, ~200 MB, PyInstaller-packaged with the pinned engine.</span></li>
+              <li><code>Mei-1.0.2.0-web_support.zip</code><span>Companion archive with the local web workspaces. Extract beside <code>Mei.exe</code>.</span></li>
+              <li><code>update.json</code><span>The channel file the app reads to offer an in-place update.</span></li>
+              <li><code>RELEASE_BODY.md</code><span>Release notes for this tag, also in <code>docs/CHANGELOG.md</code>.</span></li>
+            </ul>
+
+            <h3 class="assets__title">Install</h3>
+            <ol class="install-steps">
+              <li>Download <code>MeiSetup.exe</code> from the release page and run it.</li>
+              <li>If you use the portable build, unpack <code>web_support</code> beside <code>Mei.exe</code> and keep the folder where it is.</li>
+              <li>Start Mei. The profile is created under <code>runtime_data/profiles</code> next to the executable, not in place of it.</li>
+              <li>Back the profile folder up before moving to another machine. Replacing the app never replaces the profile.</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------------- docs -->
+      <section class="wrap section" id="docs" aria-labelledby="docs-title">
+        <div class="section-head">
+          <p class="eyebrow">Documentation</p>
+          <h2 class="h2" id="docs-title">The long version, in the repository</h2>
+        </div>
+        <ul class="doc-grid">
+          <li><a href="https://github.com/Annguyen0410/Mei/blob/main/docs/USER_GUIDE.md"><span>User guide</span><em>Workspaces, study loop, settings</em></a></li>
+          <li><a href="https://github.com/Annguyen0410/Mei/blob/main/docs/COMMAND_REFERENCE.md"><span>Command reference</span><em>Slash commands and shortcuts</em></a></li>
+          <li><a href="https://github.com/Annguyen0410/Mei/blob/main/ARCHITECTURE.md"><span>Architecture</span><em>Layers, stores, boundaries</em></a></li>
+          <li><a href="https://github.com/Annguyen0410/Mei/blob/main/RUN_AND_BUILD.md"><span>Run and build</span><em>Source setup, packaging, signing</em></a></li>
+          <li><a href="https://github.com/Annguyen0410/Mei/blob/main/docs/CHANGELOG.md"><span>Changelog</span><em>Everything that shipped</em></a></li>
+          <li><a href="https://github.com/Annguyen0410/Mei/blob/main/docs/WHY_MEI.md"><span>Why Mei</span><em>The design argument, without the pitch</em></a></li>
+          <li><a href="https://github.com/Annguyen0410/Mei/blob/main/docs/CAPABILITIES.md"><span>Capabilities</span><em>What is wired, what is parked</em></a></li>
+          <li><a href="https://github.com/Annguyen0410/Mei"><span>Repository</span><em>Source, issues, CI</em></a></li>
+        </ul>
+      </section>
+
+      <!-- -------------------------------------------------------------- faq -->
+      <section class="band band--alt" id="faq" aria-labelledby="faq-title">
+        <div class="wrap faq">
+          <div class="section-head">
+            <p class="eyebrow">Questions</p>
+            <h2 class="h2" id="faq-title">Asked without the marketing filter</h2>
+          </div>
+
+          <details>
+            <summary>Does Mei need an account or send my data anywhere?</summary>
+            <p>
+              No account, and no Mei-hosted data service. The profile is a folder on your disk.
+              Requests leave the machine only when you configure something that makes them: a remote
+              AI endpoint, folder sync to a location you picked, or the Android bridge.
+            </p>
+          </details>
+          <details>
+            <summary>Is my profile encrypted?</summary>
+            <p>
+              Not by default. A passcode gates workspaces but does not encrypt every file. What is
+              protected: the secrets file (<code>secrets.dat</code>) uses DPAPI on Windows and
+              owner-only permissions elsewhere, and encrypted backups are available as an opt-in
+              AES-256-GCM container. The rest of the profile is JSON on disk — back it up, and keep
+              the machine's disk encryption on if that matters to you.
+            </p>
+          </details>
+          <details>
+            <summary>Can I use Mei completely offline?</summary>
+            <p>
+              Yes for browsing, notes, planning and review. The AI workspace runs offline with a
+              local Ollama or llama.cpp endpoint; no model is bundled with the app. OpenRouter is
+              remote by definition.
+            </p>
+          </details>
+          <details>
+            <summary>What happens to saved passwords?</summary>
+            <p>
+              Automatic save-on-login is suspended while the credential bridge is rebuilt
+              (ADR-0006); the vault and manual entries still work. Filling a saved login is an
+              explicit action — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> — and the fill refuses
+              any form that would submit by GET, so a password cannot end up in the address bar.
+            </p>
+          </details>
+          <details>
+            <summary>Which platforms are supported?</summary>
+            <p>
+              Windows 10 and 11, built from Python 3.11 with PyQt6 6.11.0. The source runs on other
+              desktop platforms, but releases published here are Windows builds; the mobile bridge
+              pairs a phone browser, it is not an Android app release.
+            </p>
+          </details>
+          <details>
+            <summary>Is it free? Can I read the source?</summary>
+            <p>
+              Yes. Mei is MIT licensed on GitHub, and CI runs the full test suite, the lint gate,
+              the engine-version gate and the day/night theme checks on every push.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section class="closing wrap" aria-labelledby="closing-title">
+        <h2 class="display display--sm" id="closing-title">Open a page. Keep what it taught you.</h2>
+        <div class="cta-row cta-row--center">
+          <a class="btn btn--primary" href="#download">Download Mei</a>
+          <a class="btn btn--ghost" href="https://github.com/Annguyen0410/Mei">View on GitHub</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap site-footer__inner">
+        <div class="site-footer__brand">
+          <img src="icon.png" alt="" width="28" height="28" />
+          <p>Mei — a desktop browser and study workspace. MIT licensed, built by An Nguyen.</p>
+        </div>
+        <nav aria-label="Footer">
+          <a href="#browser">Browser</a>
+          <a href="#privacy">Privacy</a>
+          <a href="#docs">Documentation</a>
+          <a href="https://github.com/Annguyen0410/Mei/releases/latest">Releases</a>
+          <a href="https://github.com/Annguyen0410/Mei">GitHub</a>
+        </nav>
+      </div>
+    </footer>
+
+    <!-- `closedby="any"` lets the platform dismiss on backdrop click and Escape;
+         the form with method="dialog" closes without a line of JavaScript. -->
+    <dialog class="lightbox" data-lightbox closedby="any">
+      <form method="dialog">
+        <button class="lightbox__close" type="submit" aria-label="Close image" title="Close (Esc)">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </form>
+      <img alt="" data-lightbox-img />
+      <p data-lightbox-caption></p>
+    </dialog>
+  </body>
+</html>

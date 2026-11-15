@@ -4,6 +4,24 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 > **Run & build the desktop app**: see the dedicated **`RUN_AND_BUILD.md`** — app testing checklist, how to use `.venv`, common run errors, and the full PyInstaller command (`--collect-all PyQt6.QtWebEngine*`) to produce the `.exe`.
 
+> ## 1.0.2.0 — Filling a login is your decision
+>
+> The credential path stopped acting on its own. Automatic save-on-login stays suspended
+> (ADR-0006); what changed is when, and how, an existing saved login reaches a page.
+>
+> - **Autofill needs a gesture.** Loading a page no longer touches the vault. The page arms
+>   a hint; the fill runs on `Ctrl+Shift+L`, which re-checks the origin before it opens the
+>   vault and fills the form.
+> - **Only POST forms are filled.** The injector refuses a form that would submit by GET —
+>   including a submit control that sits outside the form and points at it through
+>   `form="<id>"` plus `formmethod` — so a password can no longer be carried into the URL.
+> - **CI tests one engine.** The PyQt5 job is gone: it exercised Qt 5.15 / Chromium 87, an
+>   engine no user runs, and it died on a native access violation instead of on a test.
+> - **Product website.** The site in `website/` is published from the `gh-pages` branch at
+>   <https://annguyen0410.github.io/Mei/>. It is separate from the application bundle.
+> - **Tests.** The notes selection test no longer assumes row order, so it cannot go red
+>   because two notes were created across a second boundary.
+
 > ## 1.0.1.0 — The desk holds together
 >
 > A stability release for the 1.0 desk: the crashes that could take the whole

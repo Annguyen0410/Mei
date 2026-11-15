@@ -31,7 +31,6 @@ from PyQt5.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt5.QtWebEngineWidgets import (
     QWebEnginePage,
     QWebEngineProfile,
-    QWebEngineScript,
     QWebEngineSettings,
     QWebEngineView,
 )
@@ -685,6 +684,11 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         self._incognito_profiles = []
         self._dev_windows = []
         self._cookie_filter = None
+        # Download lifecycle: the count pauses tab hibernation while a transfer
+        # runs, so every accepted download must decrement it on a terminal
+        # state or hibernation never resumes for the rest of the session.
+        self._active_download_count = 0
+        self._finalized_downloads = set()
         self._trusted_site_profiles = {}
         self.ext_path = prefs.ext_path(self.base_dir)
         if not os.path.exists(self.ext_path):
@@ -1223,7 +1227,11 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
                 if hasattr(profile, "setHttpCacheType"):
                     profile.setHttpCacheType(QWebEngineProfile.MemoryHttpCache)
             profile.setPersistentCookiesPolicy(QWebEngineProfile.ForcePersistentCookies)
-        profile.downloadRequested.connect(self.handle_download_request)
+        # The private flag is bound per profile: an off-the-record download must
+        # not be written to the profile's download list or activity history.
+        profile.downloadRequested.connect(
+            lambda request, private=off_the_record: self.handle_download_request(request, private=private)
+        )
         settings = profile.settings()
         settings.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.JavascriptCanOpenWindows, True)
@@ -1264,21 +1272,13 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
             profile.setHttpCacheMaximumSize(64 * 1024 * 1024)
         if hasattr(QWebEngineSettings, "HyperlinkAuditingEnabled"):
             settings.setAttribute(QWebEngineSettings.HyperlinkAuditingEnabled, False)
-        # Chrome-style save-password capture: profile script stashes submitted
-        # login credentials in sessionStorage; on_load_finished reads them on
-        # the next page and offers to save (only when password manager is on).
-        if not off_the_record and prefs.get_password_manager_enabled(self.base_dir):
-            try:
-                from litebrowser.services import password_manager as _pm
-                script = QWebEngineScript()
-                script.setName("MeiPasswordCapture")
-                script.setInjectionPoint(QWebEngineScript.DocumentCreation)
-                script.setWorldId(QWebEngineScript.MainWorld)
-                script.setRunsOnSubFrames(False)
-                script.setSourceCode(_pm.CAPTURE_INSTALL_SCRIPT)
-                profile.scripts().insert(script)
-            except Exception:
-                pass
+        # Automatic save-password capture is deliberately NOT installed.
+        # The old DocumentCreation script ran in the page's main world and wrote
+        # the submitted password as plaintext into sessionStorage, which any
+        # script on the page can read. Qt WebEngine exposes no browser-internal
+        # password manager and no page→native channel that survives navigation,
+        # so the feature is suspended until an isolated-world bridge exists
+        # (.ai/decisions/ADR-0006). Autofill and Vault entries are unaffected.
 
     def get_profile_for_url(self, qurl=None, is_incognito=False):
         return self.profile
@@ -2603,24 +2603,37 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         for js in js_queue:
             browser.page().runJavaScript(js)
         if prefs.get_password_manager_enabled(self.base_dir) and prefs.get_autofill_passwords(self.base_dir):
-            try:
-                from litebrowser.services import password_manager
-                if password_manager.HAS_CRYPTO:
-                    url_str = browser.url().toString()
-                    if url_str.startswith("http"):
+            # Autofill is the one place a vault secret leaves the vault, so the
+            # page has to pass the boundary check first (https or loopback, and
+            # an exact origin match against the stored entry). The script itself
+            # re-checks location.origin, so a navigation between loadFinished
+            # and this call writes nothing.
+            from litebrowser.services import password_manager
+            if password_manager.HAS_CRYPTO:
+                url_str = browser.url().toString()
+                try:
+                    if password_manager.autofill_allowed(url_str):
                         master = getattr(self, "_master_password", None)
                         if master is None:
                             master = dialogs.ask_master_password(self)
                             if master is not None:
                                 self._master_password = master
                         if master:
-                            cred = password_manager.get_credentials_for(self.base_dir, url_str, master)
+                            cred = password_manager.credentials_for_autofill(self.base_dir, url_str, master)
                             if cred:
-                                browser.page().runJavaScript(password_manager.build_autofill_script(cred["username"], cred["password"]))
-            except Exception:
-                pass
-        if browser is self.current_browser():
-            self._maybe_offer_saved_password(browser)
+                                browser.page().runJavaScript(
+                                    password_manager.build_autofill_script(
+                                        cred["username"], cred["password"], url_str
+                                    )
+                                )
+                except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                    # A broken vault or KDF must not block the page load, but it
+                    # also must not disappear the way a bare ``pass`` did (F-32):
+                    # leave the type in the log, never the credentials.
+                    from litebrowser.core.log import get_logger
+                    get_logger("window").warning("autofill skipped: %s", type(exc).__name__)
+        # The save-password prompt was fed by the removed sessionStorage
+        # handoff; nothing reads captured credentials any more (ADR-0006).
         host_l = (browser.url().host() or "").lower()
         on_accounts_google = host_l == "accounts.google.com" or host_l.endswith(".accounts.google.com")
         if self.is_compatibility_host(browser.url()) or on_accounts_google:
@@ -3303,45 +3316,69 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         # so the checkbox has to show what pages are actually getting.
         self.act_dark_mode.setChecked(prefs.effective_force_dark_web(self.base_dir))
 
-    def _apply_cookie_policy(self, show_message=True):
-        checked = self.act_block_3p_cookies.isChecked()
-        store = self.profile.cookieStore()
-        if checked:
-            def cookie_filter(req):
-                first_party_url = ""
-                try:
-                    first_party = req.firstPartyUrl()
-                    if first_party:
-                        first_party_url = first_party.toString().lower()
-                except Exception:
-                    first_party_url = ""
-                if self.is_compatibility_host(first_party_url):
-                    return True
-                third_party = getattr(req, "thirdParty", False)
-                if callable(third_party):
-                    try:
-                        third_party = third_party()
-                    except Exception:
-                        third_party = False
-                return not bool(third_party)
+    def _third_party_cookie_filter(self):
+        """The cookie filter installed while third-party blocking is on.
 
-            self._cookie_filter = cookie_filter
-            if hasattr(store, "setCookieFilter"):
-                store.setCookieFilter(self._cookie_filter)
-                if show_message:
-                    self._flash_status("Third-party cookies blocked for this profile")
-            elif show_message:
-                self._flash_status("Preference saved — this Qt build cannot filter cookies")
+        Sign-in hosts stay exempt so OAuth and embedded login flows keep working;
+        everything else is decided by the engine's own third-party flag.
+        """
+
+        def cookie_filter(req):
+            first_party_url = ""
+            try:
+                first_party = req.firstPartyUrl()
+                if first_party:
+                    first_party_url = first_party.toString().lower()
+            except Exception:
+                first_party_url = ""
+            if self.is_compatibility_host(first_party_url):
+                return True
+            third_party = getattr(req, "thirdParty", False)
+            if callable(third_party):
+                try:
+                    third_party = third_party()
+                except Exception:
+                    third_party = False
+            return not bool(third_party)
+
+        return cookie_filter
+
+    def _apply_cookie_policy(self, show_message=True):
+        """Apply the cookie policy to every profile this window owns.
+
+        It used to be installed on ``self.profile`` only, so private/incognito
+        profiles kept storing third-party cookies while the setting said they
+        were blocked. A new profile created later now gets the same filter the
+        moment it exists.
+        """
+        if hasattr(self, "act_block_3p_cookies"):
+            checked = bool(self.act_block_3p_cookies.isChecked())
         else:
-            # Qt has no unsetCookieFilter: install a pass-through instead
-            # (v6.4 approach, kept).
-            if hasattr(store, "setCookieFilter"):
-                self._cookie_filter = lambda _req: True
-                store.setCookieFilter(self._cookie_filter)
-            else:
-                self._cookie_filter = None
-            if show_message:
-                self._flash_status("Third-party cookie blocking turned off")
+            checked = prefs.get_block_third_party_cookies(self.base_dir)
+        # Qt has no ``unsetCookieFilter``: refusing everything is wrong, so a
+        # pass-through is installed instead (the v6.4 approach, kept).
+        self._cookie_filter = self._third_party_cookie_filter() if checked else (lambda _req: True)
+        profiles = [getattr(self, "profile", None)] + list(getattr(self, "_incognito_profiles", []) or [])
+        filtered = 0
+        for profile in profiles:
+            if profile is None:
+                continue
+            try:
+                store = profile.cookieStore()
+            except Exception:
+                continue
+            if not hasattr(store, "setCookieFilter"):
+                continue
+            store.setCookieFilter(self._cookie_filter)
+            filtered += 1
+        if not show_message:
+            return
+        if not filtered:
+            self._flash_status("Preference saved — this Qt build cannot filter cookies")
+        elif checked:
+            self._flash_status("Third-party cookies blocked for this profile")
+        else:
+            self._flash_status("Third-party cookie blocking turned off")
 
     def toggle_block_third_party_cookies(self):
         checked = self.act_block_3p_cookies.isChecked()

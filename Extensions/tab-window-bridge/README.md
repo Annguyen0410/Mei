@@ -1,4 +1,4 @@
-# Mei Window Bridge (extension v1.2)
+# Mei Window Bridge (extension v1.3)
 
 Load this folder as an **unpacked extension** in Chrome or Opera GX. It has two
 jobs: send what you are looking at straight into Mei, and move a whole browser
@@ -33,9 +33,12 @@ another machine)
 3. Click **Load unpacked** and select **this** folder (`Extensions\tab-window-bridge`).
 4. Or extract `Extensions\MeiBridge-extension.zip` and load the extracted folder.
 
-> ℹ️ Version 1.2 adds the `scripting` permission, which is only used to read the
-> text you highlighted on the tab you are viewing when you press **Send
-> selection**. Chrome re-asks for permissions when you reload an unpacked
+> ℹ️ Version 1.3 dropped `http://*/*` + `https://*/*` from `host_permissions`.
+> Reading the highlighted text now uses `activeTab`, which the browser grants
+> for the tab you are on when you open the popup — no standing access to every
+> site. The one host permission it may ask for is the bridge origin it just
+> paired with (`http://127.0.0.1:<port>/*`), requested on the click that saved
+> the pairing code. Chrome re-asks for permissions when you reload an unpacked
 > folder — reload the folder once and accept.
 
 > ⚠️ **"Cannot load extension with file or directory name _legacy"** means
@@ -87,7 +90,7 @@ Payload → Import Selected Batch** imports it into the current workspace.
 
 | File | Role |
 | --- | --- |
-| `manifest.json` | MV3 manifest, permissions: tabs / storage / downloads / scripting |
+| `manifest.json` | MV3 manifest, permissions: activeTab / storage / downloads / scripting, no broad host access |
 | `popup.html`, `popup.js` | the popup: pairing, send, capture, export |
 | `bridge.js` | pure bridge helpers (pairing code, envelopes, reply wording); CommonJS-loadable, covered by `tests/js/bridge.test.js` |
 | `zip.js` | dependency-free ZIP writer (STORE) used by the export flow |

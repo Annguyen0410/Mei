@@ -17,12 +17,15 @@ requires-python = ">=3.10"
 dependencies = [
     "PyQt6==6.11.0",
     "PyQt6-WebEngine==6.11.0",
-    "cryptography>=41",
+    # 48.0.1 is the first release without the PYSEC-2026 advisories that
+    # affected the Fernet/X.509 code paths. A ``>=41`` floor let a fresh
+    # install resolve to a vulnerable build (pip-audit, 2026-11-14).
+    "cryptography>=48.0.1",
     "segno>=1.6.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "hypothesis>=6.0"]
 # LEGACY, not a supported engine. PyQt5 pins Qt 5.15 = Chromium 87, which most
 # of the modern web treats as unsupported (sign-in, WebAuthn, many JS APIs).
 # Kept only so an old checkout can still run its test suite; never ship it and

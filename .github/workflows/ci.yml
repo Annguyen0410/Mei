@@ -63,7 +63,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "${{ matrix.qt_core }}" "${{ matrix.qt_web }}" "cryptography>=40.0.0" "segno>=1.6.0" "pytest>=7.0" "ruff>=0.5"
+          python -m pip install "${{ matrix.qt_core }}" "${{ matrix.qt_web }}" "cryptography>=48.0.1" "segno>=1.6.0" "pytest>=7.0" "hypothesis>=6.0" "ruff>=0.5"
 
       - name: Engine version
         # Record which Chromium the suite is about to run on. Without this the

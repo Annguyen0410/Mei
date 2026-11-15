@@ -409,8 +409,15 @@ class TabManager:
             # Incognito profiles have no downloadRequested wiring otherwise —
             # downloads from private tabs silently did nothing (v6.4 bug).
             if hasattr(self.window, "handle_download_request"):
-                profile.downloadRequested.connect(self.window.handle_download_request)
+                profile.downloadRequested.connect(
+                    lambda request: self.window.handle_download_request(request, private=True)
+                )
                 browser._lite_incognito_download_conn = True
+            if hasattr(self.window, "_apply_cookie_policy"):
+                # A fresh profile starts with no cookie filter. Without this the
+                # "block third-party cookies" setting silently skipped private
+                # tabs (and any profile created after startup).
+                self.window._apply_cookie_policy(show_message=False)
         else:
             profile = self.profile
             if hasattr(self.window, "get_profile_for_url"):

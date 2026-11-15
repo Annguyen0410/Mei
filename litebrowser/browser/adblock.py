@@ -118,13 +118,20 @@ def _modern_google_ua():
 
 
 def _trusted_challenge_domains():
+    """Hosts that actually serve a challenge widget, not whole registrable domains.
+
+    ``cloudflare.com`` used to be listed, which exempted the blog, the docs, the
+    dashboard and every customer-named host under it from the blocklist, the
+    distraction shield and the HTTPS upgrade. Only the challenge endpoint needs
+    that exemption; the rest of the domain does not.
+    """
     return (
         "challenges.cloudflare.com",
-        "cloudflare.com",
         "hcaptcha.com",
         "newassets.hcaptcha.com",
         "js.hcaptcha.com",
-        "arkoselabs.com",
+        "api.hcaptcha.com",
+        "client-api.arkoselabs.com",
         "funcaptcha.com",
     )
 
@@ -161,52 +168,60 @@ def _default_blocked_domains():
     ]
 
 
-_COMPAT_DOMAINS = (
-    "google.com",
-    "googleapis.com",
-    "googleusercontent.com",
-    "gstatic.com",
-    "googlevideo.com",
-    "google.co",
-    "accounts.google.com",
-    "accounts.google.co",
-    "myaccount.google.com",
-    "accounts.youtube.com",
-    "ssl.gstatic.com",
-    "lh3.googleusercontent.com",
-    "play.google.com",
-    "chatgpt.com",
-    "oaistatic.com",
-    "oaiusercontent.com",
-    "openai.com",
-    "claude.ai",
-    "anthropic.com",
-    "copilot.microsoft.com",
-    "bing.com",
-    "microsoft.com",
-    "perplexity.ai",
-)
+# Client Hints are kept only for the sign-in origins in
+# ``engine_identity.SIGN_IN_COMPAT_HOSTS``. There is deliberately no second
+# registrable-domain allowlist here: the old one (google.com, microsoft.com,
+# openai.com, bing.com, ...) meant every ordinary page on those domains kept the
+# CPU/GPU hints that the "hide device info" setting promises to strip, and the
+# bundled blocklist was skipped for them too. Sign-in hosts are matched exactly
+# (or as a subdomain of the exact host), never by registrable domain.
 
 
-def _is_compat_domain(host: str) -> bool:
-    host = (host or "").lower()
-    if not host:
-        return False
-    return any(host == d or host.endswith("." + d) for d in _COMPAT_DOMAINS)
+def _filter_rule(line: str) -> tuple[str, str]:
+    """``(kind, domain)`` for one supported filter line, or ``("", "")``.
+
+    Supported network-rule shapes are ``||domain^`` and a bare ``domain``.  A
+    leading ``@@`` makes it an *exception* (allowlist) rule, which EasyList uses
+    to re-enable a site inside a broader blocked domain; ignoring those lines
+    silently over-blocked pages.  Cosmetic filters, regex rules, path rules and
+    ``$`` options remain unsupported and are skipped rather than guessed at.
+    """
+    text = str(line or "").strip()
+    if not text or text.startswith(("!", "[")):
+        return "", ""
+    kind = "block"
+    if text.startswith("@@"):
+        kind = "allow"
+        text = text[2:].strip()
+    text = text.removeprefix("||")
+    if "^" in text:
+        text = text.split("^", 1)[0]
+    domain = text.strip().lower()
+    if not _DOMAIN_RE.fullmatch(domain):
+        return "", ""
+    return kind, domain
 
 
 def _domain_from_filter_line(line: str) -> str:
     """Extract a blockable domain from one filter line ('||d^', '||d', 'd^').
 
-    Returns '' for comments, blanks and lines without a valid domain."""
-    line = line.strip()
-    if not line or line.startswith(("!", "[")):
-        return ""
-    line = line.removeprefix("||")
-    if "^" in line:
-        line = line.split("^")[0]
-    domain = line.strip()
-    return domain if _DOMAIN_RE.fullmatch(domain) else ""
+    Returns '' for comments, blanks, exception rules and lines without a valid
+    domain."""
+    kind, domain = _filter_rule(line)
+    return domain if kind == "block" else ""
+
+
+def _matches_domain(host: str, domains) -> bool:
+    """True when ``host`` is one of ``domains`` or a subdomain of one."""
+    if not host or not domains:
+        return False
+    if host in domains:
+        return True
+    labels = host.split(".")
+    for index in range(1, len(labels)):
+        if ".".join(labels[index:]) in domains:
+            return True
+    return False
 
 
 MAX_FILTER_FILE_BYTES = 8 * 1024 * 1024
@@ -220,20 +235,21 @@ MAX_SUBSCRIPTIONS = 32
 _SUBSCRIPTION_LOCK = threading.Lock()
 
 
-def load_domains_from_filter_file(path):
-    """Parse ``||domain^`` / bare-domain lines from a bounded filter file.
+def load_filter_file(path) -> tuple[set[str], set[str]]:
+    """Parse a bounded filter file into ``(blocked, allowed)`` domain sets.
 
     Bounds are explicit because the file can come from a subscription: an
     unbounded read is a memory-exhaustion path. Unsupported syntax is skipped
     (see docs/audit/MEI_BROWSER_COMPATIBILITY_MATRIX.md) rather than guessed.
     """
-    domains = set()
+    blocked: set[str] = set()
+    allowed: set[str] = set()
     if not path or not os.path.isfile(path):
-        return domains
+        return blocked, allowed
     try:
         if os.path.getsize(path) > MAX_FILTER_FILE_BYTES:
             _log.warning("filter file is larger than the parser accepts; ignoring it")
-            return domains
+            return blocked, allowed
         with open(path, "r", encoding="utf-8", errors="ignore") as handle:
             for index, line in enumerate(handle):
                 if index >= MAX_FILTER_LINES:
@@ -241,12 +257,18 @@ def load_domains_from_filter_file(path):
                     break
                 if len(line) > MAX_FILTER_LINE_CHARS:
                     continue
-                domain = _domain_from_filter_line(line)
-                if domain:
-                    domains.add(domain)
+                kind, domain = _filter_rule(line)
+                if not domain:
+                    continue
+                (allowed if kind == "allow" else blocked).add(domain)
     except OSError as exc:
         _log.warning("could not read the filter file (%s)", type(exc).__name__)
-    return domains
+    return blocked, allowed
+
+
+def load_domains_from_filter_file(path):
+    """Block rules only (back-compat wrapper around :func:`load_filter_file`)."""
+    return load_filter_file(path)[0]
 
 
 def _cache_filename(name, url):
@@ -285,9 +307,9 @@ def _bounded_rules(text):
         line = raw.strip()
         if not line or line.startswith(("!", "[")):
             continue
-        if not _domain_from_filter_line(line):
-            # Unsupported syntax (cosmetic filters, regex, options) is skipped
-            # by design; it is not silently treated as a domain rule.
+        if not _filter_rule(line)[1]:
+            # Unsupported syntax (cosmetic filters, regex, path rules, options)
+            # is skipped by design; it is not silently treated as a domain rule.
             continue
         if line in seen:
             continue
@@ -458,10 +480,10 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
         super().__init__(parent)
         self._base_dir = base_dir
         self.https_only = False
-        self.strict_referrer = True
         self.strip_client_hints = True
         self._blocked_domains = frozenset(_default_blocked_domains())
         self._filter_file_domains = set()
+        self._filter_file_allowed = set()
         self._all_blocked_domains = self._blocked_domains
         self.shield_always = False
         self.shield_active = False
@@ -477,9 +499,10 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
         try:
             from litebrowser.core import prefs
             path = prefs.get_adblock_filter_file(self._base_dir)
-            self._filter_file_domains = load_domains_from_filter_file(path)
+            self._filter_file_domains, self._filter_file_allowed = load_filter_file(path)
         except Exception:
             self._filter_file_domains = set()
+            self._filter_file_allowed = set()
         self._all_blocked_domains = self._blocked_domains | frozenset(self._filter_file_domains)
 
     def _reload_privacy_prefs(self):
@@ -487,7 +510,9 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
             return
         try:
             from litebrowser.core import prefs
-            self.strict_referrer = bool(prefs.get_strict_referrer(self._base_dir))
+            # ``strict_referrer`` is deliberately not read: the engine already
+            # enforces strict-origin-when-cross-origin, and the old preference
+            # never had an enforcement path (see .ai/security/SECURITY_FINDINGS).
             self.strip_client_hints = bool(prefs.get_strip_client_hints(self._base_dir))
             self.sign_in_compat = bool(prefs.get_chrome_compat_shim(self._base_dir))
             self.shield_always = bool(prefs.get_pref(self._base_dir, "shield_always_on", False))
@@ -517,21 +542,18 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
         return any(host == domain or host.endswith("." + domain) for domain in _trusted_challenge_domains())
 
     def _is_blocked_host(self, host: str) -> bool:
-        """O(labels) suffix lookup instead of a linear scan over the block list."""
-        blocked = self._all_blocked_domains
-        if not blocked:
-            return False
+        """O(labels) suffix lookup instead of a linear scan over the block list.
+
+        An ``@@`` exception wins over every blocking rule, including the built-in
+        list: that precedence is the only thing that makes an allowlist entry
+        useful when a subscription blocks a whole CDN.
+        """
         host = (host or "").lower().rstrip(".")
         if not host:
             return False
-        if host in blocked:
-            return True
-        labels = host.split(".")
-        for i in range(1, len(labels)):
-            parent = ".".join(labels[i:])
-            if parent in blocked:
-                return True
-        return False
+        if _matches_domain(host, getattr(self, "_filter_file_allowed", ())):
+            return False
+        return _matches_domain(host, self._all_blocked_domains)
 
     def _apply_compat_headers(self, info, host):
         """Real Client Hints for an allowlisted sign-in origin.
@@ -571,18 +593,20 @@ class TrackingBlocker(QWebEngineUrlRequestInterceptor):
         return True
 
     def interceptRequest(self, info):
+        from litebrowser.browser import engine_identity
+
         url_str = info.requestUrl().toString()
         host = info.requestUrl().host().lower()
-        is_compat = _is_compat_domain(host)
+        # Sign-in origins only. A registrable-domain match here would exempt
+        # ordinary pages on those domains from the device-info stripping.
+        is_compat = engine_identity.is_sign_in_host(host)
         is_challenge = self._is_trusted_challenge_url(host)
         sign_in_compat = bool(getattr(self, "sign_in_compat", False))
         if is_compat and sign_in_compat:
             # Sign-in origins reject an embedded engine that sends no Client
             # Hints. Send the engine's real ones — never a fabricated Chrome
             # fingerprint, and never on ordinary browsing.
-            from litebrowser.browser import engine_identity
-            if engine_identity.is_sign_in_host(host):
-                self._apply_compat_headers(info, host)
+            self._apply_compat_headers(info, host)
         if not is_challenge:
             info.setHttpHeader(b"DNT", b"1")
             info.setHttpHeader(b"Sec-GPC", b"1")

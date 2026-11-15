@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 import time
 import urllib.parse
 import zipfile
@@ -8,6 +9,46 @@ from typing import Any
 
 from litebrowser.core import storage_utils
 from litebrowser.core.profile_lock import profile_locked
+
+#: ZIP import limits. A workspace export is a handful of small JSON files, so
+#: these sit far above any real export and far below "fills the disk". They are
+#: module constants so tests can shrink them instead of writing 64 MB fixtures.
+ZIP_MAX_MEMBERS = 256
+ZIP_MAX_MEMBER_BYTES = 32 * 1024 * 1024
+ZIP_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+#: JSON tab lists compress well, but not 200:1. A member past this ratio is a
+#: bomb whatever its declared size says — and the declared size is not trusted
+#: anyway (see ``_read_member_limited``).
+ZIP_MAX_RATIO = 200
+
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+
+def _zip_member_is_safe(name: str) -> bool:
+    """Reject member names that could escape the archive's own namespace."""
+    if not name or "\x00" in name:
+        return False
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/") or _WINDOWS_DRIVE_RE.match(normalized):
+        return False
+    return ".." not in normalized.split("/")
+
+
+def _read_member_limited(archive: zipfile.ZipFile, info: zipfile.ZipInfo, budget: int) -> bytes:
+    """Read one member, refusing to trust the size recorded in its header.
+
+    ``ZipExtFile.read`` decompresses as it goes, so a member whose header lies
+    about ``file_size`` still stops at ``budget`` bytes instead of filling
+    memory. That is the part a header-only check cannot give us.
+    """
+    with archive.open(info) as handle:
+        blob = handle.read(budget + 1)
+    if len(blob) > budget:
+        raise ValueError(
+            f"ZIP member {os.path.basename(info.filename)} expands beyond the import limit "
+            f"({budget} bytes)."
+        )
+    return blob
 
 
 def storage_path(base_dir: str) -> str:
@@ -120,9 +161,13 @@ def import_from_file(base_dir: str, path: str) -> dict[str, Any]:
         return import_from_zip(base_dir, path)
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            text = handle.read()
+            # Same envelope as the ZIP path: an import file is data, and data
+            # does not get to decide how much memory it needs.
+            text = handle.read(ZIP_MAX_TOTAL_BYTES + 1)
     except OSError as exc:
         raise ValueError(f"Could not read import file: {exc}") from exc
+    if len(text) > ZIP_MAX_TOTAL_BYTES:
+        raise ValueError("Import file is larger than the import limit.")
     return import_from_json_text(base_dir, text)
 
 
@@ -148,21 +193,46 @@ def import_from_zip(base_dir: str, path: str) -> dict[str, Any]:
         raise ValueError(f"Not a valid ZIP archive: {exc}") from exc
 
     try:
-        names = [n for n in archive.namelist() if n.lower().endswith(".json")]
+        members = [info for info in archive.infolist() if not info.is_dir()]
+        if len(members) > ZIP_MAX_MEMBERS:
+            raise ValueError(f"ZIP archive has more than {ZIP_MAX_MEMBERS} files.")
+
+        declared_total = 0
+        for info in members:
+            name = info.filename
+            if not _zip_member_is_safe(name):
+                raise ValueError(f"ZIP member {name!r} points outside the archive.")
+            if info.file_size > ZIP_MAX_MEMBER_BYTES:
+                raise ValueError(f"ZIP member {os.path.basename(name)} is too large (> 32 MB).")
+            if info.file_size > 1024 and info.compress_size and info.file_size / info.compress_size > ZIP_MAX_RATIO:
+                raise ValueError(f"ZIP member {os.path.basename(name)} is compressed beyond a sane ratio.")
+            declared_total += info.file_size
+            if declared_total > ZIP_MAX_TOTAL_BYTES:
+                raise ValueError(f"ZIP archive expands to more than {ZIP_MAX_TOTAL_BYTES // (1024 * 1024)} MB.")
+
+        names = [info for info in members if info.filename.lower().endswith(".json")]
         if not names:
             raise ValueError("ZIP archive contains no .json files.")
-        # Zip-bomb guard: refuse members beyond a sane size before reading.
-        max_member_bytes = 32 * 1024 * 1024
-        for info in archive.infolist():
-            if info.file_size > max_member_bytes:
-                raise ValueError(f"ZIP member {os.path.basename(info.filename)} is too large (> 32 MB).")
+
+        # Actual bytes read, not the header's claim: a member that lies about
+        # its size still only gets what is left of the budget.
+        read_so_far = 0
+
+        def read_json_text(info: zipfile.ZipInfo) -> str:
+            nonlocal read_so_far
+            budget = min(ZIP_MAX_MEMBER_BYTES, ZIP_MAX_TOTAL_BYTES - read_so_far)
+            if budget <= 0:
+                raise ValueError("ZIP archive expands to more than the import limit.")
+            blob = _read_member_limited(archive, info, budget)
+            read_so_far += len(blob)
+            return blob.decode("utf-8")
 
         last = None
         # Extension manifest takes priority when present.
-        manifest_names = [n for n in names if os.path.basename(n).lower() == "workspace.json"]
+        manifest_names = [info for info in names if os.path.basename(info.filename).lower() == "workspace.json"]
         if manifest_names:
             try:
-                text = archive.read(manifest_names[0]).decode("utf-8")
+                text = read_json_text(manifest_names[0])
             except UnicodeDecodeError as exc:
                 raise ValueError(f"workspace.json is not valid UTF-8: {exc}") from exc
             payload = json.loads(text)
@@ -175,9 +245,9 @@ def import_from_zip(base_dir: str, path: str) -> dict[str, Any]:
 
         # Fall back to every JSON file in the archive, in name order (so
         # screen-1.json < screen-2.json keeps the monitor ordering).
-        for name in sorted(names):
+        for info in sorted(names, key=lambda item: item.filename):
             try:
-                text = archive.read(name).decode("utf-8")
+                text = read_json_text(info)
             except UnicodeDecodeError:
                 continue
             try:

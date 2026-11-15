@@ -4,5 +4,5 @@
 # install it for a release build. See docs/audit/MEI_BROWSER_COMPATIBILITY_MATRIX.md.
 PyQt6==6.11.0
 PyQt6-WebEngine==6.11.0
-cryptography>=41
+cryptography>=48.0.1
 segno>=1.6.0

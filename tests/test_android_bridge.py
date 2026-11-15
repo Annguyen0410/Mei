@@ -5,7 +5,9 @@ import json
 import os
 import socket
 import tempfile
+import time
 import unittest
+import zipfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -249,6 +251,146 @@ class TestDispatchIngest(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertGreater(int(tasks[0].get("due_at", 0)), 0)
         self.assertEqual(tasks[0].get("notes"), "hello")
+
+
+class TestZipImportLimits(unittest.TestCase):
+    """F-37: an imported ZIP is untrusted input, not a folder Mei chose."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = prefs.ensure_profile_layout(os.path.join(self._tmp.name, "profile"))
+        self._limits = (
+            extension_bridge.ZIP_MAX_MEMBERS,
+            extension_bridge.ZIP_MAX_MEMBER_BYTES,
+            extension_bridge.ZIP_MAX_TOTAL_BYTES,
+            extension_bridge.ZIP_MAX_RATIO,
+        )
+
+    def tearDown(self):
+        (
+            extension_bridge.ZIP_MAX_MEMBERS,
+            extension_bridge.ZIP_MAX_MEMBER_BYTES,
+            extension_bridge.ZIP_MAX_TOTAL_BYTES,
+            extension_bridge.ZIP_MAX_RATIO,
+        ) = self._limits
+        self._tmp.cleanup()
+
+    def _archive(self, entries, compression=zipfile.ZIP_STORED):
+        path = os.path.join(self._tmp.name, "workspace.zip")
+        with zipfile.ZipFile(path, "w", compression) as archive:
+            for name, data in entries.items():
+                archive.writestr(name, data)
+        return path
+
+    def _workspace(self):
+        return json.dumps(
+            {
+                "batches": [
+                    {
+                        "batch_id": "zip_batch",
+                        "window_id": "1",
+                        "source_browser": "chrome",
+                        "tabs": [{"url": "https://example.com", "title": "Example"}],
+                    }
+                ]
+            }
+        )
+
+    def test_a_normal_export_still_imports(self):
+        path = self._archive({"workspace.json": self._workspace()})
+        last = extension_bridge.import_from_zip(self.base, path)
+        self.assertEqual(last["id"], "zip_batch")
+
+    def test_refuses_too_many_members(self):
+        extension_bridge.ZIP_MAX_MEMBERS = 2
+        path = self._archive({"a.json": "{}", "b.json": "{}", "c.json": "{}"})
+        with self.assertRaises(ValueError):
+            extension_bridge.import_from_zip(self.base, path)
+
+    def test_refuses_member_paths_that_escape_the_archive(self):
+        for name in ("../escape.json", "..\\escape.json", "/tmp/escape.json", "C:/escape.json"):
+            with self.subTest(name=name):
+                path = self._archive({name: self._workspace()})
+                with self.assertRaises(ValueError):
+                    extension_bridge.import_from_zip(self.base, path)
+
+    def test_refuses_a_member_over_the_size_cap(self):
+        extension_bridge.ZIP_MAX_MEMBER_BYTES = 64
+        path = self._archive({"workspace.json": "x" * 500})
+        with self.assertRaises(ValueError):
+            extension_bridge.import_from_zip(self.base, path)
+
+    def test_refuses_an_archive_over_the_total_cap(self):
+        extension_bridge.ZIP_MAX_TOTAL_BYTES = 64
+        path = self._archive({"a.json": "x" * 200, "b.json": "y" * 200})
+        with self.assertRaises(ValueError):
+            extension_bridge.import_from_zip(self.base, path)
+
+    def test_refuses_a_compression_bomb_ratio(self):
+        extension_bridge.ZIP_MAX_RATIO = 5
+        path = self._archive({"workspace.json": "a" * 200_000}, compression=zipfile.ZIP_DEFLATED)
+        with self.assertRaises(ValueError):
+            extension_bridge.import_from_zip(self.base, path)
+
+
+class TestReplayProtection(unittest.TestCase):
+    """F-35 (partial): a captured request must not be replayable at will."""
+
+    def setUp(self):
+        android_bridge_service._seen_nonces.clear()
+
+    def tearDown(self):
+        android_bridge_service._seen_nonces.clear()
+
+    def _headers(self, timestamp=None, nonce=None):
+        headers = {}
+        if timestamp is not None:
+            headers[android_bridge_service.REPLAY_HEADER_TIMESTAMP] = str(timestamp)
+        if nonce is not None:
+            headers[android_bridge_service.REPLAY_HEADER_NONCE] = nonce
+        return headers
+
+    def test_a_client_that_sends_no_headers_is_answered_but_flagged(self):
+        self.assertEqual(android_bridge_service._replay_state({}), "missing")
+
+    def test_a_fresh_pair_is_accepted_once(self):
+        headers = self._headers(int(time.time()), "0123456789abcdef01234567")
+        self.assertEqual(android_bridge_service._replay_state(headers), "ok")
+        self.assertEqual(
+            android_bridge_service._replay_state(headers),
+            "replayed",
+            "the same nonce must not buy a second write",
+        )
+
+    def test_millisecond_timestamps_are_understood(self):
+        stamp = int(time.time() * 1000)
+        self.assertEqual(android_bridge_service._replay_state(self._headers(stamp, "b" * 24)), "ok")
+
+    def test_a_stale_timestamp_is_refused(self):
+        old = int(time.time()) - android_bridge_service.REPLAY_WINDOW_SECONDS - 30
+        self.assertEqual(android_bridge_service._replay_state(self._headers(old, "c" * 24)), "stale")
+
+    def test_half_a_pair_or_junk_is_invalid(self):
+        now = int(time.time())
+        for headers in (
+            self._headers(now, None),
+            self._headers(None, "d" * 24),
+            self._headers("not-a-number", "e" * 24),
+            self._headers(now, "short"),
+        ):
+            with self.subTest(headers=headers):
+                self.assertEqual(android_bridge_service._replay_state(headers), "invalid")
+
+    def test_the_nonce_cache_is_bounded(self):
+        saved = android_bridge_service.REPLAY_MAX_NONCES
+        android_bridge_service.REPLAY_MAX_NONCES = 4
+        try:
+            for index in range(12):
+                headers = self._headers(int(time.time()), f"nonce-{index:010d}")
+                self.assertEqual(android_bridge_service._replay_state(headers), "ok")
+            self.assertLessEqual(len(android_bridge_service._seen_nonces), 4)
+        finally:
+            android_bridge_service.REPLAY_MAX_NONCES = saved
 
 
 def _pick_free_port() -> int:

@@ -1,4 +1,4 @@
-# Mei Window Bridge (extension v1.3)
+# Mei Window Bridge (extension v1.4)
 
 Load this folder as an **unpacked extension** in Chrome or Opera GX. It has two
 jobs: send what you are looking at straight into Mei, and move a whole browser
@@ -77,8 +77,12 @@ Payload → Import Selected Batch** imports it into the current workspace.
 
 ## Security (why it is safe to leave installed)
 
-- Requests go to `POST/GET /api/mobile/ingest|ping` with
-  `Authorization: Bearer <token>`; without the token the bridge answers 401.
+- Requests go to `POST /api/mobile/ingest|upload` and
+  `GET /api/mobile/ping|capabilities|today` with `Authorization: Bearer <token>`;
+  without the token the bridge answers 401.
+- Every write also carries `X-Mei-Timestamp` + `X-Mei-Nonce`, the replay guard
+  the desktop records (`X-Mei-Replay: on | optional | rejected` in the reply). A
+  copied request cannot be replayed while the nonce is remembered.
 - Mei only answers CORS to a **browser extension** origin
   (`chrome-extension://…`), so a web page cannot read bridge replies even if it
   learns the port. The token is what stops it doing anything; CORS is what stops
@@ -90,7 +94,7 @@ Payload → Import Selected Batch** imports it into the current workspace.
 
 | File | Role |
 | --- | --- |
-| `manifest.json` | MV3 manifest, permissions: activeTab / storage / downloads / scripting, no broad host access |
+| `manifest.json` | MV3 manifest (1.4.0), permissions: activeTab / storage / downloads / scripting, no broad host access |
 | `popup.html`, `popup.js` | the popup: pairing, send, capture, export |
 | `bridge.js` | pure bridge helpers (pairing code, envelopes, reply wording); CommonJS-loadable, covered by `tests/js/bridge.test.js` |
 | `zip.js` | dependency-free ZIP writer (STORE) used by the export flow |

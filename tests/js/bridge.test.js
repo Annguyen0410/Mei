@@ -218,6 +218,68 @@ test("the capability line mentions the version, the mode, and a missing action",
   if (!old.includes("LAN") || !old.includes("does not support sending selections")) throw new Error("got " + old);
 });
 
+/* --- parity with the desktop contract ------------------------------------ */
+
+test("every write carries the replay pair the desktop records", () => {
+  const headers = bridge.replayHeaders({ now: 1700000000123, nonce: "abcdefghijklmnop" });
+  if (headers[bridge.REPLAY_TIMESTAMP_HEADER] !== "1700000000") {
+    throw new Error("timestamp must be epoch seconds: " + headers[bridge.REPLAY_TIMESTAMP_HEADER]);
+  }
+  if (headers[bridge.REPLAY_NONCE_HEADER] !== "abcdefghijklmnop") throw new Error("nonce lost");
+  if (bridge.isValidNonce("short") || bridge.isValidNonce("has space here!")) throw new Error("the nonce bounds are too loose");
+  const generated = bridge.replayHeaders({});
+  if (!bridge.isValidNonce(generated[bridge.REPLAY_NONCE_HEADER])) {
+    throw new Error("a generated nonce must be inside the desktop alphabet: " + generated[bridge.REPLAY_NONCE_HEADER]);
+  }
+  const replaced = bridge.replayHeaders({ nonce: "nope" });
+  if (!bridge.isValidNonce(replaced[bridge.REPLAY_NONCE_HEADER])) throw new Error("an unusable nonce must be replaced");
+  const merged = bridge.withReplay({ Authorization: "Bearer t" }, { now: 1700000000000, nonce: "abcdefghijklmnop" });
+  if (merged.Authorization !== "Bearer t") throw new Error("the other headers must survive");
+  if (!bridge.isValidNonce(merged[bridge.REPLAY_NONCE_HEADER])) throw new Error("withReplay dropped the nonce");
+});
+
+test("capabilities and today URLs match the routes the desktop serves", () => {
+  const settings = { host: "127.0.0.1", port: 18444, token: "tok" };
+  if (bridge.capabilitiesUrl(settings) !== "http://127.0.0.1:18444/api/mobile/capabilities") {
+    throw new Error("bad capabilities url: " + bridge.capabilitiesUrl(settings));
+  }
+  if (bridge.todayUrl(settings) !== "http://127.0.0.1:18444/api/mobile/today") {
+    throw new Error("bad today url: " + bridge.todayUrl(settings));
+  }
+  if (bridge.todayUrl(settings, "2026-11-14") !== "http://127.0.0.1:18444/api/mobile/today?day=2026-11-14") {
+    throw new Error("a real day should be passed through");
+  }
+  ["", "today", "2026-13", "2026-11-14T10:00", "14/11/2026"].forEach((day) => {
+    if (bridge.todayUrl(settings, day).includes("?")) throw new Error("junk day sent on: " + day);
+  });
+});
+
+test("capabilities are read from either endpoint and drive the gate", () => {
+  if (!bridge.supports({ capabilities: ["save_page"] }, "save_page")) throw new Error("ping shape not read");
+  if (!bridge.supports({ actions: ["save_selection"] }, "save_selection")) throw new Error("capabilities shape not read");
+  if (bridge.supports({}, "save_page")) throw new Error("an unknown bridge supports nothing");
+  if (bridge.actionsOf(null).length !== 0) throw new Error("a null body has no actions");
+  const missing = bridge.missingActions({ actions: ["save_page"] });
+  if (missing.join("|") !== "save_selection") throw new Error("got " + missing.join("|"));
+  const line = bridge.capabilitiesLine({ version: "1.0.3.0", protocol_version: 1, capabilities: ["save_page", "save_selection"] });
+  if (!line.includes("protocol 1")) throw new Error("the protocol version should be visible: " + line);
+});
+
+test("replies cover every action the desktop actually runs", () => {
+  const page = bridge.describeReply({ action: "save_page", result: { url: "https://x/y" } });
+  if (!page.includes("https://x/y")) throw new Error("got " + page);
+  const task = bridge.describeReply({ action: "create_task", result: { task_id: "t1", bucket: "Inbox" } });
+  if (!task.includes("Inbox")) throw new Error("got " + task);
+  const batch = bridge.describeReply({ action: "import_tabs_batch", result: { tab_count: 12 } });
+  if (!batch.includes("12")) throw new Error("got " + batch);
+  const opening = bridge.describeReply({ action: "open_app", result: { url: "https://x/app" } });
+  if (!opening.includes("https://x/app")) throw new Error("got " + opening);
+  const upload = bridge.describeReply({ action: "upload_file", result: { path: "files/Inbox/a.png" } });
+  if (!upload.includes("files/Inbox/a.png")) throw new Error("got " + upload);
+  const library = bridge.describeReply({ action: "append_to_library", result: { note_id: "n1", category: "Mobile/Captures" } });
+  if (!library.includes("Mobile/Captures")) throw new Error("got " + library);
+});
+
 /* --- talking to the bridge (fake fetch, real logic) ----------------------- */
 
 function jsonResponse(status, body) {
@@ -337,6 +399,49 @@ async function run() {
     if (log[0].options.headers.Authorization !== "Bearer tok") throw new Error("ping must carry the token");
     const line = bridge.capabilitiesLine(reply.body);
     if (!line.includes("1.0.0.0")) throw new Error("got " + line);
+  });
+
+  await testAsync("capabilities() and today() ask the desktop, token in hand", async () => {
+    const log = [];
+    const caps = await bridge.capabilities(
+      { token: "tok" },
+      recordingFetch(jsonResponse(200, { ok: true, protocol_version: 1, actions: ["save_page", "save_selection"] }), log)
+    );
+    if (!caps.ok) throw new Error("capabilities should succeed");
+    if (log[0].url !== "http://127.0.0.1:18444/api/mobile/capabilities") throw new Error("wrong url " + log[0].url);
+    if (log[0].options.method !== "GET") throw new Error("capabilities must be a GET");
+    if (log[0].options.headers.Authorization !== "Bearer tok") throw new Error("missing token");
+    if (!bridge.supports(caps.body, "save_selection")) throw new Error("actions not readable");
+
+    const deskLog = [];
+    const desk = await bridge.today(
+      { token: "tok" },
+      "2026-11-14",
+      recordingFetch(jsonResponse(200, { ok: true, headline: "x" }), deskLog)
+    );
+    if (!desk.ok) throw new Error("today should succeed");
+    if (deskLog[0].url !== "http://127.0.0.1:18444/api/mobile/today?day=2026-11-14") {
+      throw new Error("wrong today url " + deskLog[0].url);
+    }
+  });
+
+  await testAsync("an ingest request carries the replay pair alongside the token", async () => {
+    const log = [];
+    const reply = await bridge.post(
+      { token: "tok" },
+      "save_page",
+      { url: "u" },
+      recordingFetch(jsonResponse(200, { ok: true, action: "save_page", result: { url: "u" } }), log)
+    );
+    if (!reply.ok) throw new Error("expected success");
+    const headers = log[0].options.headers;
+    if (!bridge.isValidNonce(headers[bridge.REPLAY_NONCE_HEADER])) {
+      throw new Error("no usable nonce sent: " + JSON.stringify(headers));
+    }
+    const stamp = Number(headers[bridge.REPLAY_TIMESTAMP_HEADER]);
+    if (!(stamp > 1000000000) || Math.abs(stamp - Math.floor(Date.now() / 1000)) > 5) {
+      throw new Error("timestamp is not current epoch seconds: " + stamp);
+    }
   });
 
   if (failures.length) {

@@ -329,8 +329,24 @@ async function connectBridge(options = {}) {
     setBridgeStatus((raw ? "Code saved, but " : "") + reply.message, true);
     return null;
   }
-  setBridgeStatus("Connected to " + MeiBridge.capabilitiesLine(reply.body));
+  // The ping lists capabilities already; the dedicated endpoint also carries the
+  // protocol version and the upload limit, so it is the authority when it answers.
+  const caps = await MeiBridge.capabilities(settings);
+  const body =
+    caps.ok && caps.body
+      ? Object.assign({}, reply.body, { capabilities: MeiBridge.actionsOf(caps.body) })
+      : reply.body;
+  setBridgeStatus("Connected to " + MeiBridge.capabilitiesLine(body));
   return settings;
+}
+
+/* Ask the desktop whether this Mei build knows an action before a click turns
+ * into a 400 with a code the popup cannot explain. A probe that fails is not a
+ * verdict — the send itself reports the real reason. */
+async function actionSupported(settings, action) {
+  const caps = await MeiBridge.capabilities(settings);
+  if (!caps.ok || !caps.body) return true;
+  return MeiBridge.supports(caps.body, action);
 }
 
 async function readSelection(tabId) {
@@ -354,6 +370,10 @@ async function sendTabToMei() {
     setSendStatus("Not sent — check the Mei connection above.", true);
     return;
   }
+  if (!(await actionSupported(settings, "save_page"))) {
+    setSendStatus("This Mei build does not support sending tabs over the bridge.", true);
+    return;
+  }
   const tab = await currentWebTab();
   const reply = await MeiBridge.post(settings, "save_page", MeiBridge.tabPayload(tab));
   setSendStatus(reply.message, !reply.ok);
@@ -363,6 +383,10 @@ async function sendSelectionToMei() {
   const settings = await connectBridge({});
   if (!settings) {
     setSendStatus("Not sent — check the Mei connection above.", true);
+    return;
+  }
+  if (!(await actionSupported(settings, "save_selection"))) {
+    setSendStatus("This Mei build does not support sending selections over the bridge.", true);
     return;
   }
   const tab = await currentWebTab();

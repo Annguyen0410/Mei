@@ -1,4 +1,4 @@
-/* The extension's half of the Mei bridge protocol (v1.2).
+/* The extension's half of the Mei bridge protocol (extension 1.4, protocol 1).
  *
  * Purpose: the popup used to only *export* a workspace file and ask you to
  * import it by hand. It can now call the desktop bridge directly — "send this
@@ -11,9 +11,17 @@
  * CommonJS-loadable, so tests/js/bridge.test.js exercises it under Node the same
  * way the ZIP writer is exercised.
  *
- * Desktop side, for reference (litebrowser/services/android_bridge_service.py):
- *   POST /api/mobile/ingest   {action, source, payload}   Authorization: Bearer <token>
- *   GET  /api/mobile/ping     {ok, app, version, mode, capabilities}
+ * Desktop side, for reference (litebrowser/services/android_bridge_service.py,
+ * API_VERSION = 1):
+ *   GET  /api/mobile/ping          {ok, app, bridge, version, protocol_version, mode, capabilities}
+ *   GET  /api/mobile/capabilities  {actions, read:{today}, auth:{replay:{headers,...}}, upload:{max_size_mb}}
+ *   GET  /api/mobile/today?day=…   desk snapshot: headline, numbers, blocks
+ *   POST /api/mobile/ingest        {action, source, payload}    Authorization: Bearer <token>
+ *   POST /api/mobile/upload        multipart/form-data
+ *
+ * Every write carries X-Mei-Timestamp (epoch seconds) + X-Mei-Nonce. The desktop
+ * accepts writes without them (the 1.x app predates the headers) but records the
+ * pair as a replay guard and answers X-Mei-Replay: on | optional | rejected.
  * A browser extension is answered over CORS; a web page never is.
  */
 (function (root) {
@@ -23,19 +31,31 @@
   var DEFAULT_HOST = "127.0.0.1";
   var DEFAULT_PORT = 18444; /* prefs.MOBILE_BRIDGE_DEFAULT_PORT */
   var SOURCE = "extension.tab-window-bridge";
+  var PROTOCOL_VERSION = 1; /* android_bridge_service.API_VERSION */
   var SELECTION_MODES = ["note", "card", "saved_page"];
   var LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1"];
   var MAX_TOKEN_CHARS = 512; /* android_bridge_service.PAIRING_MAX_TOKEN_CHARS */
+  var MAX_HOST_CHARS = 253;
   var MAX_TAGS = 12;
   var MAX_TAG_CHARS = 48;
   var REQUEST_TIMEOUT_MS = 8000;
+
+  /* --- replay guard -------------------------------------------------------- */
+
+  var REPLAY_TIMESTAMP_HEADER = "X-Mei-Timestamp"; /* android_bridge_service.REPLAY_HEADER_TIMESTAMP */
+  var REPLAY_NONCE_HEADER = "X-Mei-Nonce"; /* android_bridge_service.REPLAY_HEADER_NONCE */
+  var REPLAY_WINDOW_SECONDS = 300; /* android_bridge_service.REPLAY_WINDOW_SECONDS */
+  /* The desktop bounds a nonce to 16..128 characters from its own alphabet. */
+  var NONCE_RE = /^[A-Za-z0-9\-_=+/.]{16,128}$/;
+  /* The actions the popup's own buttons rely on. */
+  var REQUIRED_ACTIONS = ["save_page", "save_selection"];
 
   /* --- pairing / settings -------------------------------------------------- */
 
   function cleanHost(value) {
     var host = String(value == null ? "" : value).trim();
     if (!host) return "";
-    if (host.length > 253 || /[\s/\\|,?#@%]/.test(host)) return "";
+    if (host.length > MAX_HOST_CHARS || /[\s/\\|,?#@%]/.test(host)) return "";
     if (host.indexOf(":") >= 0) {
       if (!/^(?:[0-9a-f]*:){2,}[0-9a-f.]*$/i.test(host.replace(/^\[|\]$/g, ""))) return "";
     } else if (!/^[a-z0-9.-]+$/i.test(host)) return "";
@@ -90,6 +110,68 @@
 
   function pingUrl(settings) {
     return origin(settings) + "/api/mobile/ping";
+  }
+
+  function capabilitiesUrl(settings) {
+    return origin(settings) + "/api/mobile/capabilities";
+  }
+
+  /* A day the desktop will actually read (it falls back to today otherwise, so
+   * sending junk would silently answer about the wrong day). */
+  function todayUrl(settings, day) {
+    var url = origin(settings) + "/api/mobile/today";
+    var value = String(day == null ? "" : day).trim();
+    return /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) ? url + "?day=" + encodeURIComponent(value) : url;
+  }
+
+  /* --- replay headers ------------------------------------------------------ */
+
+  function isValidNonce(value) {
+    return NONCE_RE.test(String(value == null ? "" : value).trim());
+  }
+
+  /* crypto.randomUUID() is a 36-character hex-and-hyphen value, which is inside
+   * the desktop's alphabet and length bounds. The fallbacks stay inside both
+   * too, because a nonce the desktop rejects turns a working send into a 400. */
+  function newNonce() {
+    var c = typeof globalThis !== "undefined" && globalThis.crypto ? globalThis.crypto : null;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+    if (c && typeof c.getRandomValues === "function") {
+      var bytes = new Uint8Array(16);
+      c.getRandomValues(bytes);
+      var hex = "";
+      for (var i = 0; i < bytes.length; i += 1) hex += (bytes[i] + 256).toString(16).slice(1);
+      return hex;
+    }
+    var seed = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    return (seed + "0000000000000000").slice(0, 32);
+  }
+
+  /* Timestamp + nonce as the desktop wants them. `options` exists for tests:
+   * {now: epoch millis, nonce: string}. An unusable nonce is replaced rather
+   * than sent, so a caller cannot accidentally 400 every write. */
+  function replayHeaders(options) {
+    var o = options || {};
+    var now = typeof o.now === "number" && isFinite(o.now) ? o.now : Date.now();
+    var nonce = String(o.nonce == null ? "" : o.nonce).trim();
+    if (!isValidNonce(nonce)) nonce = newNonce();
+    var headers = {};
+    headers[REPLAY_TIMESTAMP_HEADER] = String(Math.floor(now / 1000));
+    headers[REPLAY_NONCE_HEADER] = nonce;
+    return headers;
+  }
+
+  function withReplay(headers, options) {
+    var merged = {};
+    var base = headers || {};
+    Object.keys(base).forEach(function (key) {
+      merged[key] = base[key];
+    });
+    var replay = replayHeaders(options);
+    Object.keys(replay).forEach(function (key) {
+      merged[key] = replay[key];
+    });
+    return merged;
   }
 
   /* --- payloads ------------------------------------------------------------ */
@@ -160,6 +242,27 @@
     return payload;
   }
 
+  /* --- capabilities -------------------------------------------------------- */
+
+  /* ping answers with `capabilities`, /api/mobile/capabilities with `actions`.
+   * Both are a list of action names, so one reader covers both. */
+  function actionsOf(body) {
+    var b = body || {};
+    if (Array.isArray(b.capabilities)) return b.capabilities;
+    if (Array.isArray(b.actions)) return b.actions;
+    return [];
+  }
+
+  function supports(body, action) {
+    return actionsOf(body).indexOf(String(action || "")) >= 0;
+  }
+
+  function missingActions(body) {
+    return REQUIRED_ACTIONS.filter(function (action) {
+      return !supports(body, action);
+    });
+  }
+
   /* --- replies ------------------------------------------------------------- */
 
   function describeReply(body) {
@@ -171,6 +274,21 @@
         if (result.card_id != null) return "Saved as a flashcard: " + (result.front || "");
         if (result.saved_page_id != null) return "Page saved: " + (result.url || "");
         return "Note saved in Mei" + (result.category ? " (" + result.category + ")" : "");
+      case "append_to_library":
+        if (result.saved_page_id != null) return "Capture saved: " + (result.url || "");
+        return "Capture filed in Mei" + (result.category ? " (" + result.category + ")" : "");
+      case "create_note":
+        return "Note saved in Mei" + (result.category ? " (" + result.category + ")" : "");
+      case "create_task":
+        return "Task created" + (result.bucket ? " (" + result.bucket + ")" : "");
+      case "create_drawing":
+        return "Drawing saved" + (result.category ? " (" + result.category + ")" : "");
+      case "import_tabs_batch":
+        return "Mei queued " + (result.tab_count != null ? result.tab_count : "the") + " tab(s) in the Import Center";
+      case "upload_file":
+        return "File saved: " + (result.path || result.filename || "");
+      case "open_app":
+        return "Mei is opening " + (result.url || result.kind || "the app");
       default:
         return "Received by Mei.";
     }
@@ -185,9 +303,12 @@
 
   function capabilitiesLine(body) {
     var b = body || {};
-    var caps = Array.isArray(b.capabilities) ? b.capabilities : [];
     var line = "Mei " + (b.version || "?") + " · " + (b.mode === "lan" ? "LAN" : "this device only");
-    if (caps.indexOf("save_selection") < 0) {
+    if (typeof b.protocol_version === "number") line += " · protocol " + b.protocol_version;
+    if (!supports(b, "save_page")) {
+      line += " · this Mei version does not support sending tabs";
+    }
+    if (!supports(b, "save_selection")) {
       line += " · this Mei version does not support sending selections";
     }
     return line;
@@ -293,6 +414,21 @@
     };
   }
 
+  function authorizedGet(settings, url, fetchImpl) {
+    var s = normalizeSettings(settings);
+    if (!s.token) return Promise.resolve(needsToken());
+    return requestJson(
+      s,
+      url,
+      {
+        method: "GET",
+        headers: { Authorization: "Bearer " + s.token },
+        cache: "no-store",
+      },
+      fetchImpl
+    );
+  }
+
   function post(settings, action, payload, fetchImpl) {
     var s = normalizeSettings(settings);
     if (!s.token) return Promise.resolve(needsToken());
@@ -301,10 +437,10 @@
       ingestUrl(s),
       {
         method: "POST",
-        headers: {
+        headers: withReplay({
           "Content-Type": "application/json",
           Authorization: "Bearer " + s.token,
-        },
+        }),
         body: JSON.stringify(envelope(action, payload)),
         cache: "no-store",
       },
@@ -315,16 +451,19 @@
   function ping(settings, fetchImpl) {
     var s = normalizeSettings(settings);
     if (!s.token) return Promise.resolve(needsToken());
-    return requestJson(
-      s,
-      pingUrl(s),
-      {
-        method: "GET",
-        headers: { Authorization: "Bearer " + s.token },
-        cache: "no-store",
-      },
-      fetchImpl
-    );
+    return authorizedGet(s, pingUrl(s), fetchImpl);
+  }
+
+  function capabilities(settings, fetchImpl) {
+    var s = normalizeSettings(settings);
+    if (!s.token) return Promise.resolve(needsToken());
+    return authorizedGet(s, capabilitiesUrl(s), fetchImpl);
+  }
+
+  function today(settings, day, fetchImpl) {
+    var s = normalizeSettings(settings);
+    if (!s.token) return Promise.resolve(needsToken());
+    return authorizedGet(s, todayUrl(s, day), fetchImpl);
   }
 
   var api = {
@@ -332,7 +471,12 @@
     DEFAULT_HOST: DEFAULT_HOST,
     DEFAULT_PORT: DEFAULT_PORT,
     SOURCE: SOURCE,
+    PROTOCOL_VERSION: PROTOCOL_VERSION,
     SELECTION_MODES: SELECTION_MODES,
+    REPLAY_TIMESTAMP_HEADER: REPLAY_TIMESTAMP_HEADER,
+    REPLAY_NONCE_HEADER: REPLAY_NONCE_HEADER,
+    REPLAY_WINDOW_SECONDS: REPLAY_WINDOW_SECONDS,
+    REQUIRED_ACTIONS: REQUIRED_ACTIONS,
     cleanHost: cleanHost,
     isLoopbackHost: isLoopbackHost,
     parsePairingCode: parsePairingCode,
@@ -341,16 +485,26 @@
     origin: origin,
     ingestUrl: ingestUrl,
     pingUrl: pingUrl,
+    capabilitiesUrl: capabilitiesUrl,
+    todayUrl: todayUrl,
+    isValidNonce: isValidNonce,
+    replayHeaders: replayHeaders,
+    withReplay: withReplay,
     envelope: envelope,
     tabPayload: tabPayload,
     splitTags: splitTags,
     selectionPayload: selectionPayload,
+    actionsOf: actionsOf,
+    supports: supports,
+    missingActions: missingActions,
     describeReply: describeReply,
     replyMessage: replyMessage,
     capabilitiesLine: capabilitiesLine,
     requestJson: requestJson,
     post: post,
     ping: ping,
+    capabilities: capabilities,
+    today: today,
   };
 
   if (typeof module !== "undefined" && module.exports) {

@@ -161,6 +161,11 @@ class TestNotesPageUI(unittest.TestCase):
         bindings offscreen here, PyQt5 in CI) the two rows rasterised
         byte-identical and the job went red for a reason unrelated to the accent
         rule. Assert the decision the pen follows instead.
+
+        The row index of the open note is read back from the list rather than
+        assumed to be 0: notes sort by ``updated_at`` descending, so two notes
+        created across a second boundary put the second one first. Assuming the
+        order made this test fail roughly one run in six.
         """
         win = self._window()
         first = personal_service.create_note(self.base, "Alpha", "body")
@@ -170,6 +175,11 @@ class TestNotesPageUI(unittest.TestCase):
         QApplication.processEvents()
         delegate = win.notes_list.itemDelegate()
         model = win.notes_list.model()
+        row_of_open_note = next(
+            row
+            for row in range(win.notes_list.count())
+            if win.notes_list.item(row).data(pw.NOTE_ID_ROLE) == first["id"]
+        )
         selection = []
         for row in range(win.notes_list.count()):
             index = model.index(row, 0)
@@ -185,7 +195,12 @@ class TestNotesPageUI(unittest.TestCase):
             finally:
                 painter.end()
             selection.append(pw._option_is_selected(option, index))
-        self.assertEqual([True, False], selection, "only the open note paints as selected")
+        self.assertEqual(
+            [row == row_of_open_note for row in range(win.notes_list.count())],
+            selection,
+            "only the open note paints as selected",
+        )
+        self.assertEqual(win.notes_list.currentRow(), row_of_open_note, "the open note is current")
         palette = theme.palette()
         self.assertNotEqual(
             palette["ACCENT_HOVER"], palette["TEXT"], "the accent ink must differ from body ink"

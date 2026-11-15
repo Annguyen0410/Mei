@@ -114,13 +114,18 @@ def show_privacy_dialog(parent):
     chk_https.setChecked(prefs.get_https_only(base_dir))
     layout.addWidget(chk_https)
 
-    chk_strict_ref = QCheckBox("Send shortened Referer to other sites (strict-origin)")
-    chk_strict_ref.setChecked(prefs.get_strict_referrer(base_dir))
-    chk_strict_ref.setToolTip(
-        "Send only the origin (https://example.com) instead of the full URL when clicking to another site —\n"
-        "reduces cross-site tracking without breaking on-site analytics."
+    # The old "strict Referer" checkbox was removed, not weakened: the pref it
+    # wrote was never read by any request path, so unchecking it changed nothing
+    # while the UI promised it would send the full URL. Qt WebEngine already
+    # enforces strict-origin-when-cross-origin on every request, which is the
+    # behaviour the control claimed to offer.
+    lbl_referrer = QLabel(
+        "Referer: the engine always sends strict-origin-when-cross-origin — other "
+        "sites receive only this site's origin, never the full page URL."
     )
-    layout.addWidget(chk_strict_ref)
+    lbl_referrer.setObjectName("MutedLabel")
+    lbl_referrer.setWordWrap(True)
+    layout.addWidget(lbl_referrer)
 
     chk_strip_ch = QCheckBox("Hide device info (CPU, GPU, extra OS details) from unfamiliar sites")
     chk_strip_ch.setChecked(prefs.get_strip_client_hints(base_dir))
@@ -217,8 +222,14 @@ def show_privacy_dialog(parent):
     layout.addLayout(subs_row)
 
     layout.addSpacing(14)
-    chk_pw_mgr = QCheckBox("Enable password manager (save / autofill passwords)")
+    chk_pw_mgr = QCheckBox("Enable password manager (autofill saved passwords)")
     chk_pw_mgr.setChecked(prefs.get_password_manager_enabled(base_dir))
+    chk_pw_mgr.setToolTip(
+        "Autofills logins already stored in the Vault. Automatic save-on-login is "
+        "off until an isolated capture bridge ships: the old page-context script "
+        "handed plaintext credentials to any script on the page "
+        "(.ai/decisions/ADR-0006). Add or edit logins in the Vault."
+    )
     layout.addWidget(chk_pw_mgr)
     chk_autofill = QCheckBox("Autofill passwords once saved")
     chk_autofill.setChecked(prefs.get_autofill_passwords(base_dir))
@@ -234,7 +245,6 @@ def show_privacy_dialog(parent):
     btn.setMinimumHeight(36)
     def save_privacy():
         prefs.set_https_only(base_dir, chk_https.isChecked())
-        prefs.set_strict_referrer(base_dir, chk_strict_ref.isChecked())
         prefs.set_strip_client_hints(base_dir, chk_strip_ch.isChecked())
         prefs.set_block_third_party_cookies(base_dir, chk_3p_cookie_priv.isChecked())
         prefs.set_chrome_compat_shim(base_dir, chk_chrome_shim.isChecked())
@@ -243,7 +253,6 @@ def show_privacy_dialog(parent):
         prefs.set_autofill_passwords(base_dir, chk_autofill.isChecked())
         if hasattr(parent, "interceptor"):
             parent.interceptor.https_only = chk_https.isChecked()
-            parent.interceptor.strict_referrer = chk_strict_ref.isChecked()
             parent.interceptor.strip_client_hints = chk_strip_ch.isChecked()
             try:
                 from litebrowser.browser import adblock

@@ -1019,21 +1019,24 @@ def set_block_third_party_cookies(base_dir, value):
 
 
 def get_strict_referrer(base_dir):
-    """Send only the origin (no path) on cross-site requests."""
+    """Deprecated, kept so existing profiles keep loading.
+
+    No request path ever enforced this value: the UI toggle was a no-op that
+    promised to send the full URL when unchecked. Qt WebEngine enforces
+    strict-origin-when-cross-origin natively, so the shipped behaviour is the
+    strict one and the control was removed from Privacy & Security instead of
+    pretending to switch it.
+    """
     return bool(load_prefs(base_dir).get("strict_referrer", True))
 
 
-@profile_transaction
-def set_strict_referrer(base_dir, value):
-    data = load_prefs(base_dir)
-    data["strict_referrer"] = bool(value)
-    save_prefs(base_dir, data)
-
-
 def get_strip_client_hints(base_dir):
-    """Strip Sec-CH-UA-Platform-Version and other low-entropy extras outside
-    the compatibility allowlist. Reduces fingerprint entropy for tracking sites
-    while keeping enough hints for Google/Microsoft sign-in to succeed."""
+    """Strip Sec-CH-UA-Platform-Version and other low-entropy extras.
+
+    Only the exact sign-in origins in ``engine_identity.SIGN_IN_COMPAT_HOSTS``
+    keep the extras. A registrable-domain exemption (google.com, microsoft.com,
+    ...) used to exempt ordinary pages from the stripping this setting promises.
+    """
     return bool(load_prefs(base_dir).get("strip_client_hints", True))
 
 

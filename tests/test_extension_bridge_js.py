@@ -100,8 +100,24 @@ class TestPackedExtension(unittest.TestCase):
     def test_the_manifest_grants_what_the_popup_uses_and_nothing_more(self):
         manifest = json.loads(_read(os.path.join(EXTENSION_DIR, "manifest.json")))
         self.assertEqual(manifest["manifest_version"], 3)
-        self.assertEqual(sorted(manifest["permissions"]), ["downloads", "scripting", "storage", "tabs"])
+        self.assertEqual(
+            sorted(manifest["permissions"]),
+            ["activeTab", "downloads", "scripting", "storage"],
+            "activeTab replaces the standing access the popup never needed",
+        )
+        self.assertEqual(
+            manifest.get("host_permissions", []),
+            [],
+            "the bridge reads one tab after a click, so it must not hold every site",
+        )
+        self.assertEqual(
+            manifest.get("optional_host_permissions"),
+            ["http://*/*"],
+            "the bridge origin is granted at pairing time, not installed up front",
+        )
         popup = _read(os.path.join(EXTENSION_DIR, "popup.js"))
+        self.assertIn("chrome.permissions", popup, "the optional bridge origin has to be asked for")
+        self.assertIn("permissions.request({", popup)
         self.assertIn("chrome.scripting.executeScript", popup, "the popup reads the selection, so scripting must be asked for")
         self.assertNotIn("chrome.tabs.executeScript", popup, "chrome.tabs.executeScript is MV2 and does not exist in MV3")
 

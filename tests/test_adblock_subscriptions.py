@@ -7,6 +7,7 @@ and a subscription name must never become a path.
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from litebrowser.browser import adblock
 from litebrowser.core import prefs
@@ -172,7 +173,7 @@ class TestBounds(_Base):
 
     def test_too_many_lines_rejects_the_list(self):
         self._subs(("Good", "https://example.com/list.txt"))
-        with unittest.mock.patch.object(adblock, "MAX_FILTER_LINES", 5):
+        with mock.patch.object(adblock, "MAX_FILTER_LINES", 5):
             body = b"\n".join(b"||a%d.example^" % i for i in range(10))
             result = adblock.fetch_and_update_subscriptions(
                 self.base, fetcher=lambda *a, **k: _Resp(body)

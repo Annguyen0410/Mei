@@ -104,5 +104,85 @@ class TestPasswordManager(unittest.TestCase):
             self.assertNotEqual(entry["password"], "bm90LWEtdmFsaWQtZmVybmV0LXRva2Vu")
 
 
+class TestAutofillBoundary(unittest.TestCase):
+    """F-39: filling a form is releasing a secret, so the page must qualify."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = prefs.ensure_profile_layout(os.path.join(self._tmp.name, "profile"))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_https_entry_fills_only_on_its_exact_origin(self):
+        self.assertTrue(password_manager.add_password(self.base, "https://example.com/login", "alice", "s1", "master"))
+        self.assertEqual(
+            password_manager.credentials_for_autofill(self.base, "https://example.com/signin", "master"),
+            {"username": "alice", "password": "s1"},
+        )
+        for url in ("https://evil.example.com/", "https://example.com.evil.test/", "https://example.com@evil.test/"):
+            with self.subTest(url=url):
+                self.assertIsNone(password_manager.credentials_for_autofill(self.base, url, "master"))
+
+    def test_plaintext_http_is_never_autofilled(self):
+        self.assertTrue(password_manager.add_password(self.base, "http://example.com/login", "alice", "s1", "master"))
+        self.assertFalse(password_manager.autofill_allowed("http://example.com/login"))
+        self.assertIsNone(
+            password_manager.credentials_for_autofill(self.base, "http://example.com/login", "master"),
+            "a cleartext page must not receive a vault secret",
+        )
+
+    def test_loopback_http_is_allowed_for_local_development(self):
+        self.assertTrue(password_manager.autofill_allowed("http://127.0.0.1:8000/login"))
+        self.assertTrue(password_manager.autofill_allowed("http://localhost:3000/"))
+        self.assertFalse(password_manager.autofill_allowed("ftp://example.com/"))
+        self.assertFalse(password_manager.autofill_allowed(""))
+
+    def test_script_rechecks_the_document_it_lands_in(self):
+        script = password_manager.build_autofill_script("alice", "s1", "https://example.com/login")
+        self.assertIn('var __lite_expected_origin = "https://example.com"', script)
+        self.assertIn("location.origin !== __lite_expected_origin", script)
+        self.assertIn("window.top !== window.self", script)
+        self.assertIn("target.origin !== location.origin", script)
+        self.assertNotIn("sessionStorage", script)
+        self.assertNotIn("localStorage", script)
+        self.assertNotIn("XMLHttpRequest", script)
+        self.assertNotIn("fetch(", script)
+
+    def test_script_without_an_origin_fills_nothing(self):
+        script = password_manager.build_autofill_script("alice", "s1")
+        self.assertIn('var __lite_expected_origin = ""', script)
+
+    def test_the_password_is_json_escaped_not_pasted_in_raw(self):
+        password = 'p"a\n</script>\\ end'
+        script = password_manager.build_autofill_script("alice", password, "https://example.com")
+        self.assertIn(json.dumps(password), script)
+
+
+class TestAutofillRefusesFormsThatLeakTheUrl(unittest.TestCase):
+    """F-40: a GET submission serialises the filled password into the URL."""
+
+    def test_script_requires_a_post_form(self):
+        script = password_manager.build_autofill_script("alice", "s1", "https://example.com/login")
+        self.assertIn("form.getAttribute('method')", script)
+        self.assertIn("method !== 'post'", script)
+        # A submit button can override the form's method.
+        self.assertIn("formmethod", script)
+
+    def test_submit_override_is_resolved_through_the_form_property(self):
+        """A submit control outside the form still submits it (form="id")."""
+        script = password_manager.build_autofill_script("alice", "s1", "https://example.com/login")
+        self.assertIn("document.querySelectorAll('[formmethod]')", script)
+        self.assertIn("overrides[b].form !== form", script)
+        # The in-form-only query would miss `<button form="login" formmethod="get">`.
+        self.assertNotIn("form.querySelectorAll('button[formmethod]", script)
+
+    def test_same_origin_matches_one_origin_only(self):
+        self.assertTrue(password_manager.same_origin("https://example.com/a", "https://example.com/b?c#d"))
+        self.assertFalse(password_manager.same_origin("https://example.com/", "https://example.com:8443/"))
+        self.assertFalse(password_manager.same_origin("https://example.com/", "https://evil.test/"))
+        self.assertFalse(password_manager.same_origin("", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

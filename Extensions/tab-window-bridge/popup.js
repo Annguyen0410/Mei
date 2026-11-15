@@ -271,6 +271,23 @@ async function saveBridgeSettings(settings) {
   await chrome.storage.local.set({ [BRIDGE_KEY]: settings });
 }
 
+/* Access to the bridge origin is optional and requested at pairing time. It is
+ * needed only so a fetch from the extension page to 127.0.0.1:<port> is not
+ * stopped by private-network rules; the popup works without it when the
+ * browser already allows the call. */
+async function requestBridgeHostAccess(settings) {
+  const permissions = chrome.permissions;
+  if (!permissions || !permissions.request) return false;
+  const origin = MeiBridge.origin(settings) + "/*";
+  try {
+    if (permissions.contains && (await permissions.contains({ origins: [origin] }))) return true;
+    return await permissions.request({ origins: [origin] });
+  } catch (error) {
+    console.warn("Could not request access to the Mei bridge.", error);
+    return false;
+  }
+}
+
 async function currentWebTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !/^https?:/i.test(tab.url || "")) {
@@ -296,6 +313,9 @@ async function connectBridge(options = {}) {
     settings = MeiBridge.isLoopbackHost(parsed.host) ? parsed : { ...parsed, host: MeiBridge.DEFAULT_HOST };
     await saveBridgeSettings(settings);
     document.getElementById("pairingInput").value = "";
+    // The extension no longer asks for access to every site. It asks for the
+    // one bridge origin it just paired with, on the click that paired it.
+    await requestBridgeHostAccess(settings);
   }
   if (!settings.token) {
     if (options.quiet) {

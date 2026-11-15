@@ -298,96 +298,148 @@ def _origin_match(stored_origin, page_origin):
     return bool(so and po and po == so)
 
 
+#: Hosts that mean "this machine": a cleartext origin is acceptable there and
+#: nowhere else (a dev server on loopback is not on a network path).
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def autofill_allowed(url):
+    """True when credentials may be placed into ``url``'s page at all.
+
+    Autofill is a credential boundary of its own: once the value is in a form,
+    every script on that page can read it. Two rules follow from that.
+
+    * The origin must be exactly the one the entry was saved for. That is
+      enforced separately by ``_origin_match``; this function only screens the
+      page origin itself.    * A plaintext ``http`` origin is refused unless it is loopback. A password
+      filled into a cleartext page (or cleartext form action) is readable on the
+      wire, so the exact-origin match is not by itself enough.
+
+    The form itself is screened by ``AUTOFILL_SCRIPT``: only a POST form on the
+    same origin is filled, because a GET submission would put the password in
+    the URL (history, Referer, server logs).
+    """
+    origin = _normalize_origin(url)
+    if not origin:
+        return False
+    parsed = urlsplit(origin)
+    if parsed.scheme == "https":
+        return True
+    return parsed.scheme == "http" and (parsed.hostname or "").lower() in _LOOPBACK_HOSTS
+
+
+def same_origin(url_a, url_b):
+    """True when both URLs normalise to one http(s) origin.
+
+    Used to re-validate an armed autofill offer against the document actually in
+    front of the user: a redirect between the offer and the keypress must not
+    receive the secret.
+    """
+    a = _normalize_origin(url_a)
+    b = _normalize_origin(url_b)
+    return bool(a and b and a == b)
+
+
+def credentials_for_autofill(base_dir, url, master_password):
+    """Credentials to fill, or None when this page must not be autofilled."""
+    if not autofill_allowed(url):
+        return None
+    return get_credentials_for(base_dir, url, master_password)
+
+
 AUTOFILL_SCRIPT = """
 (function() {
-  var form = document.querySelector('form');
+  // Autofill writes a secret into a document, so the document has to prove it
+  // is the one that was matched. A subframe, or a page that navigated between
+  // loadFinished and this call, gets nothing.
+  if (window.top !== window.self) return;
+  if (location.origin !== __lite_expected_origin) return;
+
+  var forms = document.querySelectorAll('form');
+  var form = null;
+  for (var f = 0; f < forms.length; f++) {
+    if (forms[f].querySelector('input[type="password"]')) { form = forms[f]; break; }
+  }
   if (!form) return;
+
+  // A form that posts somewhere else would hand the filled password to a
+  // different origin, so it is left alone even on the matched origin.
+  var action = form.getAttribute('action');
+  if (action) {
+    var target = null;
+    try { target = new URL(action, location.href); } catch (e) { return; }
+    if (target.origin !== location.origin) return;
+  }
+
+  // A form submitted with GET serialises every field into the URL, so a filled
+  // password would land in browser history, in the Referer of the page's next
+  // requests and in the server's access log. `form.method` already resolves to
+  // the spec default ("get") when the attribute is missing, so an unlabelled
+  // form is refused instead of being assumed to be a POST.
+  var method = (form.getAttribute('method') || form.method || 'get').toLowerCase();
+  if (method !== 'post') return;
+
+  // A submit control can override the form's method; an override that is not
+  // POST moves the same secret into the URL. The control does not have to be a
+  // child of the form: a button anywhere in the document that carries
+  // `form="<id>"` submits this form, so the association is resolved through
+  // `element.form` for every `formmethod` in the document rather than by
+  // querying inside the form.
+  var overrides = document.querySelectorAll('[formmethod]');
+  for (var b = 0; b < overrides.length; b++) {
+    if (overrides[b].form !== form) continue;
+    if ((overrides[b].getAttribute('formmethod') || '').toLowerCase() !== 'post') return;
+  }
+
   var inputs = form.querySelectorAll('input');
   var userInput = null, passInput = null;
   for (var i = 0; i < inputs.length; i++) {
     var n = (inputs[i].name || '').toLowerCase();
     var t = (inputs[i].type || '').toLowerCase();
-    if (t === 'password') passInput = inputs[i];
-    else if (n.indexOf('user') >= 0 || n.indexOf('email') >= 0 || n.indexOf('login') >= 0) userInput = inputs[i];
+    if (t === 'password') { if (!passInput) passInput = inputs[i]; }
+    else if (n.indexOf('user') >= 0 || n.indexOf('email') >= 0 || n.indexOf('login') >= 0) { if (!userInput) userInput = inputs[i]; }
     else if (t === 'text' && !userInput) userInput = inputs[i];
   }
-  if (userInput && passInput && typeof __lite_username !== 'undefined' && typeof __lite_password !== 'undefined') {
-    userInput.value = __lite_username;
-    passInput.value = __lite_password;
-    userInput.dispatchEvent(new Event('input', { bubbles: true }));
-    passInput.dispatchEvent(new Event('input', { bubbles: true }));
-  }
+  if (!userInput || !passInput || userInput === passInput) return;
+  if (typeof __lite_username === 'undefined' || typeof __lite_password === 'undefined') return;
+
+  userInput.value = __lite_username;
+  passInput.value = __lite_password;
+  userInput.dispatchEvent(new Event('input', { bubbles: true }));
+  passInput.dispatchEvent(new Event('input', { bubbles: true }));
+  // The values stay in the form (the page needs them to submit); the copies
+  // this script carried are dropped with the closure.
 })();
 """
 
 
-def build_autofill_script(username, password):
-    """Returns JS string that sets __lite_username/__lite_password and runs AUTOFILL_SCRIPT."""
+def build_autofill_script(username, password, origin=""):
+    """Build the autofill JS for one document.
+
+    ``origin`` must be the normalised origin of the page being filled — the
+    script refuses to write anything when ``location.origin`` differs, so a
+    caller that passes nothing (or a stale URL) gets a no-op instead of a
+    credential leak into whatever document is loaded by the time this runs.
+    """
     u_esc = json.dumps(username)
     p_esc = json.dumps(password)
-    return "(function(){var __lite_username = " + u_esc + "; var __lite_password = " + p_esc + "; " + AUTOFILL_SCRIPT.strip() + "})();"
+    o_esc = json.dumps(_normalize_origin(origin))
+    return (
+        "(function(){var __lite_expected_origin = "
+        + o_esc
+        + "; var __lite_username = "
+        + u_esc
+        + "; var __lite_password = "
+        + p_esc
+        + "; "
+        + AUTOFILL_SCRIPT.strip()
+        + "})();"
+    )
 
-
-# Chrome-style save-password capture: a profile-level script watches every
-# login form; on submit it stashes the credentials in sessionStorage under a
-# fixed key. The app reads (and clears) that key on the NEXT page load, which
-# is when a real login would have succeeded — no QWebChannel needed.
-CAPTURE_INSTALL_SCRIPT = """
-(function() {
-  if (window.__mei_capture_installed) return;
-  window.__mei_capture_installed = true;
-  function findCreds(root) {
-    var pass = root.querySelector('input[type="password"]');
-    if (!pass) return null;
-    var form = pass.closest('form') || document;
-    var user = null;
-    var inputs = (form === document ? document.querySelectorAll('input') : form.querySelectorAll('input'));
-    for (var i = 0; i < inputs.length; i++) {
-      if (inputs[i] === pass) continue;
-      var t = (inputs[i].type || '').toLowerCase();
-      if (t === 'email' || t === 'text' || t === 'tel') { user = inputs[i]; break; }
-    }
-    if (!pass.value) return null;
-    return { user: user ? user.value : '', pass: pass.value };
-  }
-  function stash(creds) {
-    try {
-      sessionStorage.setItem('__mei_pending_creds', JSON.stringify({
-        user: creds.user, pass: creds.pass, at: Date.now()
-      }));
-    } catch (e) {}
-  }
-  document.addEventListener('submit', function(ev) {
-    try {
-      var creds = findCreds(ev.target);
-      if (creds) stash(creds);
-    } catch (e) {}
-  }, true);
-  // SPA-style logins (fetch/XHR without form submit): watch password fields
-  // losing focus right before a same-tick navigation is too fragile, so also
-  // listen for Enter inside a password field.
-  document.addEventListener('keydown', function(ev) {
-    if (ev.key !== 'Enter') return;
-    try {
-      var t = ev.target;
-      if (t && (t.type || '').toLowerCase() === 'password') {
-        var creds = findCreds(t.closest('form') || document);
-        if (creds) stash(creds);
-      }
-    } catch (e) {}
-  }, true);
-})();
-"""
-
-READ_CAPTURED_SCRIPT = """
-(function() {
-  try {
-    var raw = sessionStorage.getItem('__mei_pending_creds');
-    if (!raw) return null;
-    sessionStorage.removeItem('__mei_pending_creds');
-    var d = JSON.parse(raw);
-    if (!d || !d.pass || (Date.now() - (d.at || 0) > 60000)) return null;
-    return { user: d.user || '', pass: d.pass };
-  } catch (e) { return null; }
-})();
-"""
+# Save-password capture was removed in the 2026 overhaul. The old
+# DocumentCreation script ran in the page's MAIN world and stored submitted
+# credentials as plaintext in ``sessionStorage``, where any script on the
+# page could read them. Qt WebEngine has no browser-internal password
+# manager and no page->native channel that survives a navigation, so the
+# feature is suspended until an isolated-world bridge exists
+# (see .ai/decisions/ADR-0006). Autofill and Vault entries are unaffected.

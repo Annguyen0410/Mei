@@ -89,9 +89,27 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_REQUESTS_PER_MINUTE = 120
 MAX_AUTH_FAILURES_PER_MINUTE = 8
 
+#: Application-layer replay protection. A bearer token is a long-lived secret,
+#: so a captured request is replayable for the life of the token unless the
+#: server can tell a fresh request from a copy. A client that sends
+#: ``X-Mei-Timestamp`` + ``X-Mei-Nonce`` gets that: the pair must be fresh and
+#: may be used once. Clients that send neither are still accepted — the 1.x
+#: Android app predates the headers — and every response says which mode it
+#: answered in, so the gap is visible instead of assumed away.
+REPLAY_HEADER_TIMESTAMP = "X-Mei-Timestamp"
+REPLAY_HEADER_NONCE = "X-Mei-Nonce"
+REPLAY_WINDOW_SECONDS = 300
+REPLAY_MAX_NONCES = 4096
+
+_nonce_lock = threading.Lock()
+_seen_nonces: dict[str, float] = {}
+
 # Windows-forbidden filename characters only; keep Unicode (e.g. Vietnamese) intact.
 _WIN_FORBIDDEN_NAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _LONG_FIELD_KEYS = {"image_base64"}
+
+#: A nonce is client-chosen, so it is bounded in both length and alphabet.
+_NONCE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_=+/.")
 
 _lock = threading.Lock()
 _server: ThreadingHTTPServer | None = None
@@ -237,6 +255,52 @@ def _auth_ok(profile_dir: str, auth_header: str | None) -> bool:
     except (TypeError, UnicodeEncodeError) as exc:
         _log.warning("mobile bridge auth check failed: %s", exc)
         return False
+
+
+def _epoch_seconds(value: str) -> float | None:
+    """A timestamp header as epoch seconds; milliseconds are accepted too."""
+    try:
+        raw = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(raw) or raw <= 0:
+        return None
+    return raw / 1000.0 if raw > 10**11 else raw
+
+
+def _replay_state(headers) -> str:
+    """Classify replay headers: ``ok``, ``missing``, ``invalid``, ``stale``,
+    ``replayed``.
+
+    ``missing`` is the pre-2.0 client: allowed, and reported as such. Every
+    other value is decided here so the handler only has to turn it into a
+    status code.
+    """
+    raw_ts = headers.get(REPLAY_HEADER_TIMESTAMP)
+    raw_nonce = headers.get(REPLAY_HEADER_NONCE)
+    if not raw_ts and not raw_nonce:
+        return "missing"
+    if not raw_ts or not raw_nonce:
+        return "invalid"
+    stamp = _epoch_seconds(raw_ts)
+    nonce = str(raw_nonce).strip()
+    if stamp is None or not 16 <= len(nonce) <= 128 or any(c not in _NONCE_CHARS for c in nonce):
+        return "invalid"
+    if abs(time.time() - stamp) > REPLAY_WINDOW_SECONDS:
+        return "stale"
+    with _nonce_lock:
+        now = time.monotonic()
+        for key, expiry in list(_seen_nonces.items()):
+            if expiry <= now:
+                del _seen_nonces[key]
+        if nonce in _seen_nonces:
+            return "replayed"
+        if len(_seen_nonces) >= REPLAY_MAX_NONCES:
+            # Bounded memory beats strictness here: dropping the oldest nonce
+            # only re-opens a window that is about to expire anyway.
+            _seen_nonces.pop(next(iter(_seen_nonces)), None)
+        _seen_nonces[nonce] = now + REPLAY_WINDOW_SECONDS
+    return "ok"
 
 
 def _permit(bucket: dict[str, deque[float]], address: str, limit: int) -> bool:
@@ -945,6 +1009,9 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
+        # Tells a client (and a person reading a packet log) whether this call
+        # carried replay protection, without changing any 1.x response shape.
+        self.send_header("X-Mei-Replay", getattr(self, "_replay_mode", "optional"))
         self.end_headers()
         self.wfile.write(body)
 
@@ -959,6 +1026,24 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
             self._send_json(403, _json_error("forbidden", "Client is outside the configured network scope"))
             return False
         return True
+
+    def _replay_checked(self) -> bool:
+        """Reject a replayed or stale write, and record which mode answered."""
+        state = _replay_state(self.headers)
+        if state in ("ok", "missing"):
+            self._replay_mode = "on" if state == "ok" else "optional"
+            return True
+        self._replay_mode = "rejected"
+        if state == "replayed":
+            self._send_json(409, _json_error("replayed_request", "This request has already been processed"))
+        elif state == "stale":
+            self._send_json(409, _json_error("stale_request", "Request timestamp is outside the accepted window"))
+        else:
+            self._send_json(
+                400,
+                _json_error("bad_request", "X-Mei-Timestamp and X-Mei-Nonce must be sent together and be well formed"),
+            )
+        return False
 
     def _authorized(self, profile_dir: str) -> bool:
         address = self.client_address[0]
@@ -1056,7 +1141,14 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
                     "protocol_version": API_VERSION,
                     "actions": list(SUPPORTED_ACTIONS),
                     "read": {"today": "/api/mobile/today", "day_param": True},
-                    "auth": {"mode": "bearer"},
+                    "auth": {
+                        "mode": "bearer",
+                        "replay": {
+                            "headers": [REPLAY_HEADER_TIMESTAMP, REPLAY_HEADER_NONCE],
+                            "window_seconds": REPLAY_WINDOW_SECONDS,
+                            "required": False,
+                        },
+                    },
                     "upload": {
                         "multipart": True,
                         "max_size_mb": MAX_UPLOAD_BYTES // (1024 * 1024),
@@ -1081,6 +1173,8 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
             return
 
         if not self._authorized(profile_dir):
+            return
+        if not self._replay_checked():
             return
 
         if self.headers.get("Transfer-Encoding"):

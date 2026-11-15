@@ -82,6 +82,14 @@ jobs:
             --exclude-module PyQt5 --clean browser.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
+      # Both consumers of the sites folder read dist/web_support: installer.iss
+      # copies it beside the exe, and publish_release.py zips it into the
+      # companion archive. PyInstaller only writes dist/Mei.exe, so without this
+      # step ISCC failed on "No files found matching dist\web_support\*" and the
+      # release shipped no installer at all.
+      - name: Stage web_support beside the build
+        run: python tools/sync_web_support.py
+
       # The app ships as Mei.exe; people should not have to know that, extract a
       # companion archive and place it themselves. installer.iss already describes
       # the layout, and Inno Setup is free — the missing piece was a build step.

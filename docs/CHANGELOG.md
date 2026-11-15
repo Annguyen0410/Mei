@@ -4,6 +4,24 @@ Mei (formerly Mei Cafe Edition) is a multi-workspace desktop shell built on `PyQ
 
 > **Run & build the desktop app**: see the dedicated **`RUN_AND_BUILD.md`** — app testing checklist, how to use `.venv`, common run errors, and the full PyInstaller command (`--collect-all PyQt6.QtWebEngine*`) to produce the `.exe`.
 
+> ## 1.0.3.0 — A release that can finish
+>
+> This build changes nothing in the application itself; it repairs the pipeline that
+> hands it to people, so the download page finally matches the repo.
+>
+> - **The installer is back.** `MeiSetup.exe` could not be built: Inno Setup copies
+>   `dist\web_support`, and only `dist\Mei.exe` was ever produced, so the step failed
+>   with "No files found matching dist\web_support\*" and every release shipped
+>   without an installer. The release workflow now stages the sites folder first.
+> - **Pre-releases can be built without a signing certificate.** The publisher
+>   required a signed update manifest even for an Alpha, which contradicts the rule
+>   it documents (Alphas never reach `releases/latest`). Stable builds are still
+>   refused without `MEI_UPDATE_KEY_ID` / `MEI_UPDATE_SIGNING_KEY`.
+> - **The release job can run its tests.** It was missing `hypothesis`, so it died at
+>   collection and never reached the build.
+> - **Packaging spec, docs.** `Mei.spec` uses the Windows separator spelling the
+>   shipped-build test checks again, and the README is now written as a project page.
+>
 > ## 1.0.2.0 — Filling a login is your decision
 >
 > The credential path stopped acting on its own. Automatic save-on-login stays suspended

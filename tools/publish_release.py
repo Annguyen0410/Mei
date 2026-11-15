@@ -475,7 +475,10 @@ def publish(
         web_support_path=site_zip,
         web_support_url=site_url,
         release_url=release_page_url(repo),
-        require_signature=bool(token) and not skip_upload,
+        # A pre-release is not offered to installed copies (``releases/latest``
+        # skips it), so it may ship unsigned exactly as the module docstring
+        # promises; a stable build still cannot be published without a signature.
+        require_signature=bool(token) and not skip_upload and not prerelease,
     )
     out = os.path.dirname(os.path.abspath(exe))
     manifest_path = os.path.join(out, "update.json")
@@ -507,7 +510,7 @@ def publish(
     if not token:
         raise ValueError("Set GITHUB_TOKEN (fine-grained token with Contents: read and write) to publish.")
 
-    if not manifest.get("signature"):
+    if not manifest.get("signature") and not prerelease:
         raise ValueError(
             "Stable publication requires a trusted, signed update manifest; "
             "nothing was uploaded."

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mei"
-version = "1.0.2.0"
+version = "1.0.3.0"
 description = "Mei — Qt WebEngine desktop browser with Personal and AI hubs"
 readme = "README.md"
 requires-python = ">=3.10"

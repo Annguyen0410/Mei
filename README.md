@@ -1,164 +1,188 @@
+<div align="center">
+
 # Mei
+
+**A browser, a research desk and a study workspace in one window.**
+
+Read a page, keep what matters, turn it into notes, a plan and flashcards — without
+exporting your work into four other applications.
 
 [![CI](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml/badge.svg)](https://github.com/Annguyen0410/Mei/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Annguyen0410/Mei?include_prereleases&sort=semver&label=release)](https://github.com/Annguyen0410/Mei/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-5F6E55)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-302D27)
+![Engine](https://img.shields.io/badge/engine-QtWebEngine%206.11%20%C2%B7%20Chromium%20140-2F6F6B)
 
-**Website:** <https://annguyen0410.github.io/Mei/>
+**[Website](https://annguyen0410.github.io/Mei/)** ·
+**[Download](https://github.com/Annguyen0410/Mei/releases)** ·
+**[Changelog](docs/CHANGELOG.md)** ·
+**[User guide](docs/USER_GUIDE.md)**
 
-**Mei is a desktop browser and personal study workspace.** It brings web research,
-notes, planning, flashcards, and AI assistance into one application, so information
-can move from the page you are reading into the work you want to do next.
+<img src="website/public/shots/overview.png" alt="Mei home window: current work, due items and the next suggested step" width="880">
 
-Mei is designed around a local profile and connected workflows: capture a source,
-organize it in a research workspace, make a plan, study, and review. It runs on
-QtWebEngine (Qt 6.11 / Chromium 140). PyQt5 is a legacy test path only, never a
-supported engine; see `docs/audit/MEI_BROWSER_COMPATIBILITY_MATRIX.md`.
+</div>
 
-## Highlights
+---
 
-- **Browser:** Chromium-based tabs, tab groups, split view, reader tools, downloads,
-  incognito profiles, and optional web panels.
-- **Research workspaces:** save regular tabs as a named desk and link existing notes,
-  tasks, saved pages, and flashcards without duplicating those records.
-- **Home and planning:** see current work, due items, unfinished tasks, and the next
-  suggested step; plan courses, deadlines, and focus blocks in the Weekly Plan.
-- **Personal workspace:** notes with wiki links, quick tasks, calendar, boards, saved
-  pages, and SM-2 flashcard review.
-- **Quick Capture:** create a note, task, saved page, or flashcard from a compact form
-  and link it to the active research desk.
-- **AI workspace:** use local retrieval, Ollama, llama.cpp, or OpenRouter. Browser and
-  research context are opt-in settings; page content is treated as untrusted input,
-  and private-page content is excluded.
-- **Themes and accessibility:** multiple theme families and accents, customizable
-  Home cards, and reduced-motion preferences.
-- **Optional integrations:** folder sync, an Android bridge, and the Mei browser
-  extension. These features are configured by the user and are not required to use
-  the desktop app.
-- **Credential protection:** on Windows, the AI provider key, Google token cache,
-  sync token, bridge token, and proxy password are protected with the signed-in
-  user's Windows credentials (DPAPI). They are excluded from backups, sync and
-  diagnostics.
+## What Mei is
+
+Mei is a Windows desktop application built on Qt 6 and QtWebEngine. It is one
+window with a browser on the left and the work that follows it on the right: save
+the page to a research desk, leave a note on it, plan the week it belongs to, then
+review it as flashcards.
+
+Everything lives in a local profile. There is no account, no hosted storage and no
+required network service — AI is opt-in, and the workspace is usable with every
+network feature switched off.
+
+<table>
+<tr><td width="50%" valign="top">
+
+**Browse with context**
+
+Tabs, tab groups, split view, reader tools, downloads and incognito profiles, plus
+optional web panels. A saved tab is a record you can link to, not a bookmark you
+forget.
+
+</td><td width="50%" valign="top">
+
+**Keep the thread**
+
+Research desks group the tabs, notes, tasks, saved pages and flashcards for one
+question, and link the existing records instead of copying them.
+
+</td></tr>
+<tr><td valign="top">
+
+**Plan and see what is next**
+
+Home shows current work, due items and one suggested next step. The Weekly Plan
+holds courses, deadlines and focus blocks; Calendar, Boards and Tasks are one
+click away.
+
+</td><td valign="top">
+
+**Study what you kept**
+
+Notes with wiki links, quick tasks and SM-2 spaced repetition. Quick Capture turns
+the current page into a note, task, saved page or card in a single form.
+
+</td></tr>
+<tr><td valign="top">
+
+**Ask about your own material**
+
+Local retrieval, Ollama, llama.cpp or OpenRouter. Browser and research context are
+separate opt-in switches, page content is treated as untrusted input, and
+private-window content is excluded.
+
+</td><td valign="top">
+
+**Keep it yours**
+
+Profile data stays on disk. The AI key, Google token cache, sync token, bridge
+token and proxy password are protected with Windows DPAPI and are deliberately
+left out of backups, sync and diagnostics.
+
+</td></tr>
+</table>
 
 ## Download
 
-Download the Windows application and release notes from
-[GitHub Releases](https://github.com/Annguyen0410/Mei/releases). Releases may include
-`Mei.exe`, a `web_support` archive, and `update.json`. When a companion archive is
-provided, extract it beside `Mei.exe` and keep the `web_support` directory in place.
+| | |
+|---|---|
+| **Installer** | `MeiSetup.exe` — Start Menu entry, optional desktop and taskbar icons, uninstaller |
+| **Portable** | `Mei.exe` + `Mei-<version>-web_support.zip` — extract the archive beside the executable |
+| **Updates** | Installed copies read `releases/latest/download/update.json`; pre-releases are published there for manual download only |
 
-Mei stores its profile separately from the executable, so replacing the application
-does not replace the profile. Back up the profile folder before moving to another
-device or troubleshooting storage issues.
+Download from **[GitHub Releases](https://github.com/Annguyen0410/Mei/releases)**.
+
+The profile is stored outside the installation folder, so replacing or uninstalling
+the application never deletes notes, tasks or cards. Back the profile up before
+moving to another machine — see [Data Management](docs/audit/MEI_DATA_MANAGEMENT_GUIDE.md).
+
+**Requirements:** Windows 10 or 11, 64-bit. The browser engine is bundled
+(QtWebEngine 6.11 / Chromium 140); no separate runtime is installed.
 
 ## Run from source
 
-The project is developed and tested with Python 3.11 on Windows. Create an
-environment, install dependencies, and start the application:
+Developed and tested with Python 3.11 on Windows.
 
 ```powershell
+git clone https://github.com/Annguyen0410/Mei.git
+cd Mei
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe browser.py
 ```
 
-For packaging instructions and platform-specific troubleshooting, see
-[`RUN_AND_BUILD.md`](RUN_AND_BUILD.md).
+Packaging, the PyInstaller invocation and platform troubleshooting are documented in
+[`RUN_AND_BUILD.md`](RUN_AND_BUILD.md). Architecture and module boundaries live in
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-## Privacy and data
+## Privacy
 
-Mei has no required account or hosted data service. Profile data is stored locally
-on the device. Optional folder sync uses a location selected by the user.
-
-AI providers can receive the context selected for a request. Ollama and llama.cpp
-send requests to their configured endpoints; remote providers such as OpenRouter
-send the selected request and context to that provider. The AI
-workspace provides separate controls for browser and research context. Review those
-controls before submitting sensitive material. A Mei passcode gates workspaces but
-does not encrypt every profile file at rest.
-
-Credentials (AI provider key, Google token cache, self-hosted sync token, mobile
-bridge token, and proxy password) are kept in `secrets.dat` inside the profile. On
-Windows they are protected with DPAPI for the current Windows user, so another
-Windows account cannot read them; on other platforms Mei uses owner-only file
-permissions and reports that the file is not encrypted. `secrets.dat` is deliberately
-**not** included in profile backups, folder/self-hosted sync, or diagnostics bundles.
-If protection fails, Mei keeps the previous value rather than silently signing you
-out. Log files are credential-redacted before they are written, and the diagnostics
-archive contains only versions, store shapes, and the redacted log tail.
-
-The Android bridge defaults to loopback (this PC only). LAN mode uses plain HTTP;
-Mei warns before enabling it, and rotating the bridge token disconnects every phone
-or extension paired with the old token. Treat a pairing code as a credential.
+- No required account and no hosted data service; the profile is local.
+- AI providers receive only the context you submit, and the two context switches are
+  independent. Remote providers (such as OpenRouter) see the request you send them.
+- `secrets.dat` is DPAPI-protected on Windows and excluded from backups, folder sync
+  and diagnostics bundles. Logs are credential-redacted before they are written.
+- The Mei passcode gates workspaces; it does not encrypt every file at rest.
+  Encrypted backups are opt-in AES-256-GCM containers.
+- The Android bridge listens on loopback by default. LAN mode is plain HTTP, warns
+  before enabling, and a pairing code should be treated as a credential.
 
 ## Documentation
 
-- [Product website](website/README.md) — the separate marketing site (`website/`, not part of the application bundle)
-- [User guide](docs/USER_GUIDE.md)
-- [Command and shortcut reference](docs/COMMAND_REFERENCE.md)
-- [Run and build guide](RUN_AND_BUILD.md)
-- [Architecture](ARCHITECTURE.md)
-- [Major update audit](docs/reports/MAJOR_UPDATE_AUDIT.md)
-- [Changelog](docs/CHANGELOG.md)
-- [Why Mei](docs/WHY_MEI.md)
+| Document | What it covers |
+|---|---|
+| [User guide](docs/USER_GUIDE.md) | Every workspace, screen by screen |
+| [Command reference](docs/COMMAND_REFERENCE.md) | Slash commands, shortcuts, gestures |
+| [Run and build](RUN_AND_BUILD.md) | Environment, packaging, common errors |
+| [Architecture](ARCHITECTURE.md) | Layers, stores, threading model |
+| [Changelog](docs/CHANGELOG.md) | Release notes for every version |
+| [Why Mei](docs/WHY_MEI.md) | The design argument behind the app |
+| [Data integrity audit](docs/audit/MEI_DATA_INTEGRITY_AUDIT.md) | Backups, restore, guarantees and risks |
+| [Product website](website/README.md) | The marketing site in `website/` (not in the app bundle) |
 
-## Development checks
-
-Run the test suite and lint checks from the repository root:
+## Development
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -p no:cacheprovider -q
 .\.venv\Scripts\ruff.exe check --select F401,F811,F841,F821 litebrowser tests tools
 ```
 
-GitHub Actions runs the test suite on Windows with both supported Qt bindings. The
-release workflow also builds the frozen executable with PyInstaller, validates the
-`web_support` archive, launches the packaged app against a throwaway data root with
-`--smoke-test`, and requires the ready marker before publishing.
-
-## Project layout
+GitHub Actions runs the suite on Windows and gates on the engine's security patch
+version. The release workflow reruns the suite, builds the frozen executable,
+stages `web_support`, compiles the installer, launches the packaged app against a
+throwaway data root with `--smoke-test`, and only then publishes.
 
 ```text
-browser.py                 Desktop entry point
-litebrowser/core/           Product identity, preferences, storage, and shared logic
-litebrowser/services/       Research, AI, planning, sync, and integration services
+browser.py                  Desktop entry point
+litebrowser/core/           Product identity, preferences, storage, shared logic
+litebrowser/services/       Research, AI, planning, sync, integrations
 litebrowser/ui/             Browser shell and desktop workspaces
-web_support/                Local web applications and supporting assets
+web_support/                Local web workspaces shipped beside the exe
 Extensions/                 Mei browser extension
-tests/                      Python regression suite
+tests/                      Python regression suite (3400+ tests)
+website/                    Product website, published from gh-pages
 ```
 
 ## Release process
 
-The application version is defined in [`litebrowser/core/product.py`](litebrowser/core/product.py).
-Release notes come from [`docs/CHANGELOG.md`](docs/CHANGELOG.md), and
-[`tools/publish_release.py`](tools/publish_release.py) validates the tag and build
-version before publishing the executable, companion assets, and update manifest.
-Pushing a four-part version tag starts the Windows release workflow; a tag with a
-suffix, such as `v1.0.0.0-alpha.1`, is published as a pre-release. The publisher
-requires a SHA-256 and a plausible size for the executable, and the `web_support`
-ZIP is re-read before upload to reject private files, traversal entries, or a
-missing `hub/index.html` entry point. Earlier good files are preserved when either
-check fails.
+The version lives in [`litebrowser/core/product.py`](litebrowser/core/product.py) and
+release notes in [`docs/CHANGELOG.md`](docs/CHANGELOG.md); each must name the same
+version. Pushing a `v<version>` tag starts the Windows release workflow, and
+[`tools/publish_release.py`](tools/publish_release.py) refuses a tag that disagrees
+with the build, a manifest whose hash is wrong, or a pre-release that would take over
+`releases/latest`.
 
-## Data integrity & recovery
+A tag with a suffix (`v1.0.3.0-alpha.1`) is published as a GitHub pre-release, which
+installed copies never see. A stable release additionally requires a trusted,
+Ed25519-signed update manifest (`MEI_UPDATE_KEY_ID`, `MEI_UPDATE_SIGNING_KEY`) and an
+Authenticode-signed executable; without them the pipeline stops instead of shipping
+something it cannot vouch for.
 
-Settings → Data Management provides verified, versioned backups, a staged
-Restore Center with rollback, a read-only integrity check, and a Sync Conflicts
-archive. Backups exclude `secrets.dat`, proxy configuration and Chromium
-`BrowserData`; see `docs/audit/MEI_DATA_MANAGEMENT_GUIDE.md` for the workflow and
-`docs/audit/MEI_DATA_INTEGRITY_AUDIT.md` for the guarantees and remaining risks.
+## License
 
-## Data safety, recovery and proxy
-
-`Settings → Data Management` now includes Storage Health, Record Restore,
-Recovery and Proxy views. Backups are verified and can run on a daily/weekly
-schedule while Mei is open; conflict archives are an explicit backup category.
-Page Monitor and filter refreshes refuse to bypass a configured proxy unless
-direct access is explicitly selected. See
-`docs/audit/MEI_DATA_INTEGRITY_AUDIT.md`,
-`docs/audit/MEI_BACKUP_RESTORE.md`, and
-`docs/audit/MEI_BACKUP_ENCRYPTION.md`. Encrypted backups are opt-in
-AES-256-GCM/scrypt containers; scheduled backups remain unencrypted because
-Mei never stores the password.
+MIT — see [LICENSE](LICENSE).

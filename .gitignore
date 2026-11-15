@@ -168,5 +168,4 @@ config.local.json
 # --- Agent tooling installed for a session, never part of the product ---
 .agents/
 skills-lock.json
-.ai/
 .qodo/

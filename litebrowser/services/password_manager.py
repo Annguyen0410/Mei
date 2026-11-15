@@ -379,10 +379,15 @@ AUTOFILL_SCRIPT = """
   var method = (form.getAttribute('method') || form.method || 'get').toLowerCase();
   if (method !== 'post') return;
 
-  // A submit button can override the form's method; an override that is not
-  // POST moves the same secret into the URL.
-  var overrides = form.querySelectorAll('button[formmethod], input[formmethod]');
+  // A submit control can override the form's method; an override that is not
+  // POST moves the same secret into the URL. The control does not have to be a
+  // child of the form: a button anywhere in the document that carries
+  // `form="<id>"` submits this form, so the association is resolved through
+  // `element.form` for every `formmethod` in the document rather than by
+  // querying inside the form.
+  var overrides = document.querySelectorAll('[formmethod]');
   for (var b = 0; b < overrides.length; b++) {
+    if (overrides[b].form !== form) continue;
     if ((overrides[b].getAttribute('formmethod') || '').toLowerCase() !== 'post') return;
   }
 

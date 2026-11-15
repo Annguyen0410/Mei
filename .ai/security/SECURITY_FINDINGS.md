@@ -268,7 +268,10 @@ Two defects in the same function, both found in review after F-39:
 Fix, in `password_manager.AUTOFILL_SCRIPT` and `window.py`:
 
 1. The script returns early unless the form's resolved method is `post`, and unless every
-   `formmethod` override on a submit control is also `post`.
+   `formmethod` override on a submit control is also `post`. The control does not have to be a
+   child of the form — `<button form="login" formmethod="get">` submits that form from
+   anywhere in the document — so the check walks every `[formmethod]` in the document and
+   compares the resolved `element.form`, instead of querying inside the form.
 2. The load path no longer injects anything and no longer prompts. It only records an offer
    (`mei_autofill_url` on the view) and shows a toast: *Saved login available · Ctrl+Shift+L
    to fill*. `_saved_login_offer` performs the boundary checks without decrypting anything.

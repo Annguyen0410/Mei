@@ -169,6 +169,14 @@ class TestAutofillRefusesFormsThatLeakTheUrl(unittest.TestCase):
         # A submit button can override the form's method.
         self.assertIn("formmethod", script)
 
+    def test_submit_override_is_resolved_through_the_form_property(self):
+        """A submit control outside the form still submits it (form="id")."""
+        script = password_manager.build_autofill_script("alice", "s1", "https://example.com/login")
+        self.assertIn("document.querySelectorAll('[formmethod]')", script)
+        self.assertIn("overrides[b].form !== form", script)
+        # The in-form-only query would miss `<button form="login" formmethod="get">`.
+        self.assertNotIn("form.querySelectorAll('button[formmethod]", script)
+
     def test_same_origin_matches_one_origin_only(self):
         self.assertTrue(password_manager.same_origin("https://example.com/a", "https://example.com/b?c#d"))
         self.assertFalse(password_manager.same_origin("https://example.com/", "https://example.com:8443/"))

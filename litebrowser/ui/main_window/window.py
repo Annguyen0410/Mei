@@ -2505,7 +2505,9 @@ class SearchWindow(TopBarMixin, DockingMixin, MenusMixin, WindowToolsMixin, QMai
         offer = self._saved_login_offer(browser)
         browser.setProperty("mei_autofill_url", offer)
         if offer and browser is self.current_browser():
-            self._flash_status("Saved login available · Ctrl+Shift+L to fill")
+            # Deliberately says "check", not "available": nothing was decrypted
+            # yet, so promising a saved login here would be a guess.
+            self._flash_status("Press Ctrl+Shift+L to check saved logins")
 
     def fill_saved_login(self):
         """Fill the current tab's saved login after an explicit user gesture.

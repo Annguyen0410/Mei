@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+# The site is a single page plus a 404. Add a Sitemap: line once it is deployed
+# on its real domain — this repository has not published a production URL, and a
+# sitemap pointing at a guess is worse than none.

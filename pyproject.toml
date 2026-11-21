@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "hypothesis>=6.0"]
+dev = ["pytest>=7.0", "hypothesis>=6.168.5"]
 # LEGACY, not a supported engine. PyQt5 pins Qt 5.15 = Chromium 87, which most
 # of the modern web treats as unsupported (sign-in, WebAuthn, many JS APIs).
 # Kept only so an old checkout can still run its test suite; never ship it and
